@@ -3,6 +3,29 @@
 Every version of Kite Maps, newest first. The small number goes up for fixes and polish, and
 the middle number for big milestones.
 
+## 0.7.14 (iPhone and Android)
+
+- **Speed cameras from Waze's map too.** The free map misses cameras (Thomas Lewis Way in
+  Southampton had none), so Kite now also reads the fixed speed cameras in Waze's own map, with
+  their limits. A camera both maps hold shows once. Only while Waze is switched on in Settings;
+  Waze's map is read in small pieces along your route and kept on the phone for a week.
+
+Fixes from a full check of both apps:
+
+- **Android: Kite no longer freezes for a few seconds when it opens.** Getting the voice ready
+  asked the phone's speech app for its whole list of voices while the screen waited. With Google's
+  speech app that took up to seven seconds, long enough for Android to call Kite "not responding"
+  and sometimes close it. The voice now gets ready in the background.
+- **Android: no more long freeze when planning a long drive.** Fitting the turn-by-turn steps
+  onto a route of hundreds of miles, placing its speed limits and finding the live cameras along it
+  all happened while the screen waited, freezing Kite for up to eight seconds. That work now
+  happens in the background.
+- **iPhone: the last row in Settings no longer hides under the tab bar.** "About" (and the end of
+  longer pages like Road alerts) can now scroll up clear of it.
+- **iPhone: Road alerts has a big title** like every other Settings page.
+- **Cameras & speed says where cameras come from:** OpenStreetMap, and Waze's map too while Road
+  alerts are on (iPhone and Android).
+
 ## 0.7.13 (iPhone and Android)
 
 A new, lighter look for the map and the driving screen, picked by Matteo from three mockups

@@ -24,6 +24,12 @@ public actor WazeLive {
     /** Another server instead of Waze's, for testing what Kite does when Waze is unreachable. */
     nonisolated(unsafe) public static var hostOverride: String?
 
+    /** Set by the probe to count everything Waze sends, including what Kite doesn't read. Nil in the app. */
+    nonisolated(unsafe) public static var census: WazeCensus?
+
+    /** The number the app sends with each map box (its zoom, it seems). Only the probe changes it. */
+    nonisolated(unsafe) public static var mapScale = 67186
+
     static let protocolVersion = 234
     static let appVersion = "5.17.1.0"
 
@@ -221,6 +227,55 @@ public actor WazeLive {
         throw Failure.rejected("login: no session in the answer")
     }
 
+    /**
+     * Pieces of Waze's own map by number (see [WazeCameras]), a few at a time, with this session.
+     * Nil when Waze couldn't be asked at all; a piece that didn't come is just left out.
+     */
+    public func mapTiles(_ ids: [Int], near: LatLng) async -> [Int: Data]? {
+        guard !ids.isEmpty else { return [:] }
+        guard Date() >= backoffUntil else { return nil }
+        if session == nil || Date().timeIntervalSince(lastAsk) > 95 {
+            // Logs in the usual way, with one small look at the map round here.
+            guard await alerts(boxes: [Self.box(around: near, meters: 1_500)], near: near) != nil else { return nil }
+        }
+        guard let session else { return nil }
+        let r = Self.region(near)
+        let host = r == "na" ? "ctilesgcs-am.waze.com" : r == "il" ? "ctilesgcs-il.waze.com" : "ctilesgcs-row.waze.com"
+        let front = "https://\(host)/TileServer/multi-get?reqtype=tileBatch&protocol=2&sessionid=\(session.id)&cookie=\(session.secret)&num=1&variation=PARTIAL_SIMPLIFICATION&t0="
+        let http = self.http
+        var out: [Int: Data] = [:]
+        var i = 0
+        while i < ids.count {
+            let chunk = Array(ids[i..<min(i + 6, ids.count)])
+            i += 6
+            let got = await withTaskGroup(of: (Int, Data?).self) { group -> [(Int, Data?)] in
+                for id in chunk { group.addTask { (id, await Self.tile(front + "\(id)&v0=0&p0=42", http)) } }
+                var list: [(Int, Data?)] = []
+                for await one in group { list.append(one) }
+                return list
+            }
+            var any = false
+            for (id, data) in got {
+                guard let data else { continue }
+                out[id] = data
+                Self.bytes += data.count
+                any = true
+            }
+            // Waze has stopped answering: no point asking for the rest now.
+            if !any { break }
+        }
+        return out.isEmpty ? nil : out
+    }
+
+    private static func tile(_ address: String, _ http: URLSession) async -> Data? {
+        guard let url = URL(string: address) else { return nil }
+        var req = URLRequest(url: url)
+        req.setValue(appVersion, forHTTPHeaderField: "User-Agent")
+        req.setValue("Thu, 01 Jan 1970 00:00:00 GMT", forHTTPHeaderField: "if-modified-since")
+        guard let (data, resp) = try? await http.data(for: req), (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        return data
+    }
+
     private func command(_ body: String) async throws -> [Element] {
         guard let session else { throw Failure.expired("ask before login") }
         var uid = ProtoWriter()
@@ -231,6 +286,7 @@ public actor WazeLive {
                                                            "uid": uid.data.base64EncodedString()])
         if (400..<500).contains(code) { throw Failure.expired("command HTTP \(code)") }
         guard code < 400, !data.isEmpty else { throw Failure.other("command HTTP \(code)") }
+        if Self.census != nil { Self.census?.add(data) }
         let batch = try Self.check(Self.parseBatch(data))
         lastAsk = Date()
         return batch
@@ -294,7 +350,7 @@ public actor WazeLive {
     public static func mapDisplayed(_ b: (s: Double, w: Double, n: Double, e: Double)) -> String {
         func f(_ v: Double) -> String { String(format: "%.6f", v) }
         let corners = [f(b.w), f(b.n), f(b.e), f(b.n), f(b.e), f(b.s), f(b.w), f(b.s)].joined(separator: ",")
-        return "MapDisplayed,\(corners),\(f((b.w + b.e) / 2)),\(f((b.s + b.n) / 2)),67186,\(corners)"
+        return "MapDisplayed,\(corners),\(f((b.w + b.e) / 2)),\(f((b.s + b.n) / 2)),\(mapScale),\(corners)"
     }
 
     /** One line of a body: "ProtoBase64," + a Batch holding one element. */
@@ -565,5 +621,94 @@ enum ProtoReader {
             }
         }
         return out
+    }
+}
+
+/**
+ * A count of everything in Waze's answers, for the probe: which elements come back, which report
+ * types, and any place (a longitude and latitude pair) found inside elements Kite doesn't read.
+ * It answers "does this link also carry fixed speed cameras?" without guessing at Waze's format.
+ */
+public struct WazeCensus: Sendable {
+    /** How many of each element (by its field number) came back. */
+    public var elements: [Int: Int] = [:]
+    /** Old-style text commands by name ("RmAlert"), with one example each. */
+    public var commands: [String: Int] = [:]
+    public var commandSample: [String: String] = [:]
+    /** Reports by Waze's raw type and subtype numbers ("2/201"), with a few places for each. */
+    public var alertTypes: [String: Int] = [:]
+    public var alertPlaces: [String: [LatLng]] = [:]
+    /** Places found in other elements, by the path of field numbers that led to them. */
+    public var places: [String: [LatLng]] = [:]
+    /** A few readable words found beside those places, to tell what they are. */
+    public var words: [String: [String]] = [:]
+
+    /** The first few of each unread element written out (field numbers, numbers and words), to tell what it is. */
+    public var shapes: [Int: [String]] = [:]
+
+    /** A message as text: "3{101=-1385117 102=50915632} 5='word' 7=12". */
+    static func shape(_ data: Data, depth: Int) -> String {
+        guard let fields = ProtoReader.fields(data) else { return "?" }
+        return fields.map { f -> String in
+            guard let inner = f.bytes else { return "\(f.number)=\(Int64(bitPattern: f.value))" }
+            if let text = f.string, !text.isEmpty, text.unicodeScalars.allSatisfy({ $0.value >= 32 && $0.value < 127 }) {
+                return "\(f.number)='\(text.prefix(40))'"
+            }
+            if depth < 5, inner.count >= 2, ProtoReader.fields(inner) != nil { return "\(f.number){\(shape(inner, depth: depth + 1))}" }
+            return "\(f.number)=<\(inner.count) bytes>"
+        }.joined(separator: " ")
+    }
+
+    public init() {}
+
+    public mutating func add(_ data: Data) {
+        guard let batch = ProtoReader.fields(data) else { return }
+        for wrapper in batch where wrapper.number == 1001 {
+            guard let bytes = wrapper.bytes, let fields = ProtoReader.fields(bytes) else { continue }
+            for f in fields {
+                elements[f.number, default: 0] += 1
+                if f.number == 2001, let text = f.string {
+                    let name = String(text.split(separator: ",", maxSplits: 1).first ?? "").trimmingCharacters(in: .whitespaces)
+                    commands[name, default: 0] += 1
+                    if commandSample[name] == nil { commandSample[name] = String(text.prefix(240)) }
+                } else if f.number == 2708, let rt = f.bytes.flatMap(ProtoReader.fields)?.first(where: { $0.number == 1 })?.bytes,
+                          let top = ProtoReader.fields(rt),
+                          let info = top.first(where: { $0.number == 2 })?.bytes.flatMap(ProtoReader.fields) {
+                    let key = "\(info.first { $0.number == 1 }?.value ?? 0)/\(info.first { $0.number == 2 }?.value ?? 0)"
+                    alertTypes[key, default: 0] += 1
+                    if let pos = info.first(where: { $0.number == 3 })?.bytes.flatMap(ProtoReader.fields), let p = Self.place(pos),
+                       (alertPlaces[key]?.count ?? 0) < 400 {
+                        alertPlaces[key, default: []].append(p)
+                    }
+                } else if let inner = f.bytes {
+                    if (shapes[f.number]?.count ?? 0) < 3 { shapes[f.number, default: []].append(String(Self.shape(inner, depth: 0).prefix(700))) }
+                    scan(inner, path: "\(f.number)", depth: 0)
+                }
+            }
+        }
+    }
+
+    /** Waze writes a place as fields 101 (longitude) and 102 (latitude), in millionths of a degree. */
+    static func place(_ fields: [ProtoReader.Field]) -> LatLng? {
+        guard let lngRaw = fields.first(where: { $0.number == 101 && $0.bytes == nil })?.value,
+              let latRaw = fields.first(where: { $0.number == 102 && $0.bytes == nil })?.value else { return nil }
+        let lng = Double(Int32(truncatingIfNeeded: lngRaw)) / 1_000_000, lat = Double(Int32(truncatingIfNeeded: latRaw)) / 1_000_000
+        return (-90...90).contains(lat) && (-180...180).contains(lng) && !(lat == 0 && lng == 0) ? LatLng(lat, lng) : nil
+    }
+
+    private mutating func scan(_ data: Data, path: String, depth: Int) {
+        guard depth < 7, data.count >= 2, let fields = ProtoReader.fields(data) else { return }
+        if let p = Self.place(fields) {
+            if (places[path]?.count ?? 0) < 3000 { places[path, default: []].append(p) }
+        }
+        for f in fields {
+            guard let inner = f.bytes, !inner.isEmpty else { continue }
+            if let text = f.string, text.count >= 3, text.count <= 60,
+               text.unicodeScalars.allSatisfy({ $0.value >= 32 && $0.value < 127 }) {
+                let root = String(path.split(separator: ".").first ?? "")
+                if (words[root]?.count ?? 0) < 12, !(words[root] ?? []).contains(text) { words[root, default: []].append(text) }
+            }
+            scan(inner, path: "\(path).\(f.number)", depth: depth + 1)
+        }
     }
 }
