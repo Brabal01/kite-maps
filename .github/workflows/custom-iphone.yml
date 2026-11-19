@@ -2,6 +2,8 @@ name: Build custom iPhone IPA
 
 on:
   workflow_dispatch:
+  push:
+    branches: [iphone-custom-v9]
 
 permissions:
   contents: read
@@ -53,6 +55,9 @@ jobs:
         # signature fixes that; the sideloader still re-signs with your Apple ID.
         run: |
           APP=build/Build/Products/Release-iphoneos/Kite.app
+          WIDGET="$APP/PlugIns/NavigationWidget.appex"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $((1000 + GITHUB_RUN_NUMBER))" "$WIDGET/Info.plist"
+          codesign --force --sign - --timestamp=none "$WIDGET"
           for f in "$APP"/Frameworks/*.framework; do
             codesign --force --sign - --timestamp=none "$f"
           done
@@ -70,3 +75,4 @@ jobs:
         with:
           name: Kite-custom-ipa
           path: Kite.ipa
+
