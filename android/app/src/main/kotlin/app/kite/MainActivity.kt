@@ -117,14 +117,17 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
             listOf(model.mapTick, model.results, model.selected?.id, model.directions, model.nav, model.openNowOnly, model.rating4Only,
                 s.traffic, s.satellite, s.terrain, s.transitLines, s.speedCameras, s.plateCameras, s.wazeOnMap, s.wazeHeatmap,
                 s.home, s.work, s.parking, s.saved, LocationService.authorized, model.tab,
-                s.welcomed, s.noGoogle, s.surveillanceCameras,
+                s.welcomed, s.noGoogle, s.surveillanceCameras, s.wazeOn, s.wazeKinds, s.wazeMaxAge,
                 s.liveCams, s.liveRoadCams, s.liveWebcams, LiveCamStore.version)
         }.collect { kiteMap.render() }
     }
     // Kept on while driving; once arrived the phone goes in a pocket, so the screen may sleep (like the iPhone).
     val screenOn = model.nav?.let { !it.arrived } ?: false
     LaunchedEffect(screenOn) { activity.keepScreenOn(screenOn) }
-    LaunchedEffect(s.wazeOn) { if (!s.wazeOn) WazeWeb.shutDown() }
+    LaunchedEffect(s.wazeOn, s.wazeOnMap, s.wazeHeatmap) {
+        if (!s.wazeOn) WazeWeb.shutDown()
+        kiteMap.refreshWaze()
+    }
 
     val ready = s.welcomed && !s.needsWazeChoice
     val perms = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { r ->

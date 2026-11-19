@@ -92,13 +92,8 @@ object PlaceSearch {
                 var places = GoogleClient.shared.search(q, center, spanMeters)
                 if (places.isNotEmpty()) {
                     places = nearFirst(places, center)
-                    val top = places.first()
-                    if (top.location.distanceTo(center) > farMeters) {
-                        val osm = photonOrNothing(q, center)
-                        val near = osm.filter { it.location.distanceTo(center) < nearMeters }
-                        if (near.isNotEmpty()) return Result(near + places)
-                    }
-                    return Result(places)
+                    if (!needsNearbyFallback(places, center)) return Result(places)
+                    return Result(withNearbyFallback(places, photonOrNothing(q, center), center))
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -118,6 +113,15 @@ object PlaceSearch {
         throw e
     } catch (e: Exception) {
         emptyList()
+    }
+
+    fun needsNearbyFallback(places: List<Place>, center: LatLng): Boolean =
+        places.firstOrNull()?.location?.distanceTo(center)?.let { it > farMeters } ?: true
+
+    fun withNearbyFallback(primary: List<Place>, open: List<Place>, center: LatLng): List<Place> {
+        if (primary.isEmpty()) return open
+        val nearby = open.filter { p -> p.location.distanceTo(center) < nearMeters && primary.none(p::matchesNearby) }
+        return nearby + primary
     }
 
     /** Results within 100 km keep Google's order but go ahead of any more than 300 km away. */

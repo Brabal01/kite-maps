@@ -580,15 +580,19 @@ class Navigator(route0: Route, val destination: Place, stops0: List<Place>, priv
     private fun checkWaze(p: RouteTracker.Progress) {
         if (demoAlerts) return
         val s = AppSettings
+        if (!s.wazeOn) {
+            wazeAhead = null
+            return
+        }
         if (since(wazeAt) > 90) loadWaze()
         wazeAhead?.let { ahead ->
-            val hit = routeWaze.firstOrNull { it.alert.id == ahead.alert.id }
+            val hit = routeWaze.firstOrNull { it.alert.id == ahead.alert.id && s.shows(it.alert) }
             wazeAhead = if (hit != null && hit.along > p.alongMeters - 10) {
                 val a = ahead.copy(meters = max(hit.along - p.alongMeters, 0.0))
                 if (a.meters > 0) a else null
             } else null
         }
-        if (!s.wazeOn || speedMps < CameraAlerts.movingFloor) return
+        if (speedMps < CameraAlerts.movingFloor) return
         val lead = min(max(speedMps * 20, 250.0), 1200.0)
         val next = routeWaze.firstOrNull {
             !spokenWaze.contains(it.alert.id) && s.shows(it.alert) && it.along > p.alongMeters && it.along - p.alongMeters <= lead

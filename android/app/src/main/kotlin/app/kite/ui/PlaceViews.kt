@@ -100,8 +100,12 @@ fun PlaceBody(model: AppModel, place: Place) {
             }
         }
         if (tab == 0) PlaceOverview(place) else PlaceAbout(place)
-        Text(if (place.source == "google") "Place details from Google Maps" else "Map data © OpenStreetMap contributors",
-            fontSize = KType.caption, color = secondaryText)
+        val attribution = when (place.source) {
+            "google" -> "Place details from Google Maps"
+            "mapbox" -> "Map data © Mapbox and OpenStreetMap contributors"
+            else -> "Map data © OpenStreetMap contributors"
+        }
+        Text(attribution, fontSize = KType.caption, color = secondaryText)
     }
 }
 

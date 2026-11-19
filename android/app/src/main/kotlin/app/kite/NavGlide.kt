@@ -21,6 +21,7 @@ import kotlin.math.*
  */
 class NavGlide : Choreographer.FrameCallback {
     var map: MapLibreMap? = null
+    var mapTouched = false
     /** The map's height in dp. */
     var heightDp = 800f
     /**
@@ -197,7 +198,7 @@ class NavGlide : Choreographer.FrameCallback {
         val northTarget = if (look == MapLook.NORTH) 1.0 else 0.0
         northBlend += (northTarget - northBlend) * (if (dt == 0.0) 1.0 else 1 - exp(-dt / 0.3))
         if (abs(northTarget - northBlend) < 0.001) northBlend = northTarget
-        if (n.following) {
+        if (n.following && !mapTouched) {
             val d = KiteApp.app.resources.displayMetrics.density.toDouble()
             // North up: the map turns to face north and the car moves up to the middle, as the road
             // ahead can be any way round. Otherwise it faces the way you go with the car low down.
@@ -211,9 +212,9 @@ class NavGlide : Choreographer.FrameCallback {
             carSquash = (1 - 0.36 * (shownPitch / 50.0).coerceIn(0.0, 1.0)).toFloat()
             // A pitched camera sees farther than the same zoom flat: zoom in a little to match the iPhone's distance.
             val zoom = MapCam.zoomFor(shownAcross, coordNow.lat, 400f) + 0.35
-            m.moveCamera(CameraUpdateFactory.newCameraPosition(
-                CameraPosition.Builder().target(coordNow.ml()).zoom(zoom).tilt(shownPitch).bearing(heading)
-                    .padding(0.0, topInset(heightDp) * (1 - northBlend) * d, 0.0, BOTTOM_INSET * d).build()))
+            val camera = CameraPosition.Builder().target(coordNow.ml()).zoom(zoom).tilt(shownPitch).bearing(heading)
+                .padding(0.0, topInset(heightDp) * (1 - northBlend) * d, 0.0, BOTTOM_INSET * d).build()
+            if (camera != m.cameraPosition) m.moveCamera(CameraUpdateFactory.newCameraPosition(camera))
         }
     }
 

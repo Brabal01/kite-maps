@@ -170,6 +170,41 @@ object MapIcons {
         drawIcon(cv, icon, RectF(7.5f, 7.5f, 20.5f, 20.5f), Color.WHITE)
     }
 
+    /** Vela-style ambient POI pins, centered at the place so the tail doesn't shift the marker. */
+    fun registerMapPlaces(style: Style, satellite: Boolean) {
+        val backing = if (satellite) Color.WHITE else c(0x9AA0A6)
+        fun add(category: String, icon: ImageVector, categoryColor: Int) {
+            val marker = image(29f, 29f) { cv ->
+                val body = paint(backing)
+                val tail = Path().apply {
+                    moveTo(7f, 19f); lineTo(14.5f, 28f); lineTo(22f, 19f); close()
+                }
+                cv.drawPath(tail, body)
+                cv.drawCircle(14.5f, 14.5f, 11f, body)
+                cv.drawCircle(14.5f, 14.5f, 9f, paint(categoryColor))
+                drawIcon(cv, icon, RectF(9f, 9f, 20f, 20f), Color.WHITE)
+            }
+            style.addImage("poi-$category", marker)
+        }
+        for (k in kinds) {
+            val category = k.name.removePrefix("cat-")
+            val color = when (category) {
+                "food" -> c(0xE8710A)
+                "shop" -> c(0x4285F4)
+                "hotel" -> c(0xC2185B)
+                "health" -> c(0xD93025)
+                "transit" -> c(0x1A73E8)
+                else -> k.color
+            }
+            add(category, k.icon, color)
+        }
+        add("edu", Icons.Filled.School, c(0x00897B))
+        add("civic", Icons.Filled.AccountBalance, c(0x5F6368))
+        add("culture", Icons.Filled.Museum, c(0x9334E6))
+        add("sport", Icons.Filled.SportsSoccer, c(0xE37400))
+        add("default", Icons.Filled.Place, c(0x5F6368))
+    }
+
     private fun selectedPin() = image(34f, 46f) { cv ->
         val p = Path().apply {
             moveTo(17f, 44f)

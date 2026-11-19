@@ -11,6 +11,9 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -75,6 +78,7 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
     var showSteps by remember { mutableStateOf(false) }
     var showAlong by remember { mutableStateOf(false) }
     var confirmEnd by remember { mutableStateOf(false) }
+    var turnPreview by remember(nav) { mutableStateOf(false) }
     // Screenshot run: the end trip question.
     if (DemoScript.step == "endtrip") LaunchedEffect(Unit) { kotlinx.coroutines.delay(4000); confirmEnd = true }
 
@@ -156,7 +160,16 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
                         model.endNavigation()
                     }
                 } else if (nav.route.mode == TravelMode.DRIVE) {
-                    DrivingBanner(nav, compact = h < 480.dp)
+                    DrivingTurns(nav, compact = h < 480.dp, previewing = turnPreview,
+                        onTurn = { turn ->
+                            if (turn != null) {
+                                turnPreview = true
+                                model.previewNavTurn(turn)
+                            } else if (turnPreview) {
+                                turnPreview = false
+                                model.recenterNav()
+                            }
+                        }, onSteps = { showSteps = true })
                 } else InstructionBanner(nav)
                 // One warning at a time; the others wait in the pill under it.
                 when (mainAlert) {
@@ -337,26 +350,58 @@ object Banner {
     }
 }
 
-private val drivePanel = Color(0xFF10213A)
-private val drivePanelInset = Color(0xFF1C3555)
-private val drivePanelAccent = Color(0xFF88D9FF)
-private val drivePanelSecondary = Color(0xFFC4D7EA)
+private val drivePanel = Color(0xFF094D4E)
+private val drivePanelInset = Color(0xFF063B40)
+private val drivePanelAccent = Color(0xFF85F5D4)
+private val drivePanelSecondary = Color(0xFFC8E6E5)
 
 @Composable
-private fun DrivingBanner(nav: Navigator, compact: Boolean) {
-    val maneuver = nav.nextManeuver
-    val distance = nav.progress?.distanceToNext
+private fun DrivingTurns(
+    nav: Navigator, compact: Boolean, previewing: Boolean,
+    onTurn: (Maneuver?) -> Unit, onSteps: () -> Unit,
+) {
+    val next = nav.progress?.nextIndex ?: 0
+    val upcoming = remember(nav.route.maneuvers, next) {
+        nav.route.maneuvers.drop(next + 1).filter { !it.silent && !it.leavesRoundabout }
+    }
+    val liveOnTurn by rememberUpdatedState(onTurn)
+    key(nav.route.id, next) {
+        val pager = rememberPagerState { 1 + upcoming.size }
+        LaunchedEffect(pager.settledPage) {
+            liveOnTurn(upcoming.getOrNull(pager.settledPage - 1))
+        }
+        LaunchedEffect(nav.following) {
+            if (nav.following && previewing && pager.currentPage != 0) pager.scrollToPage(0)
+        }
+        HorizontalPager(pager, Modifier.widthIn(max = 452.dp).fillMaxWidth(),
+            userScrollEnabled = upcoming.isNotEmpty(), verticalAlignment = Alignment.Top) { page ->
+            val turn = upcoming.getOrNull(page - 1)
+            val distance = nav.progress?.let { progress ->
+                turn?.let { (it.alongMeters - progress.alongMeters).coerceAtLeast(0.0) } ?: progress.distanceToNext
+            }
+            DrivingBanner(turn ?: nav.nextManeuver, distance, nav.thenManeuver.takeIf { page == 0 },
+                compact, preview = page > 0, onSteps = onSteps)
+        }
+    }
+}
+
+@Composable
+private fun DrivingBanner(
+    maneuver: Maneuver?, distance: Double?, then: Maneuver?, compact: Boolean, preview: Boolean, onSteps: () -> Unit,
+) {
     val leftTraffic = maneuver?.let { Geo.drivesOnLeft(it.location) } ?: false
     val headline = Banner.headline(maneuver)
     val parts = Banner.split(headline)
     val road = parts?.second ?: maneuver?.road?.takeIf { it.isNotBlank() && it != headline }
     val instruction = parts?.first ?: headline
-    val lanes = if (maneuver != null && distance != null && distance < 1_500) LaneGuide.lanes(maneuver, leftTraffic) else null
-    val farAway = distance != null && distance > 3_200 && maneuver?.type != ManeuverType.ARRIVE
+    val lanes = if (maneuver != null && (preview || distance != null && distance < 1_500)) LaneGuide.lanes(maneuver, leftTraffic) else null
+    val farAway = !preview && distance != null && distance > 3_200 && maneuver?.type != ManeuverType.ARRIVE
     val shape = RoundedCornerShape(18.dp)
     val small = compact || farAway
 
-    Column(Modifier.widthIn(max = 452.dp).fillMaxWidth().shadow(6.dp, shape).clip(shape).background(drivePanel)) {
+    Column(Modifier.fillMaxWidth().clip(shape).background(drivePanel)
+        .border(1.dp, Color.White.copy(alpha = 0.16f), shape)
+        .clickable(onClickLabel = "Show route steps", onClick = onSteps)) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = if (small) 8.dp else 11.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -373,6 +418,7 @@ private fun DrivingBanner(nav: Navigator, compact: Boolean) {
                 }
             }
             Column(Modifier.weight(1f)) {
+                if (preview) Text("Upcoming turn", color = drivePanelSecondary, fontSize = 12.sp, maxLines = 1)
                 if (distance != null) Text(Fmt.distance(distance), color = Color.White,
                     fontSize = if (small) 26.sp else 36.sp, lineHeight = if (small) 29.sp else 38.sp,
                     fontWeight = FontWeight.ExtraBold, maxLines = 1)
@@ -391,7 +437,6 @@ private fun DrivingBanner(nav: Navigator, compact: Boolean) {
                     tileSize = if (compact) 29.dp else 34.dp, driving = true)
             }
         }
-        val then = nav.thenManeuver
         if (!farAway && then != null) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -401,7 +446,7 @@ private fun DrivingBanner(nav: Navigator, compact: Boolean) {
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
-        if (distance != null && distance < 450 && maneuver?.type != ManeuverType.ARRIVE) {
+        if (!preview && distance != null && distance < 450 && maneuver?.type != ManeuverType.ARRIVE) {
             val progress = (1 - distance / 450).toFloat().coerceIn(0f, 1f)
             Box(Modifier.fillMaxWidth().height(3.dp).background(drivePanelInset)) {
                 Box(Modifier.fillMaxWidth(progress).fillMaxHeight().background(drivePanelAccent))

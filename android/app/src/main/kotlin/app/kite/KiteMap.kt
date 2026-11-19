@@ -8,6 +8,7 @@ import android.graphics.RectF
 import android.location.Location
 import android.util.Log
 import android.view.HapticFeedbackConstants
+import android.view.MotionEvent
 import android.widget.Toast
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -51,6 +52,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         const val OFF_ROUTE_OPACITY = 0.3
         /** Reports that always keep their own icon, never joining a numbered bubble. */
         val NEVER_GROUPED = setOf(WazeAlert.Kind.POLICE, WazeAlert.Kind.ACCIDENT)
+        private const val MAPBOX_POI = "kite-mapbox-poi"
         private fun c(hex: Long, a: Float = 1f) = Color.argb((a * 255).toInt(), ((hex shr 16) and 0xFF).toInt(), ((hex shr 8) and 0xFF).toInt(), (hex and 0xFF).toInt())
         private fun hex(l: Long) = String.format("#%06X", l and 0xFFFFFF)
     }
@@ -118,6 +120,16 @@ class KiteMap(private val model: AppModel, private val context: Context) {
 
     fun attach(v: MapView) {
         view = v
+        model.glide.mapTouched = false
+        // Pause frame-by-frame camera writes before the SDK has recognized the gesture.
+        v.setOnTouchListener { _, event ->
+            model.glide.mapTouched = when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> true
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> false
+                else -> model.glide.mapTouched
+            }
+            false
+        }
         v.getMapAsync { m ->
             map = m
             model.map = m
@@ -137,25 +149,46 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             else loadBasemap(m, checkNotNull(selectedStyle))
             m.addOnMapClickListener { tapped(m, it) }
             m.addOnMapLongClickListener { pressed(m, it); true }
+            fun stopFollowing() { model.nav?.following = false }
             m.addOnCameraMoveStartedListener { reason ->
-                if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) model.nav?.let { if (it.following) it.following = false }
+                if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) stopFollowing()
             }
             // Off a route in 3D or 2D, dragging or turning the map stops following; zooming doesn't.
             m.addOnMoveListener(object : MapLibreMap.OnMoveListener {
                 override fun onMoveBegin(detector: org.maplibre.android.gestures.MoveGestureDetector) {
-                    if (model.nav == null && model.browseFollowing) model.browseFollowing = false
+                    stopFollowing()
+                    if (model.nav == null) model.browseFollowing = false
                 }
                 override fun onMove(detector: org.maplibre.android.gestures.MoveGestureDetector) {}
                 override fun onMoveEnd(detector: org.maplibre.android.gestures.MoveGestureDetector) {}
             })
             m.addOnRotateListener(object : MapLibreMap.OnRotateListener {
                 override fun onRotateBegin(detector: org.maplibre.android.gestures.RotateGestureDetector) {
-                    if (model.nav == null && model.browseFollowing) model.browseFollowing = false
+                    stopFollowing()
+                    if (model.nav == null) model.browseFollowing = false
                 }
                 override fun onRotate(detector: org.maplibre.android.gestures.RotateGestureDetector) {}
                 override fun onRotateEnd(detector: org.maplibre.android.gestures.RotateGestureDetector) {}
             })
+            m.addOnScaleListener(object : MapLibreMap.OnScaleListener {
+                override fun onScaleBegin(detector: org.maplibre.android.gestures.StandardScaleGestureDetector) { stopFollowing() }
+                override fun onScale(detector: org.maplibre.android.gestures.StandardScaleGestureDetector) {}
+                override fun onScaleEnd(detector: org.maplibre.android.gestures.StandardScaleGestureDetector) {}
+            })
+            m.addOnShoveListener(object : MapLibreMap.OnShoveListener {
+                override fun onShoveBegin(detector: org.maplibre.android.gestures.ShoveGestureDetector) { stopFollowing() }
+                override fun onShove(detector: org.maplibre.android.gestures.ShoveGestureDetector) {}
+                override fun onShoveEnd(detector: org.maplibre.android.gestures.ShoveGestureDetector) {}
+            })
+            var lastFollowingRefresh = 0L
             m.addOnCameraIdleListener {
+                // Camera writes during following can fire idle every frame. Layer queries and
+                // network scheduling should run at a much lower rate during those updates.
+                if (model.nav?.following == true) {
+                    val at = android.os.SystemClock.elapsedRealtime()
+                    if (at - lastFollowingRefresh < 500L) return@addOnCameraIdleListener
+                    lastFollowingRefresh = at
+                }
                 loadCameras(m); loadWazeCameras(m); loadSurveillance(m); loadWaze(m); loadLiveCams(m); render(); updateHeat(m); loadRail(m); noteHeading(m)
             }
             m.addOnCameraMoveListener { noteHeading(m) }
@@ -163,6 +196,13 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             LiveCamStore.onChange = { render() }
             LocationService.last?.let { moveToUserOnce(it) }
         }
+    }
+
+    fun refreshWaze() {
+        val m = map ?: return
+        loadWaze(m)
+        loadWazeCameras(m)
+        render()
     }
 
     // Style
@@ -310,17 +350,25 @@ class KiteMap(private val model: AppModel, private val context: Context) {
     private fun addMapboxLayers(style: Style) {
         val labels = firstSymbolLayer(style)
         val building = style.layers.filterIsInstance<FillLayer>().firstOrNull { it.sourceLayer == "building" }
-        if (building != null && style.layers.none { it is FillExtrusionLayer && it.sourceLayer == "building" }) {
+        val extrusions = style.layers.filterIsInstance<FillExtrusionLayer>().filter { it.sourceLayer == "building" }
+        if (!AppSettings.satellite && dark) {
+            // Slate ground and lighter blue roofs make the building forms read above the roads.
+            style.layers.filterIsInstance<BackgroundLayer>().forEach { it.setProperties(backgroundColor(c(0x263348))) }
+            extrusions.forEach { it.setProperties(fillExtrusionColor(c(0x5B7191))) }
+        }
+        if (!AppSettings.satellite && building != null && extrusions.isEmpty()) {
             val extrusion = FillExtrusionLayer("kite-mapbox-buildings", building.sourceId).withSourceLayer("building")
                 .withFilter(eq(get("extrude"), literal("true")))
                 .withProperties(
-                    fillExtrusionColor(c(if (dark) 0x3C4655 else 0xC7C8C0)),
+                    fillExtrusionColor(c(if (dark) 0x5B7191 else 0xD8DFE7)),
                     fillExtrusionHeight(toNumber(get("height"))),
                     fillExtrusionBase(toNumber(get("min_height"))),
                 )
             extrusion.minZoom = 15f
             if (labels == null) style.addLayer(extrusion) else style.addLayerBelow(extrusion, labels)
         }
+
+        addMapboxPlaces(style)
 
         if (mapboxTrafficLayers(style).isEmpty()) {
             val id = "kite-mapbox-traffic"
@@ -340,6 +388,41 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         }
     }
 
+    private fun addMapboxPlaces(style: Style) {
+        val stock = style.layers.filterIsInstance<SymbolLayer>().filter { it.sourceLayer == "poi_label" }
+        val sourceId = stock.firstOrNull()?.sourceId
+            ?: style.layers.filterIsInstance<LineLayer>().firstOrNull { it.sourceLayer == "road" }?.sourceId
+            ?: return
+        // Navigation styles suppress many places. Draw Streets POIs using the category map markers.
+        MapIcons.registerMapPlaces(style, AppSettings.satellite)
+        stock.forEach { it.setProperties(visibility(Property.NONE)) }
+        val maki = get("maki")
+        val category = match(get("class"), literal("poi-default"),
+            stop("food_and_drink", "poi-food"), stop("food_and_drink_stores", "poi-shop"),
+            stop("store_like", "poi-shop"), stop("medical", "poi-health"), stop("lodging", "poi-hotel"),
+            stop("park_like", "poi-park"), stop("education", "poi-edu"), stop("public_facilities", "poi-civic"),
+            stop("arts_and_entertainment", "poi-culture"), stop("sport_and_leisure", "poi-sport"))
+        val icon = match(maki, category,
+            stop("cafe", "poi-coffee"), stop("bakery", "poi-coffee"), stop("fuel", "poi-gas"),
+            stop("charging-station", "poi-gas"), stop("parking", "poi-parking"), stop("bank", "poi-money"),
+            stop("rail", "poi-transit"), stop("bus", "poi-transit"), stop("pharmacy", "poi-health"))
+        val rank = coalesce(get("filterrank"), literal(5))
+        val poi = SymbolLayer(MAPBOX_POI, sourceId).withSourceLayer("poi_label")
+            .withFilter(has("name"))
+            .withProperties(
+                symbolSortKey(toNumber(rank)),
+                iconImage(icon), iconSize(interpolate(linear(), zoom(), stop(13, 0.66f), stop(17, 0.92f))),
+                iconPadding(5f), textOptional(true), textAnchor(Property.TEXT_ANCHOR_TOP),
+                textOffset(arrayOf(0f, 0.85f)), textPadding(3f), textMaxWidth(12f),
+                textField(step(zoom(), literal(""), stop(15, get("name")))),
+                textFont(overlayFont), textSize(11f),
+                textColor(c(if (dark) 0xE2EAF4 else 0x263A4F)),
+                textHaloColor(c(if (dark) 0x151F2A else 0xFFFFFF)), textHaloWidth(1.2f),
+            )
+        poi.minZoom = 13f
+        style.addLayer(poi)
+    }
+
     private fun addVelaLayers(style: Style) {
         fun grouped(id: String) = style.groupedSource(id)
         fun src(id: String, metrics: Boolean = false) {
@@ -355,7 +438,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         style.addSource(RasterSource("vela-terrain", TileSet("tiles", "https://services.arcgisonline.com/ArcGIS/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}")
             .apply { maxZoom = 16f; attribution = "Hillshade © Esri" }, 256))
         val hill = RasterLayer("vela-terrain", "vela-terrain").withProperties(rasterOpacity(if (dark) 0.22f else 0.32f), visibility(Property.NONE))
-        style.layers.firstOrNull { it.id.startsWith("tunnel_") || it.id.startsWith("road_") }?.let { style.addLayerBelow(hill, it.id) } ?: style.addLayer(hill)
+        style.layers.firstOrNull { it.id.startsWith("tunnel_") || it.id.startsWith("road_") || (it is LineLayer && it.sourceLayer == "road") }?.let { style.addLayerBelow(hill, it.id) } ?: style.addLayer(hill)
 
         // Google's live traffic tiles, the same keyless overlay Vela draws.
         val trafficURL = "https://www.google.com/maps/vt/pb=!1m4!1m3!1i{z}!2i{x}!3i{y}!2m9!1e2!2straffic!3i999999" +
@@ -372,7 +455,8 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         val altEdge = line("vela-route-alt-edge", "vela-route-alt", c(0x115E59), 11f).withProperties(lineOpacity(0.6f))
         val altFill = line("vela-route-alt", "vela-route-alt", c(0x5EEAD4), 7f).withProperties(lineOpacity(0.6f))
         // The light look: one plain teal line, no darker edge and no chevrons along it.
-        val edge = line("vela-route-edge", "vela-route", c(0x0F766E), 15f).withProperties(lineOpacity(0f))
+        val edge = line("vela-route-edge", "vela-route", c(if (showingMapbox) 0x075964 else 0x0F766E), 15f)
+            .withProperties(lineOpacity(if (showingMapbox) 0.95f else 0f))
         val fill = line("vela-route-line", "vela-route", c(0x2DD4BF), 10f).withProperties(
             lineGradient(interpolate(linear(), lineProgress(), stop(0, color(c(0x2DD4BF))), stop(1, color(c(0x22D3EE))))))
         val chevrons = SymbolLayer("vela-route-chevrons", "vela-route").withProperties(
@@ -564,7 +648,8 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             if (!showingMapbox) MapStyler.drive(style, navigating)
             styledDriving = navigating
             (style.getLayer("vela-route-line") as? LineLayer)?.setProperties(lineWidth(if (navigating) 12f else 10f))
-            (style.getLayer("vela-route-edge") as? LineLayer)?.setProperties(lineWidth(if (navigating) 22f else 15f))
+            (style.getLayer("vela-route-edge") as? LineLayer)?.setProperties(lineWidth(if (navigating) 17f else 15f))
+            visible(style, "vela-route-chevrons", showingMapbox && navigating)
         }
         if (!showingMapbox) for (id in listOf("building", "building-3d")) visible(style, id, !s.satellite && !navigating)
         renderResults(style)
@@ -1012,11 +1097,13 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             val id = str(f, "id")
             model.results.firstOrNull { it.id == id }?.let { model.select(it); return true }
         }
-        m.queryRenderedFeatures(box, "poi_r1", "poi_r7", "poi_r20", "poi_transit", "airport").firstOrNull()?.let { poi ->
-            val name = str(poi, "name:en") ?: str(poi, "name")
+        val poiLayers = if (showingMapbox) arrayOf(MAPBOX_POI) else arrayOf("poi_r1", "poi_r7", "poi_r20", "poi_transit", "airport")
+        m.queryRenderedFeatures(box, *poiLayers).firstOrNull()?.let { poi ->
+            val name = str(poi, "name") ?: str(poi, "name:en")
             val g = poi.geometry() as? Point
             if (name != null) {
-                model.resolveTapped(name, g?.let { LatLng(it.latitude(), it.longitude()) } ?: at.kite())
+                model.resolveTapped(name, g?.let { LatLng(it.latitude(), it.longitude()) } ?: at.kite(),
+                    str(poi, "category_en") ?: str(poi, "subclass"), if (showingMapbox) "mapbox" else "osm")
                 return true
             }
         }

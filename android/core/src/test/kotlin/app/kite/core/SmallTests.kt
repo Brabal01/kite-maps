@@ -74,6 +74,17 @@ class MapLinksTests {
 }
 
 class PlaceMatchingTests {
+    @Test fun localSuggestionsSupplementDistantResultsAndKeepDistantMatches() {
+        val center = LatLng(50.085, 14.42)
+        val local = Place("local", "Museum", center, "osm")
+        val remote = Place("remote", "Museum", LatLng(48.86, 2.35), "google")
+        val duplicate = remote.copy(id = "other-provider", source = "osm")
+        assertTrue(PlaceSearch.needsNearbyFallback(emptyList(), center))
+        assertTrue(PlaceSearch.needsNearbyFallback(listOf(remote), center))
+        assertFalse(PlaceSearch.needsNearbyFallback(listOf(local, remote), center))
+        assertEquals(listOf(local, remote), PlaceSearch.withNearbyFallback(listOf(remote), listOf(duplicate, local), center))
+        assertEquals(listOf(local), PlaceSearch.withNearbyFallback(emptyList(), listOf(local), center))
+    }
     @Test fun nearbyCopiesMatch() {
         val osm = Place("osm", "Perth Airport", LatLng(-31.93908, 115.968171), "osm")
         val google = Place("google", "perth airport", LatLng(-31.93920, 115.9683), "google")

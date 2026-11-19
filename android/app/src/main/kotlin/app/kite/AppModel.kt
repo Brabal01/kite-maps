@@ -209,7 +209,11 @@ class AppModel {
             val c = m.cameraPosition.target ?: return Pair(userLatLng ?: LatLng(51.5074, -0.1278), null)
             val b = m.projection.visibleRegion.latLngBounds
             val span = LatLng(b.latitudeSouth, b.longitudeWest).distanceTo(LatLng(b.latitudeNorth, b.longitudeEast)) / 1.4
-            return Pair(LatLng(c.latitude, c.longitude), if (span.isFinite() && span > 0) span else null)
+            val center = LatLng(c.latitude, c.longitude)
+            // A world view provides little local context for addresses or nearby businesses.
+            val here = userLatLng
+            if (here != null && (span > 120_000 || center == LatLng(51.5074, -0.1278))) return Pair(here, 20_000.0)
+            return Pair(center, span.takeIf { it.isFinite() && it > 0 }?.coerceIn(1_500.0, 120_000.0))
         }
 
     fun search(text: String? = null, title: String? = null) {
@@ -266,10 +270,13 @@ class AppModel {
                     places = it.places; queries = it.queries
                 }
             }
-            if (places.isEmpty() && queries.isEmpty()) Postcodes.lookup(q)?.let { places = listOf(it) }
-            if (places.isEmpty() && queries.isEmpty()) places = runCatching { Photon.search(q, vp.first, 8) }.getOrDefault(emptyList())
-            ensureActive()
             places = PlaceSearch.nearFirst(places, vp.first)
+            if (places.isEmpty()) Postcodes.lookup(q)?.let { places = listOf(it) }
+            if (PlaceSearch.needsNearbyFallback(places, vp.first)) {
+                val open = runCatching { Photon.search(q, vp.first, 8) }.getOrDefault(emptyList())
+                places = PlaceSearch.withNearbyFallback(places, open, vp.first)
+            }
+            ensureActive()
             if (user != null) places = places.map { it.copy(distanceMeters = user.distanceTo(it.location)) }
             val was = suggestions
             suggestions = SuggestParser.Result(
@@ -358,8 +365,8 @@ class AppModel {
     }
 
     /** A tap on a place the basemap draws: look it up on Google by name at that spot. */
-    fun resolveTapped(name: String, point: LatLng) {
-        resolve(Place(id = "tap:${point.lat},${point.lng}", name = name, location = point, source = "osm"))
+    fun resolveTapped(name: String, point: LatLng, category: String?, source: String) {
+        resolve(Place(id = "tap:${point.lat},${point.lng}", name = name, location = point, source = source, category = category))
     }
 
     /** Show [placeholder] right away, then swap in Google's full place found at the same spot. */
@@ -701,6 +708,14 @@ class AppModel {
         val n = nav ?: return
         n.following = true
         location.last?.let { followCamera(n, it, animated = true) }
+    }
+
+    fun previewNavTurn(turn: Maneuver) {
+        val n = nav ?: return
+        val m = map ?: return
+        n.following = false
+        MapCam.animate(m, CameraPosition.Builder().target(turn.location.ml()).zoom(16.8).tilt(24.0)
+            .padding(0.0, 0.0, 0.0, 0.0).build(), ms = 380)
     }
 
     /** Show the whole remaining trip; the camera stops following until re-centered. */
