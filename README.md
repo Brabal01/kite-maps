@@ -26,7 +26,8 @@ Open **Settings → Map & display → Mapbox public token** and save a public Ma
 Mapbox becomes the preferred basemap and provider for car routing, including traffic and
 rerouting. OpenFreeMap and Kite routing provide a fallback. You can switch providers under
 **Settings → Map & display → Prefer Mapbox**. The separate **Use Kite without Google** setting
-controls Google services.
+controls Google services. For apps primarily intended for in-vehicle use, Mapbox lists
+separate development and production licenses in its [Terms of Service](https://www.mapbox.com/legal/tos).
 
 The new turn panel takes its layout cues from [Horizon Maps](https://github.com/benbishop028-arch/Horizon-Maps).
 Mapbox vector styles are rendered by MapLibre. The attribution logo comes from

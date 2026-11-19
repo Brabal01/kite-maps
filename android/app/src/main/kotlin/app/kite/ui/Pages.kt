@@ -392,7 +392,7 @@ private fun MapboxSettings() {
     var editing by remember { mutableStateOf(false) }
     val configured = MapboxDirections.isPublicToken(s.mapboxPublicToken)
     SettingsGroup(header = "Map provider",
-        footer = "Mapbox supplies the map and calculates car routes with traffic. Mapbox receives the map area and route coordinates. OpenFreeMap and Kite routing are available as a fallback.") {
+        footer = "Mapbox receives the map area and route coordinates. OpenFreeMap and Kite routing are available as a fallback. Follow road signs, traffic signals and local traffic laws whenever they differ from the directions.") {
         ToggleRow("Prefer Mapbox", Icons.Outlined.Map, 0x1D4ED8, s.mapboxEnabled) { s.mapboxEnabled = it }
         RowDivider()
         Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).tap { editing = true }.padding(horizontal = 14.dp),
