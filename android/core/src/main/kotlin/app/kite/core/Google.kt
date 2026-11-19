@@ -87,6 +87,38 @@ class GoogleClient {
         return get(directionsEndpoint + "&pb=" + enc(pb), "https://www.google.com/", true)
     }
 
+    suspend fun reviews(featureId: String): List<PlaceReview> {
+        val pb = GooglePlaceMedia.reviewParameter(featureId) ?: return emptyList()
+        warm()
+        val legacy = try {
+            val body = get("https://www.google.com/maps/preview/review/listentitiesreviews?authuser=0&hl=en&gl=us&pb=" +
+                urlEnc(pb), "https://www.google.com/maps/", true)
+            GooglePlaceMedia.reviews(GoogleJSON.parse(body))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            emptyList()
+        }
+        if (legacy.isNotEmpty()) return legacy
+        val request = GooglePlaceMedia.reviewFeedRequest(featureId) ?: return emptyList()
+        return GooglePlaceMedia.reviewFeed(placeBatch("qv9Egd", request))
+    }
+
+    suspend fun photos(featureId: String): List<String> {
+        val request = GooglePlaceMedia.photoRequest(featureId) ?: return emptyList()
+        warm()
+        return GooglePlaceMedia.photos(placeBatch("hspqX", request))
+    }
+
+    private suspend fun placeBatch(rpc: String, request: String): String {
+        val url = "https://www.google.com/maps/_/MapsWizUi/data/batchexecute?rpcids=$rpc&source-path=%2Fmaps&hl=en&gl=us&rt=c"
+        val response = Http.post(url, ("f.req=" + urlEnc(request)).toByteArray(), "application/x-www-form-urlencoded",
+            mapOf("User-Agent" to userAgent, "Origin" to "https://www.google.com", "Referer" to "https://www.google.com/maps/",
+                "X-Same-Domain" to "1", "x-maps-diversion-context-bin" to "CAE="), client)
+        if (!response.ok) throw KiteError.http(response.code)
+        return response.text
+    }
+
     private suspend fun warm() = warmLock.withLock {
         if (warmed) return@withLock
         // Only counts once Google answered: opened with no signal, try again on the next search.
@@ -249,6 +281,8 @@ object SearchParser {
         val h118 = readHours(field(entry, "hours118"))
         p.hours = if (rich == null && s118 != null) h118.ifEmpty { h203 } else h203.ifEmpty { h118 }
         p.photoUrls = photos(entry)
+        p.streetViewHint = sequenceOf(field(entry, "photos"), at(entry, 1, 204, 0))
+            .mapNotNull(GooglePlaceMedia::streetViewHint).firstOrNull()
         p.featuredReview = gstr(field(entry, "featuredReview"))?.trim('"', '“', '”', ' ', '\n')?.nilIfBlank()
         p.editorialSummary = gstr(field(entry, "editorialSummary"))?.trim()?.nilIfBlank()
         p.about = (arr(field(entry, "about")) ?: emptyList()).mapNotNull { s ->
@@ -280,17 +314,8 @@ object SearchParser {
         "$name: ${ranges.joinToString(", ")}" + (note?.let { " · $it" } ?: "")
     }
 
-    private fun photos(entry: Any?): List<String> {
-        val out = mutableListOf<String>()
-        fun add(u: String?) {
-            if (u == null || !u.contains("googleusercontent")) return
-            val sized = u.replace(Regex("=w\\d+-h\\d+.*$"), "=w800-h600")
-            if (sized !in out) out.add(sized)
-        }
-        (arr(field(entry, "photos")) ?: emptyList()).forEach { add(gstr(at(it, 6, 0))) }
-        (arr(at(entry, 1, 204, 0)) ?: emptyList()).forEach { add(gstr(at(it, 1, 2, 0, 0))) }
-        return out.take(12)
-    }
+    private fun photos(entry: Any?): List<String> = GooglePlaceMedia.imageUrls(
+        listOf(field(entry, "photos"), at(entry, 1, 105, 0), at(entry, 1, 204, 0)), limit = 24)
 
     /** "Safeway, 1451 W Covell Blvd" reads the name twice under the title; drop the prefix. */
     fun stripNamePrefix(addr: String, name: String): String {

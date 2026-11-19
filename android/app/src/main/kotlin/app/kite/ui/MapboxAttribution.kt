@@ -16,6 +16,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -24,12 +25,15 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import app.kite.R
 
+internal val LocalMapboxAttribution = staticCompositionLocalOf<(() -> Boolean)?> { null }
+
 @Composable
 internal fun MapboxAttribution(modifier: Modifier = Modifier) {
     var open by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val mapbox = LocalMapboxAttribution.current
     Row(modifier.clip(RoundedCornerShape(6.dp)).background(Color.White.copy(alpha = 0.92f))
-        .clickable(onClickLabel = "Map attribution") { open = true }.padding(horizontal = 5.dp)) {
+        .clickable(onClickLabel = "Map attribution") { if (mapbox?.invoke() != true) open = true }.padding(horizontal = 5.dp)) {
         Image(painterResource(R.drawable.mapbox_attribution), "Mapbox", Modifier.height(23.dp))
     }
     if (open) AlertDialog(

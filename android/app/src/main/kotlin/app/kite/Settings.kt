@@ -47,6 +47,11 @@ object AppSettings {
     /** The voice button's middle setting, "Alerts only": remembered with `voice`, so the next drive starts the same. */
     var voiceAlertsOnly by bool("voiceAlertsOnly")
     var mapboxEnabled by bool("mapboxEnabled", true)
+    var standardMap by bool("standardMap", true)
+    var terrain3D by bool("terrain3D")
+    var buildingShadows by bool("buildingShadows", true)
+    var streetLamps by bool("streetLamps", true)
+    var googleMapPlaces by bool("googleMapPlaces")
     var mapboxPublicToken by Pref("mapboxPublicToken", { it.getString("mapboxPublicToken", "").orEmpty() },
         { e, token -> e.putString("mapboxPublicToken", token) })
     val activeMapboxToken: String? get() = mapboxPublicToken.takeIf {
@@ -179,6 +184,7 @@ object PlaceCodec {
         "featuredReview" to p.featuredReview, "editorialSummary" to p.editorialSummary,
         "about" to p.about.map { mapOf("title" to it.title, "items" to it.items) },
         "featureId" to p.featureId, "placeId" to p.placeId, "distanceMeters" to p.distanceMeters,
+        "streetViewId" to p.streetViewHint?.id, "streetViewYaw" to p.streetViewHint?.yaw,
     ).filterValues { it != null }
 
     fun fromMap(m: Map<String, Any?>): Place? {
@@ -195,6 +201,7 @@ object PlaceCodec {
             featuredReview = m["featuredReview"].text(), editorialSummary = m["editorialSummary"].text(),
             about = m["about"].asMaps()?.map { AboutSection(it["title"].text() ?: "", it["items"].asList()?.filterIsInstance<String>() ?: emptyList()) } ?: emptyList(),
             featureId = m["featureId"].text(), placeId = m["placeId"].text(), distanceMeters = m["distanceMeters"].num(),
+            streetViewHint = m["streetViewId"].text()?.takeIf(StreetView::validId)?.let { StreetView.Hint(it, m["streetViewYaw"].num()) },
         )
     }
 

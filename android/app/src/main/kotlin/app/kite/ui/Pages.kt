@@ -377,6 +377,20 @@ private fun MapSettings() {
         ToggleRow("Parking button on the map", Icons.Filled.LocalParking, 0x2563EB, s.parkingButton) { s.parkingButton = it }
     }
     MapboxSettings()
+    SettingsGroup(header = "Mapbox Standard", footer = "Mapbox Standard uses your Mapbox token. Street lamps appear where OpenStreetMap maps them at street zoom.") {
+        ToggleRow("Mapbox Standard", Icons.Filled.ViewInAr, 0x0F766E, s.standardMap) { s.standardMap = it }
+        RowDivider()
+        ToggleRow("3D terrain", Icons.Filled.Terrain, 0x166534, s.terrain3D) { s.terrain3D = it }
+        RowDivider()
+        ToggleRow("Hillshade", Icons.Filled.Landscape, 0x475569, s.terrain) { s.terrain = it }
+        RowDivider()
+        ToggleRow("Building shadows", Icons.Filled.WbSunny, 0xB45309, s.buildingShadows) { s.buildingShadows = it }
+        RowDivider()
+        ToggleRow("Street lamps", Icons.Filled.Lightbulb, 0xB45309, s.streetLamps) { s.streetLamps = it }
+    }
+    SettingsGroup(header = "Places on the map", footer = "When enabled, Kite asks Google about nearby businesses after the map stops moving. Open map places are also displayed.") {
+        ToggleRow("More place icons from Google", Icons.Filled.Place, 0x1D4ED8, s.googleMapPlaces, enabled = !s.noGoogle) { s.googleMapPlaces = it }
+    }
     SettingsGroup(header = "While driving",
         footer = "Kite still zooms in for turns and out on long roads. Closer shows the streets bigger; Wider shows more road ahead. Normal is how Kite has always been.") {
         Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -631,7 +645,10 @@ fun LayersSheet(liveCount: Int? = null, close: () -> Unit) {
             @Composable fun ic(v: ImageVector) = Icon(v, null, tint = primaryText, modifier = Modifier.size(28.dp))
             tiles += { LayerTile("Traffic", s.traffic, { ic(Icons.Filled.Traffic) }) { s.traffic = !s.traffic } }
             tiles += { LayerTile("Transit", s.transitLines, { ic(Icons.Filled.Tram) }) { s.transitLines = !s.transitLines } }
-            tiles += { LayerTile("Terrain", s.terrain, { ic(Icons.Filled.Terrain) }) { s.terrain = !s.terrain } }
+            tiles += { LayerTile("Hillshade", s.terrain, { ic(Icons.Filled.Landscape) }) { s.terrain = !s.terrain } }
+            if (s.standardMap && s.activeMapboxToken != null) {
+                tiles += { LayerTile("3D terrain", s.terrain3D, { ic(Icons.Filled.Terrain) }) { s.terrain3D = !s.terrain3D } }
+            }
             tiles += { LayerTile("Speed cameras", s.speedCameras, { CameraBadge(RoadCamera.Kind.SPEED, 34.dp) }) { s.speedCameras = !s.speedCameras } }
             tiles += { LayerTile("Plate cameras", s.plateCameras, { CameraBadge(RoadCamera.Kind.PLATE, 34.dp) }) { s.plateCameras = !s.plateCameras } }
             tiles += { LayerTile("Surveillance", s.surveillanceCameras, { ic(Icons.Filled.Videocam) }) { s.surveillanceCameras = !s.surveillanceCameras } }

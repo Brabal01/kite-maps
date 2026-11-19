@@ -329,8 +329,14 @@ class RouteTracker(val route: Route) {
 
 /** Google Street View, keyless: the panorama lookup Google's own pages use, a thumbnail, and image tiles. */
 object StreetView {
-    data class Panorama(val id: String, val location: LatLng, val width: Int = 16384, val height: Int = 8192, val heading: Double = 0.0) {
+    data class Hint(val id: String, val yaw: Double?)
+
+    data class Panorama(
+        val id: String, val location: LatLng, val width: Int = 16384, val height: Int = 8192,
+        val heading: Double = 0.0, val tileSize: Int = 512, val levels: List<Pair<Int, Int>> = emptyList(),
+    ) {
         fun size(zoom: Int): Pair<Int, Int> {
+            levels.getOrNull(zoom)?.let { return it }
             val f = 1 shl max(0, 5 - zoom)
             return (width / f) to (height / f)
         }
@@ -338,37 +344,61 @@ object StreetView {
 
     const val searchEndpoint = "https://maps.googleapis.com/\$rpc/google.internal.maps.mapsjs.v1.MapsJsInternalService/SingleImageSearch"
     private val client = Http.client(12)
+    private val panoIdPattern = Regex("^[A-Za-z0-9_-]{20,25}$")
+    fun validId(id: String) = panoIdPattern.matches(id)
+    val headers = mapOf("User-Agent" to GoogleClient.userAgent, "Referer" to "https://www.google.com/maps/")
+    val imageHeaders = mapOf(
+        "User-Agent" to GoogleClient.userAgent, "Referer" to "https://www.google.com/",
+        "Accept" to "image/avif,image/webp,image/apng,*/*;q=0.8", "Sec-Fetch-Dest" to "image",
+        "Sec-Fetch-Mode" to "no-cors", "Sec-Fetch-Site" to "cross-site",
+    )
 
     fun searchBody(p: LatLng, radius: Int): String =
-        "[[\"apiv3\",null,null,null,\"US\",null,null,null,null,null,[[0]]]," +
-            "[[null,null,${p.lat.plain()},${p.lng.plain()}],$radius]," +
-            "[null,[\"en\",\"US\"],null,null,null,null,null,null,[2],null,[[[2,true,2]]]]," +
-            "[[1,2,3,4,8,6]]]"
+        """[["apiv3",null,null,null,"US",null,null,null,null,null,[[0]]],[[null,null,${p.lat.plain()},${p.lng.plain()}],$radius],[null,["en","US"],null,null,null,null,null,null,[2],null,[[[2,1,2]]]],[[1,2,3,4,8,6]]]"""
 
-    /** The nearest official Google panorama within [radius] meters, or null. */
-    suspend fun find(p: LatLng, radius: Int = 60): Panorama? = try {
-        val r = Http.post(searchEndpoint, searchBody(p, radius).toByteArray(), "application/json+protobuf",
-            mapOf("User-Agent" to GoogleClient.userAgent, "Referer" to "https://www.google.com/"), client)
-        parse(r.text)
-    } catch (e: CancellationException) { throw e } catch (e: Exception) { null }
+    suspend fun find(p: LatLng, radius: Int = 60): Panorama? {
+        for (distance in listOf(radius, max(radius, 200)).distinct()) {
+            val response = try {
+                Http.post(searchEndpoint, searchBody(p, distance).toByteArray(), "application/json+protobuf",
+                    headers + ("x-user-agent" to "grpc-web-javascript/0.1"), client)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                return null
+            }
+            if (response.ok) parse(response.text)?.let { return it }
+        }
+        return null
+    }
 
+    suspend fun byId(id: String): Panorama? {
+        if (!validId(id)) return null
+        val url = "https://www.google.com/maps/photometa/v1?authuser=0&hl=en&gl=us&pb=" +
+            "!1m4!1smaps_sv.tactile!11m2!2m1!1b1!2m2!1sen!2sus!3m3!1m2!1e2!2s$id" +
+            "!4m57!1e1!1e2!1e3!1e4!1e5!1e6!1e8!1e12!2m1!1e1!4m1!1i48!5m1!1e1!5m1!1e2!6m1!1e1!6m1!1e2"
+        return Http.getOrNull(url, headers, client)?.takeIf { it.ok }?.let { parse(it.text) }?.takeIf { it.id == id }
+    }
+
+    // Vela's Street View parser handles the direct lookup and the pano-id reply.
     fun parse(text: String): Panorama? {
-        val idMatch = Regex("\\[2,\\s*\"[A-Za-z0-9_-]{22}\"\\]").find(text) ?: return null
-        val id = idMatch.value.filter { it != ' ' }.drop(4).dropLast(2)
-        val r = Regex("\\[\\[null,null,-?\\d+\\.\\d+,\\s*-?\\d+\\.\\d+\\]").find(text) ?: return null
-        val nums = r.value.drop(12).dropLast(1).split(",").mapNotNull { it.trim().toDoubleOrNull() }
-        if (nums.size != 2) return null
-        var pano = Panorama(id, LatLng(nums[0], nums[1]))
-        val after = text.substring(idMatch.range.last + 1)
-        Regex("^,\\[\\d+,\\d+,\\[\\d+,\\d+\\]").find(after)?.let { m ->
-            val n = m.value.split(Regex("[^0-9]+")).mapNotNull { it.toIntOrNull() }
-            if (n.size == 4 && n[3] >= 1024) pano = pano.copy(height = n[2], width = n[3])
-        }
-        val rest = text.substring(r.range.last + 1)
-        Regex("^,\\[[^\\]]*\\],\\[-?\\d+(\\.\\d+)?").find(rest)?.let { m ->
-            m.value.split("[").last().toDoubleOrNull()?.let { pano = pano.copy(heading = it) }
-        }
-        return pano
+        val root = GoogleJSON.parse(text.trim()) ?: return null
+        val node = listOf(at(root, 1), at(root, 1, 0)).firstOrNull {
+            (at(it, 1, 1) as? String)?.let(::validId) == true
+        } ?: return null
+        val id = at(node, 1, 1) as String
+        val position = at(node, 5, 0, 1) ?: at(node, 3)
+        val lat = gdbl(at(position, 0, 2))?.takeIf { it in -90.0..90.0 } ?: return null
+        val lng = gdbl(at(position, 0, 3))?.takeIf { it in -180.0..180.0 } ?: return null
+        val dims = arr(at(node, 2, 3, 0)).orEmpty()
+        val levels = dims.mapNotNull { level ->
+            val w = gint(at(level, 0, 1))?.takeIf { it in 1..65536 } ?: return@mapNotNull null
+            val h = gint(at(level, 0, 0))?.takeIf { it in 1..32768 } ?: return@mapNotNull null
+            w to h
+        }.takeIf { it.size == dims.size }.orEmpty()
+        val tileSize = gint(at(node, 2, 3, 1, 0))?.takeIf { it in 128..1024 } ?: 512
+        val width = levels.lastOrNull()?.first ?: gint(at(node, 2, 2, 1))?.takeIf { it in 1024..65536 } ?: 16384
+        val height = levels.lastOrNull()?.second ?: gint(at(node, 2, 2, 0))?.takeIf { it in 512..32768 } ?: 8192
+        return Panorama(id, LatLng(lat, lng), width, height, gdbl(at(position, 2, 0)) ?: 0.0, tileSize, levels)
     }
 
     fun tileUrl(pano: Panorama, x: Int, y: Int, zoom: Int) =

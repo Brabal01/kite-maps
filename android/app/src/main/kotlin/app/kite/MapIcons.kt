@@ -37,6 +37,17 @@ object MapIcons {
         return kinds.firstOrNull { k -> k.words.any { cat.contains(it) } }?.name ?: "cat-default"
     }
 
+    fun ambientName(place: Place): String {
+        val category = place.category.orEmpty().lowercase()
+        return when {
+            listOf("school", "college", "university", "nursery").any(category::contains) -> "poi-edu"
+            listOf("museum", "theatre", "theater", "art gallery").any(category::contains) -> "poi-culture"
+            listOf("stadium", "sports", "gym").any(category::contains) -> "poi-sport"
+            listOf("library", "town hall", "post office").any(category::contains) -> "poi-civic"
+            else -> "poi-" + iconName(place).removePrefix("cat-")
+        }
+    }
+
     private val density get() = KiteApp.app.resources.displayMetrics.density
 
     /** A bitmap [w] x [h] dp, drawn in dp units, at the screen's density. */
@@ -74,30 +85,32 @@ object MapIcons {
         cv.restore()
     }
 
-    fun register(style: Style, dark: Boolean) {
-        for (k in kinds) style.addImage(k.name, dot(k.icon, k.color))
-        style.addImage("cat-default", dot(Icons.Filled.Place, c(0xE8453C)))
-        style.addImage("pin-selected", selectedPin())
-        style.addImage("pin-origin", originDot())
-        style.addImage("puck", puck(dark))
-        style.addImage("bubble-sel", bubble(c(0x0F766E), Color.WHITE))
-        style.addImage("bubble-alt", bubble(Color.WHITE, c(0xBDC1C6)))
-        style.addImage("road-pill", bubble(c(0x2DD4BF), c(0x0F766E)))
-        style.addImage("cam-speed", speedCamera())
-        style.addImage("cam-plate", plateCamera())
-        style.addImage("cam-surveillance", badge(c(0x22863A)) { cv, _ -> drawIcon(cv, Icons.Filled.Videocam, RectF(12f, 12f, 34f, 34f), Color.WHITE) })
-        style.addImage("traffic-light", trafficLight())
+    fun register(style: Style, dark: Boolean) = registerImages(dark) { id, bitmap -> style.addImage(id, bitmap) }
+
+    fun registerImages(dark: Boolean, add: (String, Bitmap) -> Unit) {
+        for (k in kinds) add(k.name, dot(k.icon, k.color))
+        add("cat-default", dot(Icons.Filled.Place, c(0xE8453C)))
+        add("pin-selected", selectedPin())
+        add("pin-origin", originDot())
+        add("puck", puck(dark))
+        add("bubble-sel", bubble(c(0x0F766E), Color.WHITE))
+        add("bubble-alt", bubble(Color.WHITE, c(0xBDC1C6)))
+        add("road-pill", bubble(c(0x2DD4BF), c(0x0F766E)))
+        add("cam-speed", speedCamera())
+        add("cam-plate", plateCamera())
+        add("cam-surveillance", badge(c(0x22863A)) { cv, _ -> drawIcon(cv, Icons.Filled.Videocam, RectF(12f, 12f, 34f, 34f), Color.WHITE) })
+        add("traffic-light", trafficLight())
         // Live camera photos: sky blue for road cameras, violet for Windy's scenic webcams.
-        style.addImage("livecam-road", dot(Icons.Filled.Videocam, c(0x0284C7)))
-        style.addImage("livecam-web", dot(Icons.Filled.Landscape, c(0x7C3AED)))
-        for (k in WazeAlert.Kind.entries) style.addImage("waze-${k.key}", waze(k))
-        style.addImage("turn-head", turnHead())
-        style.addImage("route-chevron", routeChevron())
-        style.addImage("pin-stop", dot(Icons.Filled.RadioButtonChecked, c(0x5F6368)))
-        style.addImage("mine-home", dot(Icons.Filled.Home, c(0x1A73E8)))
-        style.addImage("mine-work", dot(Icons.Filled.Work, c(0x8D6E63)))
-        style.addImage("mine-parking", dot(Icons.Filled.LocalParking, c(0x1967D2)))
-        style.addImage("mine-saved", dot(Icons.Filled.Bookmark, c(0x0F9D58)))
+        add("livecam-road", dot(Icons.Filled.Videocam, c(0x0284C7)))
+        add("livecam-web", dot(Icons.Filled.Landscape, c(0x7C3AED)))
+        for (k in WazeAlert.Kind.entries) add("waze-${k.key}", waze(k))
+        add("turn-head", turnHead())
+        add("route-chevron", routeChevron())
+        add("pin-stop", dot(Icons.Filled.RadioButtonChecked, c(0x5F6368)))
+        add("mine-home", dot(Icons.Filled.Home, c(0x1A73E8)))
+        add("mine-work", dot(Icons.Filled.Work, c(0x8D6E63)))
+        add("mine-parking", dot(Icons.Filled.LocalParking, c(0x1967D2)))
+        add("mine-saved", dot(Icons.Filled.Bookmark, c(0x0F9D58)))
     }
 
     /** The head of the turn arrow drawn on the road: big and white with a teal edge, pointing up. */
@@ -171,7 +184,10 @@ object MapIcons {
     }
 
     /** Vela-style ambient POI pins, centered at the place so the tail doesn't shift the marker. */
-    fun registerMapPlaces(style: Style, satellite: Boolean) {
+    fun registerMapPlaces(style: Style, satellite: Boolean) =
+        registerMapPlaces(satellite) { id, bitmap -> style.addImage(id, bitmap) }
+
+    fun registerMapPlaces(satellite: Boolean, register: (String, Bitmap) -> Unit) {
         val backing = if (satellite) Color.WHITE else c(0x9AA0A6)
         fun add(category: String, icon: ImageVector, categoryColor: Int) {
             val marker = image(29f, 29f) { cv ->
@@ -184,7 +200,7 @@ object MapIcons {
                 cv.drawCircle(14.5f, 14.5f, 9f, paint(categoryColor))
                 drawIcon(cv, icon, RectF(9f, 9f, 20f, 20f), Color.WHITE)
             }
-            style.addImage("poi-$category", marker)
+            register("poi-$category", marker)
         }
         for (k in kinds) {
             val category = k.name.removePrefix("cat-")

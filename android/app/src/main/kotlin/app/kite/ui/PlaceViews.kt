@@ -35,6 +35,8 @@ import androidx.compose.ui.window.DialogProperties
 import app.kite.*
 import app.kite.core.*
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import java.util.Locale
 
@@ -42,6 +44,7 @@ import java.util.Locale
 fun PlaceHeader(model: AppModel, place: Place) {
     val dark = LocalDark.current
     val ctx = LocalContext.current
+    var share by remember(place.id) { mutableStateOf(false) }
     Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Box(Modifier.weight(1f)) {
@@ -51,7 +54,18 @@ fun PlaceHeader(model: AppModel, place: Place) {
                 }
             }
             CircleIconButton(if (AppSettings.isSaved(place)) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder) { AppSettings.toggleSaved(place) }
-            CircleIconButton(Icons.Filled.Share) { ctx.share(place.shareUrl) }
+            Box {
+                CircleIconButton(Icons.Filled.Share) { share = true }
+                DropdownMenu(share, { share = false }) {
+                    listOf("Open in Google Maps" to { ctx.open(place.shareUrl) },
+                        "Share Google Maps link" to { ctx.share(place.shareUrl) },
+                        "Share place name" to { ctx.share(place.name) },
+                        "Share coordinates" to { ctx.share("${place.location.lat.plain()}, ${place.location.lng.plain()}") },
+                    ).forEach { (label, action) ->
+                        DropdownMenuItem(text = { Text(label) }, onClick = { share = false; action() })
+                    }
+                }
+            }
             CircleIconButton(Icons.Filled.Close) { model.closePlace() }
         }
         PlaceMetaLine(place, here = model.userLatLng)
@@ -91,15 +105,32 @@ fun PlaceBody(model: AppModel, place: Place) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 80.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)) {
         PlaceActions(model, place, driveSeconds)
-        PhotoStrip(place.photoUrls, 140.dp, opensViewer = true, streetView = place, model = model)
-        if (place.about.isNotEmpty()) {
+        val googleMedia = !AppSettings.noGoogle && place.featureId != null
+        val mediaTabs = buildList {
+            add("Overview")
+            if (googleMedia && (place.reviewCount ?: 1) > 0) add("Reviews")
+            if (googleMedia || place.photoUrls.isNotEmpty()) add("Photos")
+            if (place.about.isNotEmpty()) add("About")
+        }
+        val selectedTab = mediaTabs.getOrNull(tab) ?: "Overview"
+        if (mediaTabs.size > 1) {
             SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                listOf("Overview", "About").forEachIndexed { i, label ->
-                    SegmentedButton(tab == i, { tab = i }, SegmentedButtonDefaults.itemShape(i, 2)) { Text(label) }
+                mediaTabs.forEachIndexed { i, label ->
+                    SegmentedButton(selectedTab == label, { tab = i }, SegmentedButtonDefaults.itemShape(i, mediaTabs.size)) {
+                        Text(label, maxLines = 1, style = MaterialTheme.typography.labelMedium)
+                    }
                 }
             }
         }
-        if (tab == 0) PlaceOverview(place) else PlaceAbout(place)
+        when (selectedTab) {
+            "Reviews" -> PlaceReviews(place)
+            "Photos" -> PlacePhotos(place)
+            "About" -> PlaceAbout(place)
+            else -> {
+                PhotoStrip(place.photoUrls, 140.dp, opensViewer = true, streetView = place, model = model)
+                PlaceOverview(place)
+            }
+        }
         val attribution = when (place.source) {
             "google" -> "Place details from Google Maps"
             "mapbox" -> "Map data © Mapbox and OpenStreetMap contributors"
@@ -107,6 +138,82 @@ fun PlaceBody(model: AppModel, place: Place) {
         }
         Text(attribution, fontSize = KType.caption, color = secondaryText)
     }
+}
+
+@Composable
+private fun PlaceReviews(place: Place) {
+    val ctx = LocalContext.current
+    val id = place.featureId ?: return
+    var reviews by remember(id) { mutableStateOf<List<PlaceReview>?>(null) }
+    var failed by remember(id) { mutableStateOf(false) }
+    var attempt by remember(id) { mutableIntStateOf(0) }
+    var openWeb by remember(id) { mutableStateOf(false) }
+    LaunchedEffect(id, attempt) {
+        failed = false
+        try {
+            reviews = GoogleClient.shared.reviews(id)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            failed = true
+        }
+    }
+    if (failed) {
+        Text("Reviews are temporarily unavailable.", color = secondaryText)
+        TextButton({ attempt++ }) { Text("Try again") }
+    } else if (reviews == null) {
+        CircularProgressIndicator(Modifier.size(26.dp))
+    } else if (reviews.orEmpty().isEmpty()) {
+        Text(place.featuredReview ?: "No reviews returned for this place.", color = secondaryText)
+    }
+    reviews.orEmpty().forEach { review ->
+        Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Text(review.author, fontWeight = FontWeight.Bold, color = primaryText)
+            val meta = listOfNotNull(review.stars?.let { "$it / 5" }, review.relativeTime).joinToString("  ·  ")
+            if (meta.isNotBlank()) Text(meta, fontSize = KType.caption, color = secondaryText)
+            review.text?.let { Text(it, color = primaryText) }
+            if (review.photos.isNotEmpty()) PhotoStrip(review.photos, 82.dp, opensViewer = true)
+        }
+        HorizontalDivider()
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        TextButton({ openWeb = true }) { Text("Read all reviews") }
+        TextButton({ ctx.open(place.shareUrl) }) { Text("Open Google Maps") }
+    }
+    if (openWeb && !AppSettings.noGoogle) GoogleReviewsPage(place) { openWeb = false }
+}
+
+@Composable
+private fun PlacePhotos(place: Place) {
+    val ctx = LocalContext.current
+    val id = place.featureId.takeUnless { AppSettings.noGoogle }
+    val previews = if (AppSettings.noGoogle) place.photoUrls.filterNot(::isGooglePhoto) else place.photoUrls
+    var gallery by remember(id) { mutableStateOf<List<String>?>(null) }
+    var viewing by remember(place.id) { mutableStateOf<Int?>(null) }
+    LaunchedEffect(id) {
+        gallery = if (id == null) emptyList() else try {
+            GoogleClient.shared.photos(id)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+    val photos = (previews + gallery.orEmpty()).distinctBy { it.substringBeforeLast("=w") }
+    if (gallery == null && id != null) CircularProgressIndicator(Modifier.size(26.dp))
+    photos.chunked(3).forEachIndexed { row, urls ->
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            urls.forEachIndexed { col, url ->
+                AsyncImage(url, "Photo ${row * 3 + col + 1}", contentScale = ContentScale.Crop,
+                    modifier = Modifier.weight(1f).aspectRatio(1f).clip(RoundedCornerShape(10.dp))
+                        .background(secondaryText.copy(alpha = 0.15f)).clickable { viewing = row * 3 + col })
+            }
+            repeat(3 - urls.size) { Spacer(Modifier.weight(1f)) }
+        }
+    }
+    if (photos.isEmpty() && gallery != null) Text("No photos returned for this place.", color = secondaryText)
+    if (id != null) TextButton({ ctx.open(place.shareUrl) }) { Text("More photos on Google Maps") }
+    viewing?.takeIf { it in photos.indices }?.let { PhotoViewer(photos, it) { viewing = null } }
 }
 
 @Composable
@@ -319,29 +426,45 @@ fun PhotoViewer(urls: List<String>, start: Int, close: () -> Unit) {
 /** The first tile of a place's photos: Google Street View looking at the place. */
 @Composable
 fun StreetViewTile(model: AppModel, place: Place, height: Dp) {
-    var pano by remember(place.id) { mutableStateOf<StreetView.Panorama?>(null) }
-    var loaded by remember(place.id) { mutableStateOf(false) }
-    LaunchedEffect(place.id) {
-        if (!AppSettings.noGoogle) pano = runCatching { StreetView.find(place.location) }.getOrNull()
+    val ctx = LocalContext.current
+    if (AppSettings.noGoogle) return
+    var pano by remember(place.id, place.streetViewHint) { mutableStateOf<StreetView.Panorama?>(null) }
+    var loaded by remember(place.id, place.streetViewHint) { mutableStateOf(false) }
+    fun heading(p: StreetView.Panorama): Double = place.streetViewHint?.takeIf { it.id == p.id }?.yaw
+        ?: if (p.location.distanceTo(place.location) > 2) Geo.bearing(p.location, place.location) else p.heading
+    LaunchedEffect(place.id, place.location, place.streetViewHint) {
+        val hint = place.streetViewHint
+        val resolved = hint?.let { StreetView.byId(it.id) } ?: StreetView.find(place.location)
+            ?: hint?.let { StreetView.Panorama(it.id, place.location, heading = it.yaw ?: 0.0) }
+        pano = resolved
         loaded = true
-        // Screenshot run only: open the viewer straight away.
-        val p = pano
-        if (p != null && DemoScript.step == "streetview") model.streetView = StreetViewRequest(place.name, p, Geo.bearing(p.location, place.location))
+        if (resolved != null && DemoScript.step == "streetview") {
+            model.streetView = StreetViewRequest(place.name, resolved, heading(resolved))
+        }
     }
     val p = pano
     if (p != null) {
-        val heading = Geo.bearing(p.location, place.location)
+        val heading = heading(p)
         Box(Modifier.size(height * 1.4f, height).clip(RoundedCornerShape(10.dp))
             .clickable { model.streetView = StreetViewRequest(place.name, p, heading) }) {
-            AsyncImage(StreetView.thumbnailUrl(p, heading), null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().background(secondaryText.copy(alpha = 0.15f)))
+            val thumbnail = ImageRequest.Builder(ctx).data(StreetView.thumbnailUrl(p, heading)).apply {
+                StreetView.imageHeaders.forEach { (name, value) -> addHeader(name, value) }
+            }.build()
+            AsyncImage(thumbnail, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().background(secondaryText.copy(alpha = 0.15f)))
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.5f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.55f))))
             Row(Modifier.align(Alignment.BottomStart).padding(8.dp), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Filled.Streetview, null, tint = Color.White, modifier = Modifier.size(16.dp))
                 Text("Street View", fontSize = KType.caption, fontWeight = FontWeight.SemiBold, color = Color.White)
             }
         }
-    } else if (!loaded) {
-        Box(Modifier.size(height * 1.4f, height).clip(RoundedCornerShape(10.dp)).background(secondaryText.copy(alpha = 0.15f)))
+    } else {
+        Box(Modifier.size(height * 1.4f, height).clip(RoundedCornerShape(10.dp)).background(Vela.tonal(LocalDark.current))
+            .clickable {
+                val at = "${place.location.lat.plain()},${place.location.lng.plain()}"
+                ctx.open("https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=$at")
+            }, contentAlignment = Alignment.Center) {
+            Text(if (loaded) "Open Street View" else "Loading Street View…", color = primaryText, fontWeight = FontWeight.SemiBold)
+        }
     }
 }
 

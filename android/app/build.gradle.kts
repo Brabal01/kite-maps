@@ -81,4 +81,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("org.maplibre.gl:android-sdk-opengl:13.6.1")
+    implementation("com.mapbox.maps:android-ndk27:11.32.1") {
+        exclude(group = "com.google.android.gms")
+    }
 }

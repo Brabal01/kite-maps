@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -58,6 +59,10 @@ fun StreetViewScreen(req: StreetViewRequest, close: () -> Unit) {
             Box(Modifier.fillMaxSize().pointerInput(Unit) {
                 detectTransformGestures { _, pan, zoom, _ -> renderer.gesture(pan.x, pan.y, zoom, size.width.toFloat()) }
             })
+            if (!renderer.ready) Box(Modifier.align(Alignment.Center).padding(30.dp), contentAlignment = Alignment.Center) {
+                if (renderer.loading) CircularProgressIndicator(color = Color.White)
+                else Text("Panorama unavailable. Open it in Google Maps below.", color = Color.White)
+            }
             // The close button and the place's name over the panorama.
             Row(Modifier.statusBarsPadding().padding(horizontal = 12.dp).padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically) {
@@ -92,6 +97,10 @@ class PanoRenderer(private val pano: StreetView.Panorama, startHeading: Double) 
     @Volatile private var pitch = 0.0
     @Volatile private var fov = 80.0
     @Volatile private var pending: Bitmap? = null
+    var loading by mutableStateOf(true)
+        private set
+    var ready by mutableStateOf(false)
+        private set
     private var program = 0
     private var texture = 0
     private var hasImage = false
@@ -109,7 +118,9 @@ class PanoRenderer(private val pano: StreetView.Panorama, startHeading: Double) 
                 val img = stitch(zoom, complete = zoom > 2) ?: continue
                 pending = img
                 view?.requestRender()
+                withContext(Dispatchers.Main) { ready = true }
             }
+            withContext(Dispatchers.Main) { loading = false }
         }
     }
 
@@ -127,15 +138,18 @@ class PanoRenderer(private val pano: StreetView.Panorama, startHeading: Double) 
     /** All of the panorama's tiles at [zoom], drawn into one picture. */
     private suspend fun stitch(zoom: Int, complete: Boolean = false): Bitmap? = coroutineScope {
         val (w, h) = pano.size(zoom)
-        val cols = ceil(w / 512.0).toInt(); val rows = ceil(h / 512.0).toInt()
+        if (w.toLong() * h > 10_000_000L) return@coroutineScope null
+        val size = pano.tileSize
+        val cols = ceil(w / size.toDouble()).toInt()
+        val rows = ceil(h / size.toDouble()).toInt()
         val tiles = (0 until rows).flatMap { y -> (0 until cols).map { x -> Triple(x, y, async {
-            Http.getOrNull(StreetView.tileUrl(pano, x, y, zoom))?.takeIf { it.ok }?.body?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
+            Http.getOrNull(StreetView.tileUrl(pano, x, y, zoom), StreetView.imageHeaders)?.takeIf { it.ok }?.body?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
         }) } }.mapNotNull { (x, y, d) -> d.await()?.let { Triple(x, y, it) } }
         if (tiles.isEmpty() || (complete && tiles.size < rows * cols)) return@coroutineScope null
         val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val cv = Canvas(out)
         cv.drawColor(android.graphics.Color.BLACK)
-        for ((x, y, b) in tiles) { cv.drawBitmap(b, null, Rect(x * 512, y * 512, x * 512 + 512, y * 512 + 512), null); b.recycle() }
+        for ((x, y, b) in tiles) { cv.drawBitmap(b, null, Rect(x * size, y * size, x * size + size, y * size + size), null); b.recycle() }
         out
     }
 

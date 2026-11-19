@@ -29,10 +29,19 @@ rerouting. OpenFreeMap and Kite routing provide a fallback. You can switch provi
 controls Google services. For apps primarily intended for in-vehicle use, Mapbox lists
 separate development and production licenses in its [Terms of Service](https://www.mapbox.com/legal/tos).
 
-The turn panel takes its layout cues from [Horizon Maps](https://github.com/benbishop028-arch/Horizon-Maps).
-Swipe across it to preview the following turns, or tap it for the route steps. The category
-markers on the Mapbox Streets layers follow [Vela Maps](https://github.com/PimpinPumpkin/Vela).
-Mapbox vector styles are rendered by MapLibre. The attribution logo comes from
+Mapbox Standard uses the native Mapbox renderer for 3D buildings and landmarks. Select 3D terrain,
+hillshade, building shadows or street lamps under **Settings → Map & display**. Lamps come from
+mapped OpenStreetMap street-lamp positions. Their models and the navigation styling come from
+[Horizon Maps](https://github.com/benbishop028-arch/Horizon-Maps). Terrain elevation is from
+[Terrain Tiles](https://registry.opendata.aws/terrain-tiles/).
+
+Swipe across the turn panel to preview following turns, or tap it for the route steps.
+The category markers, Google place media and Street View parsing follow
+[Vela Maps](https://github.com/PimpinPumpkin/Vela). **More place icons from Google** is optional.
+Place details include Reviews and Photos where Google provides them. Share offers a Google Maps
+link, place name and coordinates.
+
+MapLibre handles the classic map and open-data fallback. The attribution logo comes from
 [Mapbox GL JS 1.13.3](https://github.com/mapbox/mapbox-gl-js/tree/v1.13.3/src/css/svg).
 See [the Mapbox GL JS license](licenses/Mapbox-GL-JS.txt).
 

@@ -20,10 +20,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
 import app.kite.ui.*
-import org.maplibre.android.maps.MapView
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -97,18 +94,38 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val kiteMap = remember { KiteMap(model, ctx.applicationContext).also { DemoScript.kite = it } }
     val dark = LocalDark.current
+    val scenery = remember(kiteMap) { MapboxScenery(model, kiteMap).also { kiteMap.scenery = it } }
 
     // The map's own location dot follows the same fixes the drive uses.
     DisposableEffect(Unit) {
         val modelUpdate = LocationService.onUpdate
         LocationService.onUpdate = { f -> modelUpdate?.invoke(f); kiteMap.pushFix(f) }
-        onDispose { LocationService.onUpdate = modelUpdate }
+        model.glide.onMapPuck = { feature ->
+            scenery.updateOverlay(NavGlide.PUCK) {
+                feature?.toJson() ?: """{"type":"FeatureCollection","features":[]}"""
+            }
+        }
+        onDispose {
+            LocationService.onUpdate = modelUpdate
+            model.glide.onMapPuck = null
+        }
     }
     val driving = model.nav?.route?.mode == app.kite.core.TravelMode.DRIVE
     val mapboxToken = s.activeMapboxToken
     val satellite = s.satellite
-    LaunchedEffect(dark, driving, satellite, mapboxToken) {
-        kiteMap.applyBasemap(dark, driving, satellite, mapboxToken)
+    val standardToken = mapboxToken.takeIf { s.standardMap && s.welcomed }
+    LaunchedEffect(standardToken) { scenery.allowRetry() }
+    val usableStandardToken = standardToken.takeUnless { scenery.failed }
+    val standardReady = usableStandardToken != null && scenery.ready
+    val showingMapbox = standardReady || kiteMap.showingMapbox
+    val look = MapboxScenery.Look(dark, satellite, s.terrain3D, s.terrain, s.buildingShadows, s.streetLamps, s.traffic && !driving)
+    LaunchedEffect(look) { scenery.setLook(look) }
+    LaunchedEffect(dark, driving, satellite, mapboxToken, standardReady) {
+        kiteMap.applyBasemap(dark, driving, satellite && !standardReady, mapboxToken.takeUnless { standardReady })
+    }
+    LaunchedEffect(s.googleMapPlaces, s.noGoogle, model.tab, model.nav, model.directions, model.selected, model.results) {
+        kiteMap.refreshGooglePlaces()
+        LocationService.last?.let(scenery::updatePosition)
     }
 
     // Redraw the map's layers whenever anything they show changes.
@@ -148,33 +165,24 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
         model.mapWidthDp = maxWidth.value
         model.mapHeightDp = maxHeight.value
         model.glide.heightDp = maxHeight.value
-        AndroidView(modifier = Modifier.fillMaxSize(), factory = { c ->
-            MapView(c).also { v ->
-                v.onCreate(null)
-                kiteMap.attach(v)
-                lifecycle.addObserver(LifecycleEventObserver { _, e ->
-                    when (e) {
-                        Lifecycle.Event.ON_START -> v.onStart()
-                        Lifecycle.Event.ON_RESUME -> v.onResume()
-                        Lifecycle.Event.ON_PAUSE -> v.onPause()
-                        Lifecycle.Event.ON_STOP -> v.onStop()
-                        Lifecycle.Event.ON_DESTROY -> v.onDestroy()
-                        else -> {}
-                    }
-                })
-                if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) v.onStart()
-                if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) v.onResume()
-            }
-        })
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { c -> KiteMapSurface(c, lifecycle, kiteMap, scenery) },
+            onReset = null,
+            onRelease = { it.dispose() },
+            update = { it.show(usableStandardToken, standardReady, look) },
+        )
 
         val nav = model.nav
-        when {
-            nav != null -> NavigationOverlay(model, nav, kiteMap.showingMapbox)
-            model.directions != null -> DirectionsOverlay(model, kiteMap.showingMapbox)
-            else -> when (model.tab) {
-                AppTab.MAP -> BrowseOverlay(model, kiteMap.showingMapbox)
-                AppTab.SAVED -> SavedPage(model)
-                AppTab.SETTINGS -> SettingsPage(model)
+        CompositionLocalProvider(LocalMapboxAttribution provides if (standardReady) scenery::openAttribution else null) {
+            when {
+                nav != null -> NavigationOverlay(model, nav, showingMapbox)
+                model.directions != null -> DirectionsOverlay(model, showingMapbox)
+                else -> when (model.tab) {
+                    AppTab.MAP -> BrowseOverlay(model, showingMapbox)
+                    AppTab.SAVED -> SavedPage(model)
+                    AppTab.SETTINGS -> SettingsPage(model)
+                }
             }
         }
         val info = model.wazeInfo

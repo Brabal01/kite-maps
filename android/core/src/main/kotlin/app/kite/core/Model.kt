@@ -32,6 +32,7 @@ data class Place(
     var featureId: String? = null,
     var placeId: String? = null,
     var distanceMeters: Double? = null,
+    var streetViewHint: StreetView.Hint? = null,
 ) {
     /** The same nearby named feature across map and search providers. */
     fun matchesNearby(other: Place): Boolean {

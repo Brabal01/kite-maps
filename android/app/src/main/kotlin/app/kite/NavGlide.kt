@@ -22,6 +22,7 @@ import kotlin.math.*
 class NavGlide : Choreographer.FrameCallback {
     var map: MapLibreMap? = null
     var mapTouched = false
+    var onMapPuck: ((Feature?) -> Unit)? = null
     /** The map's height in dp. */
     var heightDp = 800f
     /**
@@ -127,6 +128,7 @@ class NavGlide : Choreographer.FrameCallback {
     }
 
     private fun clearPuck() {
+        onMapPuck?.invoke(null)
         (map?.style?.getSource(PUCK) as? GeoJsonSource)?.setGeoJson(org.maplibre.geojson.FeatureCollection.fromFeatures(emptyList()))
     }
 
@@ -190,8 +192,10 @@ class NavGlide : Choreographer.FrameCallback {
             val last = puckPushed
             val turned = abs(((shownBearing - puckPushedBearing + 540) % 360) - 180)
             if (last == null || now - puckPushedAt > 1_000_000_000L || last.distanceTo(coordNow) > 25 || turned > 20) {
-                (style.getSource(PUCK) as? GeoJsonSource)?.setGeoJson(
-                    Feature.fromGeometry(Point.fromLngLat(coordNow.lng, coordNow.lat)).apply { addNumberProperty("bearing", shownBearing) })
+                val marker = Feature.fromGeometry(Point.fromLngLat(coordNow.lng, coordNow.lat))
+                    .apply { addNumberProperty("bearing", shownBearing) }
+                (style.getSource(PUCK) as? GeoJsonSource)?.setGeoJson(marker)
+                onMapPuck?.invoke(marker)
                 puckPushed = coordNow; puckPushedAt = now; puckPushedBearing = shownBearing; puckOnMap = true
             }
         }
