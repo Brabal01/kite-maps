@@ -1,5 +1,233 @@
+diff --git a/App/Assets.xcassets/MapboxAttribution.imageset/Contents.json b/App/Assets.xcassets/MapboxAttribution.imageset/Contents.json
+new file mode 100644
+index 0000000..11917cf
+--- /dev/null
++++ b/App/Assets.xcassets/MapboxAttribution.imageset/Contents.json
+@@ -0,0 +1,12 @@
++{
++  "images": [
++    {
++      "filename": "wordmark.png",
++      "idiom": "universal"
++    }
++  ],
++  "info": {
++    "author": "xcode",
++    "version": 1
++  }
++}
+diff --git a/App/Assets.xcassets/MapboxAttribution.imageset/wordmark.png b/App/Assets.xcassets/MapboxAttribution.imageset/wordmark.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..db074c05bd6826fa1cf06820c4d00f614fbd347a
+GIT binary patch
+literal 10592
+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
+R(t^{G5G8pvxpJs!;QtS%XXyX{
+
+literal 0
+HcmV?d00001
+
 diff --git a/App/Sources/AppModel.swift b/App/Sources/AppModel.swift
-index b7a34ef..5b01765 100644
+index b7a34ef..a9278c9 100644
 --- a/App/Sources/AppModel.swift
 +++ b/App/Sources/AppModel.swift
 @@ -18,7 +18,7 @@ enum PickKind: String, Identifiable {
@@ -210,11 +438,26 @@ index b7a34ef..5b01765 100644
          directions?.routes = [:]
          directions?.selected = 0
          directions?.trips = nil
-@@ -605,9 +707,11 @@ final class AppModel: ObservableObject {
+@@ -605,9 +707,26 @@ final class AppModel: ObservableObject {
          loadAllModes()
      }
  
-+    func refreshWalkingRoutes() { if directions != nil { loadAllModes() } }
++    private var walkingSettingsTask: Task<Void, Never>?
++
++    func refreshWalkingRoutes() {
++        walkingSettingsTask?.cancel()
++        guard let d = directions, let (from, to) = endpoints(d) else { return }
++        let generation = routesRequest
++        let via = (d.reversed ? d.stops.reversed() : d.stops).map(\.location)
++        walkingSettingsTask = Task {
++            do { try await Task.sleep(nanoseconds: 350_000_000) } catch { return }
++            let answer = await Directions.routes(from: from, to: to, mode: .walk, via: via, alternatives: true)
++            guard !Task.isCancelled, generation == routesRequest, directions?.destination.id == d.destination.id,
++                  !answer.routes.isEmpty else { return }
++            directions?.routes[.walk] = answer.routes.sorted { $0.durationSeconds < $1.durationSeconds }
++            if directions?.mode == .walk { directions?.selected = 0; frameRoute() }
++        }
++    }
 +
      private func loadAllModes() {
          guard let d = directions else { return }
@@ -223,7 +466,7 @@ index b7a34ef..5b01765 100644
              // Say so on the trip card itself, not just in passing.
              let why = location.denied ? Self.locationOffText : "Waiting for your location…"
              for m in TravelMode.allCases { directions?.errors[m] = why }
-@@ -623,14 +727,13 @@ final class AppModel: ObservableObject {
+@@ -623,14 +742,13 @@ final class AppModel: ObservableObject {
              }
              return
          }
@@ -239,7 +482,7 @@ index b7a34ef..5b01765 100644
          for m in TravelMode.allCases {
              directions?.loading.insert(m)
              Task {
-@@ -640,8 +743,11 @@ final class AppModel: ObservableObject {
+@@ -640,8 +758,11 @@ final class AppModel: ObservableObject {
                  directions?.loading.remove(m)
                  // The fastest first, so it's the one picked (Matteo, 2026-11-13: a bike route marked
                  // "Slower route" was picked while one 5 min faster sat below it).
@@ -253,7 +496,7 @@ index b7a34ef..5b01765 100644
                      directions?.errors[m] = Connectivity.explain(r.error == "No route found." ? "No route found." : "Couldn't get a route just now. Try again in a moment.")
                  }
                  if m == directions?.mode {
-@@ -658,7 +764,7 @@ final class AppModel: ObservableObject {
+@@ -658,7 +779,7 @@ final class AppModel: ObservableObject {
  
      /** Transit trips for the current trip, leaving now or at the picked time. */
      func loadTransit() {
@@ -262,7 +505,7 @@ index b7a34ef..5b01765 100644
          transitLoadedAt = Date()
          // A new request either way, so one still loading can't put back trips without the stops.
          transitRequest += 1
-@@ -668,7 +774,6 @@ final class AppModel: ObservableObject {
+@@ -668,7 +789,6 @@ final class AppModel: ObservableObject {
              directions?.tripsError = "Public transport can't go via stops. Remove the stops to see trains and buses."
              return
          }
@@ -270,7 +513,7 @@ index b7a34ef..5b01765 100644
          let destId = d.destination.id
          let time = d.transitTime, arriveBy = d.arriveBy
          let req = transitRequest
-@@ -679,7 +784,7 @@ final class AppModel: ObservableObject {
+@@ -679,7 +799,7 @@ final class AppModel: ObservableObject {
              do {
                  let trips = try await Transitous.plan(from: from, to: to, time: time, arriveBy: arriveBy)
                  guard directions?.destination.id == destId, transitRequest == req else { return }
@@ -279,7 +522,7 @@ index b7a34ef..5b01765 100644
                  if trips.isEmpty { directions?.tripsError = "No transit trips found here." }
              } catch {
                  guard directions?.destination.id == destId, transitRequest == req else { return }
-@@ -692,12 +797,12 @@ final class AppModel: ObservableObject {
+@@ -692,12 +812,12 @@ final class AppModel: ObservableObject {
  
      func frameRoute() {
          if let t = directions?.pickedTrip {
@@ -294,7 +537,7 @@ index b7a34ef..5b01765 100644
      }
  
      /** Police risk within about a kilometre of you, from remembered and live Waze police reports. */
-@@ -716,29 +821,304 @@ final class AppModel: ObservableObject {
+@@ -716,29 +836,304 @@ final class AppModel: ObservableObject {
      // MARK: Navigation
  
      func startNavigation() {
@@ -605,7 +848,7 @@ index b7a34ef..5b01765 100644
          nav?.stop()
          glide.stop()
          nav = nil
-@@ -748,7 +1128,6 @@ final class AppModel: ObservableObject {
+@@ -748,7 +1143,6 @@ final class AppModel: ObservableObject {
          map?.showsUserLocation = true
          directions = nil
          showSteps = false
@@ -613,7 +856,7 @@ index b7a34ef..5b01765 100644
          browseFollowing = false
          resetCamera()
      }
-@@ -769,6 +1148,7 @@ final class AppModel: ObservableObject {
+@@ -769,6 +1163,7 @@ final class AppModel: ObservableObject {
              return
          }
          guard let loc = location.last else {
@@ -621,7 +864,7 @@ index b7a34ef..5b01765 100644
              if location.denied { LocationService.openSettings() } else { location.start() }
              return
          }
-@@ -800,6 +1180,7 @@ final class AppModel: ObservableObject {
+@@ -800,6 +1195,7 @@ final class AppModel: ObservableObject {
  
      func recenterNav() {
          guard let n = nav else { return }
@@ -629,7 +872,7 @@ index b7a34ef..5b01765 100644
          n.following = true
          if let loc = location.last { followCamera(n, loc, animated: true) }
      }
-@@ -807,21 +1188,84 @@ final class AppModel: ObservableObject {
+@@ -807,21 +1203,84 @@ final class AppModel: ObservableObject {
      /** Show the whole remaining trip; the camera stops following until re-centered. */
      func overviewNav() {
          guard let n = nav else { return }
@@ -716,7 +959,7 @@ index b7a34ef..5b01765 100644
      }
  
      /** Keeps the saved trip fresh while driving, and on arriving forgets it. */
-@@ -847,6 +1291,7 @@ final class AppModel: ObservableObject {
+@@ -847,6 +1306,7 @@ final class AppModel: ObservableObject {
      func cycleDriveLook() {
          settings.driveLook = settings.driveLook.next
          guard let n = nav else { return }
@@ -724,7 +967,7 @@ index b7a34ef..5b01765 100644
          n.following = true
          if let loc = location.last { followCamera(n, loc, animated: true) }
      }
-@@ -854,7 +1299,8 @@ final class AppModel: ObservableObject {
+@@ -854,7 +1314,8 @@ final class AppModel: ObservableObject {
      // MARK: Map
  
      func centerOnUser() {
@@ -734,7 +977,7 @@ index b7a34ef..5b01765 100644
              if location.denied { LocationService.openSettings() } else { location.start() }
              return
          }
-@@ -872,7 +1318,7 @@ final class AppModel: ObservableObject {
+@@ -872,7 +1333,7 @@ final class AppModel: ObservableObject {
      private func resetCamera() {
          guard let map else { return }
          let cam = map.camera
@@ -743,7 +986,7 @@ index b7a34ef..5b01765 100644
          cam.heading = 0
          map.setCamera(cam, withDuration: 0.5, animationTimingFunction: nil, edgePadding: .zero, completionHandler: nil)
      }
-@@ -881,10 +1327,10 @@ final class AppModel: ObservableObject {
+@@ -881,10 +1342,10 @@ final class AppModel: ObservableObject {
          guard let map, !points.isEmpty else { return }
          // Showing a place or a route: stop following, or the next fix would pull the map away.
          browseFollowing = false
@@ -756,7 +999,7 @@ index b7a34ef..5b01765 100644
                            animationTimingFunction: nil, edgePadding: UIEdgeInsets(top: 0, left: sideInset, bottom: 0, right: 0),
                            completionHandler: nil)
              return
-@@ -897,9 +1343,11 @@ final class AppModel: ObservableObject {
+@@ -897,9 +1358,11 @@ final class AppModel: ObservableObject {
          let pad = sideInset > 0 ? UIEdgeInsets(top: 60, left: sideInset + 40, bottom: 60, right: 40)
                                  : UIEdgeInsets(top: top, left: 40, bottom: map.bounds.height * bottomFraction + 20, right: 40)
          let cam = map.cameraThatFitsCoordinateBounds(bounds, edgePadding: pad)
@@ -897,7 +1140,7 @@ index 2eaaf78..e257000 100644
      }
  }
 diff --git a/App/Sources/ContentView.swift b/App/Sources/ContentView.swift
-index 5a4bfdf..893ddc6 100644
+index 5a4bfdf..e21c8eb 100644
 --- a/App/Sources/ContentView.swift
 +++ b/App/Sources/ContentView.swift
 @@ -23,6 +23,12 @@ struct ContentView: View {
@@ -922,16 +1165,23 @@ index 5a4bfdf..893ddc6 100644
                  VStack {
                      WazeInfoCard(alert: info) { withAnimation { model.wazeInfo = nil } }
                          .padding(.top, 64)
-@@ -49,7 +55,7 @@ struct ContentView: View {
+@@ -48,8 +54,14 @@ struct ContentView: View {
+                 }
              }
          }
++        .overlay(alignment: .leading) {
++            if settings.useMapbox && !settings.satellite && model.tab == .map {
++                Image("MapboxAttribution").resizable().scaledToFit().frame(width: 88, height: 23)
++                    .accessibilityLabel("Mapbox").padding(.leading, 5).allowsHitTesting(false)
++            }
++        }
          .overlay(alignment: .top) {
 -            if let cam = model.liveCam, model.nav == nil, model.tab == .map {
 +            if let cam = model.liveCam, model.tab == .map {
                  LiveCamCard(model: model, cam: cam)
                      .padding(.top, 58)
                      .transition(.move(edge: .top).combined(with: .opacity))
-@@ -122,6 +128,45 @@ struct ContentView: View {
+@@ -122,6 +134,45 @@ struct ContentView: View {
              }
              .kiteType()
          }
@@ -977,7 +1227,7 @@ index 5a4bfdf..893ddc6 100644
          .sheet(isPresented: $model.addingStop) {
              StopPicker(model: model).kiteType()
          }
-@@ -161,6 +206,10 @@ struct BrowseOverlay: View {
+@@ -161,6 +212,10 @@ struct BrowseOverlay: View {
                          VStack(spacing: 10) {
                              MapFab(icon: "square.3.layers.3d", size: 48) { model.showLayers = true }
                                  .accessibilityLabel("Map layers")
@@ -988,7 +1238,7 @@ index 5a4bfdf..893ddc6 100644
                              if settings.parkingButton || settings.parking != nil {
                                  MapFab(icon: "parkingsign", tint: settings.parking != nil ? Vela.routeBlue : .primary, size: 48) {
                                      if let p = settings.parking { model.select(p) } else { model.saveParking() }
-@@ -464,7 +513,7 @@ struct SuggestionsPanel: View {
+@@ -464,7 +519,7 @@ struct SuggestionsPanel: View {
          Button(action: action) {
              HStack(spacing: 16) {
                  Image(systemName: icon).frame(width: 22).foregroundColor(.secondary)
@@ -997,7 +1247,7 @@ index 5a4bfdf..893ddc6 100644
                  Spacer()
              }
              .padding(.horizontal, 18)
-@@ -483,7 +532,7 @@ struct NoticeBanner: View {
+@@ -483,7 +538,7 @@ struct NoticeBanner: View {
      var body: some View {
          HStack(alignment: .top, spacing: 10) {
              Image(systemName: "info.circle").foregroundColor(.secondary)
@@ -1006,7 +1256,7 @@ index 5a4bfdf..893ddc6 100644
              Button(action: dismiss) { Image(systemName: "xmark").font(.footnote) }.buttonStyle(.plain)
          }
          .padding(12)
-@@ -923,7 +972,7 @@ struct PlaceTile: View {
+@@ -923,7 +978,7 @@ struct PlaceTile: View {
                      .frame(width: 46, height: 46)
                      .background(Circle().fill(place == nil ? Color.gray : color))
                  VStack(alignment: .leading, spacing: 1) {
@@ -1015,7 +1265,7 @@ index 5a4bfdf..893ddc6 100644
                      Text(place.flatMap { p in model.userLatLng.map { $0.distance(to: p.location) } }.map(Fmt.distance) ?? (place == nil ? "Tap to set" : "Tap to go"))
                          .font(.system(size: 15, weight: .medium)).foregroundColor(Vela.muted(scheme)).lineLimit(1)
                  }
-@@ -938,7 +987,7 @@ struct PlaceTile: View {
+@@ -938,7 +993,7 @@ struct PlaceTile: View {
          .foregroundColor(.primary)
          .contextMenu {
              if place != nil, title == "Home" || title == "Work" {
@@ -1024,7 +1274,7 @@ index 5a4bfdf..893ddc6 100644
              }
          }
          .accessibilityLabel(place == nil ? "\(title), not set" : "Go to \(title)")
-@@ -980,7 +1029,7 @@ struct ResumeCard: View {
+@@ -980,7 +1035,7 @@ struct ResumeCard: View {
                      Text("Carry on to").font(.system(size: 16, weight: .semibold)).foregroundColor(Vela.muted(scheme))
                      Text(trip.destination.name + "?").font(.system(size: 22, weight: .heavy)).lineLimit(2).minimumScaleFactor(0.8)
                      if !trip.stops.isEmpty {
@@ -1033,7 +1283,7 @@ index 5a4bfdf..893ddc6 100644
                              .foregroundColor(Vela.muted(scheme)).lineLimit(1)
                      }
                  }
-@@ -1019,7 +1068,7 @@ struct StatusCards: View {
+@@ -1019,7 +1074,7 @@ struct StatusCards: View {
                   detail: "Turn on Precise Location for Kite in Settings to improve your position.", button: "Settings") { LocationService.openSettings() }
          } else if location.authorized, let fix = location.last, fix.horizontalAccuracy > 200 {
              card(icon: "location.circle.fill", color: Color(hex: 0xF59E0B), title: "Location is uncertain",
@@ -1042,7 +1292,7 @@ index 5a4bfdf..893ddc6 100644
          } else if !net.online {
              card(icon: "wifi.slash", color: Color(hex: 0xF59E0B), title: "No internet connection",
                   detail: "Search, routes and live traffic need one. The map you've already seen still works.", button: nil) {}
-@@ -1031,13 +1080,13 @@ struct StatusCards: View {
+@@ -1031,13 +1086,13 @@ struct StatusCards: View {
              Image(systemName: icon).font(.system(size: 20, weight: .bold)).foregroundColor(.white)
                  .frame(width: 44, height: 44).background(Circle().fill(color))
              VStack(alignment: .leading, spacing: 2) {
@@ -2130,7 +2380,7 @@ index 128a87b..7cc968e 100644
  
      private static var savedLabelSizes: [String: NSExpression] = [:]
 diff --git a/App/Sources/MapView.swift b/App/Sources/MapView.swift
-index 98dfdad..a308835 100644
+index 98dfdad..5507350 100644
 --- a/App/Sources/MapView.swift
 +++ b/App/Sources/MapView.swift
 @@ -27,6 +27,9 @@ struct VelaMapView: UIViewRepresentable {
@@ -2250,11 +2500,9 @@ index 98dfdad..a308835 100644
              var items: [(Place, String, String)] = []
              if !hidden {
                  if let h = s.home { items.append((h, "mine-home", "Home")) }
-@@ -602,11 +623,16 @@ struct VelaMapView: UIViewRepresentable {
-             let line = model.nav?.route.polyline ?? model.directions?.route?.polyline ?? []
+@@ -603,10 +624,14 @@ struct VelaMapView: UIViewRepresentable {
              let waze = s.speedCameras && s.wazeOn
              // While driving, only what's on your way stands out: everything off the route fades back.
-+            updateMapbox(style)
              let driving = model.nav?.route.mode == .drive
 -            let key = "\(s.speedCameras)\(s.plateCameras)\(s.surveillanceCameras)\(surveillance.count)\(cameras.count)\(line.count)\(line.first?.lat ?? 0)\(waze)\(WazeCameras.shared.version)\(driving)"
 +            let key = "\(s.speedCameras)\(s.plateCameras)\(s.surveillanceCameras)\(surveillance.count)\(cameras.count)\(line.count)\(line.first?.lat ?? 0)\(waze)\(WazeCameras.shared.version)\(driving)|\(model.justDrive)|\(driveCameraRevision)"
@@ -2269,7 +2517,7 @@ index 98dfdad..a308835 100644
              // Waze's speed cameras join OpenStreetMap's; one both maps hold shows once.
              if waze { shown = WazeCameras.merge(shown, waze: WazeCameras.shared.known()) }
              let cum = line.count >= 2 ? Geo.cumulative(line) : []
-@@ -614,7 +640,7 @@ struct VelaMapView: UIViewRepresentable {
+@@ -614,7 +639,7 @@ struct VelaMapView: UIViewRepresentable {
                  let f = MLNPointFeature()
                  f.coordinate = CLLocationCoordinate2D(latitude: c.location.lat, longitude: c.location.lng)
                  let onRoute = !cum.isEmpty && Geo.project(c.location, on: line, cumulative: cum).offset < 40
@@ -2278,7 +2526,7 @@ index 98dfdad..a308835 100644
                                  "surveillanceId": c.kind == .plate ? String(c.id) : ""]
                  return f
              }
-@@ -672,14 +698,17 @@ struct VelaMapView: UIViewRepresentable {
+@@ -672,14 +697,17 @@ struct VelaMapView: UIViewRepresentable {
          }
  
          private func renderSignals(_ style: MLNStyle) {
@@ -2304,7 +2552,7 @@ index 98dfdad..a308835 100644
              }
              (style.source(withIdentifier: "vela-signals") as? MLNShapeSource)?.shape = MLNShapeCollectionFeature(shapes: features)
          }
-@@ -797,7 +826,7 @@ struct VelaMapView: UIViewRepresentable {
+@@ -797,7 +825,7 @@ struct VelaMapView: UIViewRepresentable {
  
          /** Transit lines for the view and a margin around it, when the layer is on. */
          func loadRail(_ map: MLNMapView) {
@@ -2313,7 +2561,7 @@ index 98dfdad..a308835 100644
              let b = map.visibleCoordinateBounds
              let z = Int(map.zoomLevel)
              if let r = railBox, b.sw.latitude >= r.s, b.sw.longitude >= r.w, b.ne.latitude <= r.n, b.ne.longitude <= r.e,
-@@ -849,6 +878,43 @@ struct VelaMapView: UIViewRepresentable {
+@@ -849,6 +877,43 @@ struct VelaMapView: UIViewRepresentable {
              }
          }
  
@@ -2357,7 +2605,7 @@ index 98dfdad..a308835 100644
          /** Ask Overpass for the cameras in view, a few 0.1° cells at a time, each cell once. */
          func loadCameras(_ map: MLNMapView) {
              let s = model.settings
-@@ -899,13 +965,16 @@ struct VelaMapView: UIViewRepresentable {
+@@ -899,13 +964,16 @@ struct VelaMapView: UIViewRepresentable {
          }
  
          private func renderResults(_ style: MLNStyle) {
@@ -2378,7 +2626,7 @@ index 98dfdad..a308835 100644
              guard key != lastResultsKey else { return }
              lastResultsKey = key
              let features: [MLNPointFeature] = list.enumerated().compactMap { i, p in
-@@ -935,13 +1004,19 @@ struct VelaMapView: UIViewRepresentable {
+@@ -935,13 +1003,19 @@ struct VelaMapView: UIViewRepresentable {
                      f.attributes = ["id": "stop\(i)", "icon": "pin-stop", "anchor": "center", "label": stop.name]
                      sel.append(f)
                  }
@@ -2399,7 +2647,7 @@ index 98dfdad..a308835 100644
              (style.source(withIdentifier: "vela-selected") as? MLNShapeSource)?.shape = MLNShapeCollectionFeature(shapes: sel)
          }
  
-@@ -963,8 +1038,10 @@ struct VelaMapView: UIViewRepresentable {
+@@ -963,8 +1037,10 @@ struct VelaMapView: UIViewRepresentable {
                  main = d.route
                  alts = d.current.filter { $0.id != main?.id }
              }
@@ -2412,7 +2660,7 @@ index 98dfdad..a308835 100644
              guard key != lastRouteKey else { return }
              lastRouteKey = key
  
-@@ -976,7 +1053,7 @@ struct VelaMapView: UIViewRepresentable {
+@@ -976,7 +1052,7 @@ struct VelaMapView: UIViewRepresentable {
              altSrc?.shape = MLNShapeCollectionFeature(shapes: alts.map { polyline($0.polyline) })
              let transitSrc = style.source(withIdentifier: "vela-transit") as? MLNShapeSource
              transitSrc?.shape = trip.map { t in
@@ -2421,7 +2669,7 @@ index 98dfdad..a308835 100644
                      polyline(leg.path, ["walk": leg.isWalk ? 1 : 0, "color": String(format: "#%06X", leg.color ?? 0x1F6FEB)])
                  })
              }
-@@ -1061,8 +1138,38 @@ struct VelaMapView: UIViewRepresentable {
+@@ -1061,8 +1137,38 @@ struct VelaMapView: UIViewRepresentable {
          }
  
          /** While navigating, NavGlide draws the arrow every frame; this only clears it afterwards. */
@@ -2441,7 +2689,7 @@ index 98dfdad..a308835 100644
 +                          .attributionHTMLString: "<a href='https://www.mapbox.com/about/maps/'>© Mapbox</a> · <a href='https://www.openstreetmap.org/copyright'>© OpenStreetMap</a> · <a href='https://apps.mapbox.com/feedback/'>Improve this map</a>"])
 +            style.addSource(source)
 +            let layer = MLNRasterStyleLayer(identifier: "vela-mapbox", source: source)
-+            if let traffic = style.layer(withIdentifier: "vela-traffic") { style.insertLayer(layer, below: traffic) }
++            if let under = style.layer(withIdentifier: "building-3d") ?? style.layer(withIdentifier: "vela-route-alt-edge") { style.insertLayer(layer, below: under) }
 +            else { style.addLayer(layer) }
 +        }
 +
@@ -2460,7 +2708,7 @@ index 98dfdad..a308835 100644
              guard lastPuckKey != "" else { return }
              (style.source(withIdentifier: "vela-puck") as? MLNShapeSource)?.shape = nil
              lastPuckKey = ""
-@@ -1073,12 +1180,12 @@ struct VelaMapView: UIViewRepresentable {
+@@ -1073,12 +1179,12 @@ struct VelaMapView: UIViewRepresentable {
          func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
  
          @objc func tapped(_ g: UITapGestureRecognizer) {
@@ -2475,7 +2723,7 @@ index 98dfdad..a308835 100644
                      let hits = map.visibleFeatures(in: box, styleLayerIdentifiers: ["vela-route-bubble-0", "vela-route-alt", "vela-route-alt-edge"])
                      if let idx = hits.first?.attribute(forKey: "idx") as? Int {
                          self.model.selectRoute(idx)
-@@ -1140,12 +1247,26 @@ struct VelaMapView: UIViewRepresentable {
+@@ -1140,12 +1246,26 @@ struct VelaMapView: UIViewRepresentable {
                      self.model.select(place)
                      return
                  }
@@ -2504,7 +2752,7 @@ index 98dfdad..a308835 100644
                  if self.model.selected != nil {
                      self.model.closePlace()
                  } else if !self.model.results.isEmpty {
-@@ -1159,9 +1280,11 @@ struct VelaMapView: UIViewRepresentable {
+@@ -1159,9 +1279,11 @@ struct VelaMapView: UIViewRepresentable {
              pinDroppedAt = Date()
              let c = map.convert(g.location(in: map), toCoordinateFrom: map)
              Task { @MainActor in
@@ -2518,7 +2766,7 @@ index 98dfdad..a308835 100644
              }
          }
  
-@@ -1210,10 +1333,15 @@ struct VelaMapView: UIViewRepresentable {
+@@ -1210,10 +1332,15 @@ struct VelaMapView: UIViewRepresentable {
          nonisolated func mapView(_ mapView: MLNMapView, didUpdate userLocation: MLNUserLocation?) {
              guard let loc = userLocation?.location else { return }
              MainActor.assumeIsolated {
@@ -5242,7 +5490,7 @@ index 0000000..89cfd3e
 +    }
 +}
 diff --git a/VelaCore/Sources/VelaCore/OSRM.swift b/VelaCore/Sources/VelaCore/OSRM.swift
-index 0d1aec1..76beba0 100644
+index 0d1aec1..958fa4b 100644
 --- a/VelaCore/Sources/VelaCore/OSRM.swift
 +++ b/VelaCore/Sources/VelaCore/OSRM.swift
 @@ -8,8 +8,8 @@ public enum OSRM {
@@ -5341,7 +5589,7 @@ index 0d1aec1..76beba0 100644
                  // the new route back: after a few seconds Google's own steps are driven instead.
                  let reroute = heading != nil && !alternatives
 -                let wait: Double = reroute ? 5 : 25
-+                if reroute, let route = g.first, !route.maneuvers.isEmpty {
++                if reroute, let route = g.first, route.stepsComplete, !route.maneuvers.isEmpty {
 +                    osrmTask.cancel()
 +                    return Result(routes: [route])
 +                }
@@ -6154,13 +6402,26 @@ index 69679f5..7b4004a 100644
  
      func testQuery() {
 diff --git a/VelaCore/Tests/VelaCoreTests/RoutingTests.swift b/VelaCore/Tests/VelaCoreTests/RoutingTests.swift
-index 6901a91..e1da3d0 100644
+index 6901a91..2b9de0d 100644
 --- a/VelaCore/Tests/VelaCoreTests/RoutingTests.swift
 +++ b/VelaCore/Tests/VelaCoreTests/RoutingTests.swift
-@@ -2,6 +2,94 @@ import XCTest
+@@ -2,6 +2,107 @@ import XCTest
  @testable import VelaCore
  
  final class RoutingTests: XCTestCase {
++    func testCrossingsFollowTheSelectedPathAcrossCountries() {
++        for latitude in [-33.0, 12.0, 50.0] {
++            let path = [LatLng(latitude, 0), LatLng(latitude, 0.01)]
++            let nodes: [[String: Any]] = [
++                ["type": "node", "id": Int64(1), "lat": latitude, "lon": 0.002, "tags": ["highway": "crossing"]],
++                ["type": "node", "id": Int64(2), "lat": latitude, "lon": 0.006, "tags": ["railway": "tram_level_crossing"]],
++                ["type": "node", "id": Int64(3), "lat": latitude + 0.002, "lon": 0.005, "tags": ["highway": "stop"]]
++            ]
++            let landmarks = RouteControls.mapped(nodes, on: path, cumulative: Geo.cumulative(path))
++            XCTAssertEqual(landmarks.map(\.kind), [.crossing, .railway])
++        }
++    }
++
 +    func testMappedLaneDirectionsKeepTheEntireApproach() {
 +        let step = Maneuver(type: .rampRight, instruction: "Exit", location: LatLng(0, 0),
 +                            alongMeters: 100, distanceMeters: 100)
@@ -6252,7 +6513,7 @@ index 6901a91..e1da3d0 100644
      func testDecodePolyline5() {
          // Google's documented example.
          let pts = Geo.decodePolyline("_p~iF~ps|U_ulLnnqC_mqNvxq`@", precision: 1e5)
-@@ -263,7 +351,7 @@ final class RoutingTests: XCTestCase {
+@@ -263,7 +364,7 @@ final class RoutingTests: XCTestCase {
          XCTAssertTrue(lanes[0].valid)
          XCTAssertEqual(lanes[2].indications, ["straight", "right"])
          let allValid: [String: Any] = ["intersections": [["lanes": [["indications": ["straight"], "valid": true], ["indications": ["straight"], "valid": true]]]]]
