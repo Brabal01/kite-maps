@@ -43,10 +43,10 @@ index 167510d..e55b44d 100644
      }
 diff --git a/App/Sources/AppleMapView.swift b/App/Sources/AppleMapView.swift
 new file mode 100644
-index 0000000..4197c3e
+index 0000000..d717eee
 --- /dev/null
 +++ b/App/Sources/AppleMapView.swift
-@@ -0,0 +1,565 @@
+@@ -0,0 +1,571 @@
 +import MapKit
 +import MapLibre
 +import SwiftUI
@@ -157,6 +157,7 @@ index 0000000..4197c3e
 +    var mapView: UIView { self }
 +    var centerCoordinate: CLLocationCoordinate2D { pendingCamera?.centerCoordinate ?? native.centerCoordinate }
 +    var direction: CLLocationDirection { pendingCamera?.heading ?? native.camera.heading }
++    var locationCoordinate: CLLocationCoordinate2D? { native.userLocation.location?.coordinate }
 +    var showsUserLocation: Bool {
 +        get { native.showsUserLocation }
 +        set { native.showsUserLocation = newValue }
@@ -322,7 +323,12 @@ index 0000000..4197c3e
 +                                   "vela-route-traffic", "vela-rail", "vela-turn-arrow"]
 +
 +    func replaceFeatures(_ shape: MLNShape?, source: String) {
-+        let shapes = (shape as? MLNShapeCollectionFeature)?.shapes ?? shape.map { [$0] } ?? []
++        let shapes: [MLNShape]
++        if let collection = shape as? MLNShapeCollectionFeature {
++            shapes = collection.shapes.map { $0 }
++        } else {
++            shapes = shape.map { [$0] } ?? []
++        }
 +        let geometry = shapes.compactMap { $0 as? MLNPolylineFeature }
 +        if source == "vela-rail" { railGeometry = geometry }
 +        replaceLines(source == "vela-rail" && !showsRail ? [] : geometry, source: source)
@@ -599,13 +605,13 @@ index 0000000..4197c3e
 +}
 +
 +private final class AppleHeatTiles: MKTileOverlay {
-+    init() {
++    @MainActor init() {
 +        super.init(urlTemplate: nil)
 +        minimumZ = HighwayHeat.minZoom
 +        maximumZ = HighwayHeat.maxZoom
 +    }
 +
-+    override func loadTile(at path: MKTileOverlayPath, result: @escaping (Data?, (any Error)?) -> Void) {
++    override func loadTile(at path: MKTileOverlayPath, result: @escaping @Sendable (Data?, (any Error)?) -> Void) {
 +        let tile = HighwayHeat.Tile(z: path.z, x: path.x, y: path.y)
 +        URLSession.shared.dataTask(with: HighwayHeat.url(tile)) { data, _, error in
 +            result(data.flatMap { HighwayHeat.colour($0, zoom: tile.z)?.pngData() }, error)
@@ -738,10 +744,10 @@ index a449634..a9afb65 100644
      /** Vela's speed camera badge: amber rounded square, head-on camera with a big lens and flash slit. */
 diff --git a/App/Sources/MapSurface.swift b/App/Sources/MapSurface.swift
 new file mode 100644
-index 0000000..99ba339
+index 0000000..35f2914
 --- /dev/null
 +++ b/App/Sources/MapSurface.swift
-@@ -0,0 +1,43 @@
+@@ -0,0 +1,45 @@
 +import MapLibre
 +import UIKit
 +
@@ -756,6 +762,7 @@ index 0000000..99ba339
 +    var direction: CLLocationDirection { get }
 +    var camera: MLNMapCamera { get set }
 +    var showsUserLocation: Bool { get set }
++    var locationCoordinate: CLLocationCoordinate2D? { get }
 +    func setCenter(_ coordinate: CLLocationCoordinate2D, zoomLevel: Double, animated: Bool)
 +    func setDirection(_ heading: CLLocationDirection, animated: Bool)
 +    func cameraThatFitsCoordinateBounds(_ bounds: MLNCoordinateBounds, edgePadding: UIEdgeInsets) -> MLNMapCamera
@@ -775,6 +782,7 @@ index 0000000..99ba339
 +
 +extension MLNMapView: KiteMapSurface {
 +    var mapView: UIView { self }
++    var locationCoordinate: CLLocationCoordinate2D? { userLocation?.location?.coordinate }
 +
 +    func drawPuck(at coordinate: CLLocationCoordinate2D?, bearing: Double) {
 +        guard let source = style?.source(withIdentifier: "vela-puck") as? MLNShapeSource else { return }
@@ -786,7 +794,7 @@ index 0000000..99ba339
 +    }
 +}
 diff --git a/App/Sources/MapView.swift b/App/Sources/MapView.swift
-index 5c78766..6fd3a46 100644
+index 5c78766..f0e32c5 100644
 --- a/App/Sources/MapView.swift
 +++ b/App/Sources/MapView.swift
 @@ -44,7 +44,8 @@ struct VelaMapView: UIViewRepresentable {
@@ -973,7 +981,7 @@ index 5c78766..6fd3a46 100644
          }
  
          /** Highway Radar's police heat map for what's on screen, when it's switched on. */
-@@ -754,7 +779,7 @@ struct VelaMapView: UIViewRepresentable {
+@@ -754,12 +779,12 @@ struct VelaMapView: UIViewRepresentable {
          }
  
          /** Live Waze reports for the view and a margin, asked again after two minutes or when the map leaves the box. */
@@ -982,6 +990,12 @@ index 5c78766..6fd3a46 100644
              let s = model.settings
              if s.wazeOn, s.wazeHeatmap || s.policeRisk, !DemoScript.active {
                  var places: [LatLng] = []
+                 // Only around where you are: Waze is never asked about saved Home and Work.
+-                if let c = map.userLocation?.location?.coordinate, CLLocationCoordinate2DIsValid(c) { places.append(LatLng(c.latitude, c.longitude)) }
++                if let c = map.locationCoordinate, CLLocationCoordinate2DIsValid(c) { places.append(LatLng(c.latitude, c.longitude)) }
+                 WazeHistory.shared.sweepIfDue(places)
+             }
+             guard s.wazeOn, s.wazeOnMap || s.wazeHeatmap, map.zoomLevel >= 10, wazeFetch == nil, !DemoScript.fakeWaze,
 @@ -824,7 +849,7 @@ struct VelaMapView: UIViewRepresentable {
          }
  
