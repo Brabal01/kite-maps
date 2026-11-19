@@ -1,5 +1,5 @@
 diff --git a/App/Sources/AppModel.swift b/App/Sources/AppModel.swift
-index b7a34ef..053b368 100644
+index b7a34ef..5b01765 100644
 --- a/App/Sources/AppModel.swift
 +++ b/App/Sources/AppModel.swift
 @@ -18,7 +18,7 @@ enum PickKind: String, Identifiable {
@@ -270,6 +270,15 @@ index b7a34ef..053b368 100644
          let destId = d.destination.id
          let time = d.transitTime, arriveBy = d.arriveBy
          let req = transitRequest
+@@ -679,7 +784,7 @@ final class AppModel: ObservableObject {
+             do {
+                 let trips = try await Transitous.plan(from: from, to: to, time: time, arriveBy: arriveBy)
+                 guard directions?.destination.id == destId, transitRequest == req else { return }
+-                directions?.trips = trips
++                directions?.trips = trips.sorted { $0.durationSeconds < $1.durationSeconds }
+                 if trips.isEmpty { directions?.tripsError = "No transit trips found here." }
+             } catch {
+                 guard directions?.destination.id == destId, transitRequest == req else { return }
 @@ -692,12 +797,12 @@ final class AppModel: ObservableObject {
  
      func frameRoute() {
@@ -2121,7 +2130,7 @@ index 128a87b..7cc968e 100644
  
      private static var savedLabelSizes: [String: NSExpression] = [:]
 diff --git a/App/Sources/MapView.swift b/App/Sources/MapView.swift
-index 98dfdad..2489621 100644
+index 98dfdad..a308835 100644
 --- a/App/Sources/MapView.swift
 +++ b/App/Sources/MapView.swift
 @@ -27,6 +27,9 @@ struct VelaMapView: UIViewRepresentable {
@@ -2134,7 +2143,7 @@ index 98dfdad..2489621 100644
  
          let tap = UITapGestureRecognizer(target: c, action: #selector(Coordinator.tapped(_:)))
          for r in map.gestureRecognizers ?? [] {
-@@ -108,6 +111,7 @@ struct VelaMapView: UIViewRepresentable {
+@@ -108,11 +111,13 @@ struct VelaMapView: UIViewRepresentable {
          private var lastResultsKey = ""
          private var lastRouteKey = ""
          private var lastMineKey = ""
@@ -2142,7 +2151,14 @@ index 98dfdad..2489621 100644
          private var lastPuckKey = ""
          /** Whether the map is currently stripped down for driving; nil after a style load. */
          private var styledDriving: Bool?
-@@ -120,6 +124,11 @@ struct VelaMapView: UIViewRepresentable {
+         private var lastCameraKey = ""
+-        private var lastSignalsKey = ""
++        private var drawnControls: [RouteControl]?
++        private var drawnSignals: [LatLng] = []
+         private var lastLiveKey = ""
+         /** The box the drawn live camera dots cover, so panning inside it redraws nothing. */
+         private var liveBox: (s: Double, w: Double, n: Double, e: Double)?
+@@ -120,6 +125,11 @@ struct VelaMapView: UIViewRepresentable {
          private var cameras: [Int64: RoadCamera] = [:]
          private var cameraCells: Set<String> = []
          private var cameraFetch: Task<Void, Never>?
@@ -2154,7 +2170,7 @@ index 98dfdad..2489621 100644
          private var wazeCameraFetch: Task<Void, Never>?
          private var surveillanceFetch: Task<Void, Never>?
          private var surveillanceCells: Set<String> = []
-@@ -152,6 +161,7 @@ struct VelaMapView: UIViewRepresentable {
+@@ -152,13 +162,14 @@ struct VelaMapView: UIViewRepresentable {
              for case let s as MLNSymbolStyleLayer in style.layers {
                  originalLabels[s.identifier] = (s.textColor, s.textHaloColor, s.textHaloWidth)
              }
@@ -2162,7 +2178,15 @@ index 98dfdad..2489621 100644
              MapIcons.register(in: style)
              addVelaLayers(style)
              styleReady = true
-@@ -314,7 +324,7 @@ struct VelaMapView: UIViewRepresentable {
+             heatTiles.styleReloaded()
+             styledDriving = nil
+             repaint(mapView)
+-            lastResultsKey = ""; lastRouteKey = ""; lastMineKey = ""; lastPuckKey = ""; lastCameraKey = ""; lastSignalsKey = ""; lastWazeKey = ""; lastLiveKey = ""
++            lastResultsKey = ""; lastRouteKey = ""; lastMineKey = ""; lastPuckKey = ""; lastCameraKey = ""; drawnControls = nil; drawnSignals = []; lastWazeKey = ""; lastLiveKey = ""
+             render(mapView)
+         }
+ 
+@@ -314,7 +325,7 @@ struct VelaMapView: UIViewRepresentable {
              let sigSrc = MLNShapeSource(identifier: "vela-signals", shape: nil, options: nil)
              style.addSource(sigSrc)
              let sigs = MLNSymbolStyleLayer(identifier: "vela-signals", source: sigSrc)
@@ -2171,7 +2195,7 @@ index 98dfdad..2489621 100644
              sigs.iconAllowsOverlap = NSExpression(forConstantValue: true)
              sigs.iconAnchor = NSExpression(forConstantValue: "bottom")
              sigs.iconScale = NSExpression(mglJSONObject: ["interpolate", ["linear"], ["zoom"], 14, 0.75, 17, 1.0])
-@@ -544,24 +554,34 @@ struct VelaMapView: UIViewRepresentable {
+@@ -544,36 +555,46 @@ struct VelaMapView: UIViewRepresentable {
              guard styleReady, let style = map.style else { return }
              let s = model.settings
              let navigating = model.nav != nil
@@ -2187,10 +2211,11 @@ index 98dfdad..2489621 100644
              style.layer(withIdentifier: "vela-traffic")?.isVisible = s.traffic && !navigating && !s.noGoogle && s.welcomed
              style.layer(withIdentifier: "vela-sat")?.isVisible = s.satellite
              style.layer(withIdentifier: "vela-terrain")?.isVisible = s.terrain && !s.satellite
-             for id in ["vela-rail", "vela-rail-case"] { style.layer(withIdentifier: id)?.isVisible = s.transitLines && !navigating }
+-            for id in ["vela-rail", "vela-rail-case"] { style.layer(withIdentifier: id)?.isVisible = s.transitLines && !navigating }
 -            if styledDriving != navigating {
 -                MapStyler.drive(style, on: navigating)
 -                styledDriving = navigating
++            for id in ["vela-rail", "vela-rail-case"] { style.layer(withIdentifier: id)?.isVisible = s.transitLines || model.hasActiveJourney }
 +            if styledDriving != driving {
 +                MapStyler.drive(style, on: driving)
 +                styledDriving = driving
@@ -2211,7 +2236,12 @@ index 98dfdad..2489621 100644
              renderCameras(style)
              renderLiveCams(map, style)
              renderSignals(style)
-@@ -573,7 +593,7 @@ struct VelaMapView: UIViewRepresentable {
+             renderWaze(style)
+             updateHeat(map)
+             renderMine(style)
+-            if s.transitLines { loadRail(map) }
++            if s.transitLines || model.hasActiveJourney { loadRail(map) }
+         }
  
          private func renderMine(_ style: MLNStyle) {
              let s = model.settings
@@ -2220,7 +2250,7 @@ index 98dfdad..2489621 100644
              var items: [(Place, String, String)] = []
              if !hidden {
                  if let h = s.home { items.append((h, "mine-home", "Home")) }
-@@ -602,11 +622,16 @@ struct VelaMapView: UIViewRepresentable {
+@@ -602,11 +623,16 @@ struct VelaMapView: UIViewRepresentable {
              let line = model.nav?.route.polyline ?? model.directions?.route?.polyline ?? []
              let waze = s.speedCameras && s.wazeOn
              // While driving, only what's on your way stands out: everything off the route fades back.
@@ -2239,7 +2269,7 @@ index 98dfdad..2489621 100644
              // Waze's speed cameras join OpenStreetMap's; one both maps hold shows once.
              if waze { shown = WazeCameras.merge(shown, waze: WazeCameras.shared.known()) }
              let cum = line.count >= 2 ? Geo.cumulative(line) : []
-@@ -614,7 +639,7 @@ struct VelaMapView: UIViewRepresentable {
+@@ -614,7 +640,7 @@ struct VelaMapView: UIViewRepresentable {
                  let f = MLNPointFeature()
                  f.coordinate = CLLocationCoordinate2D(latitude: c.location.lat, longitude: c.location.lng)
                  let onRoute = !cum.isEmpty && Geo.project(c.location, on: line, cumulative: cum).offset < 40
@@ -2248,27 +2278,24 @@ index 98dfdad..2489621 100644
                                  "surveillanceId": c.kind == .plate ? String(c.id) : ""]
                  return f
              }
-@@ -672,14 +697,22 @@ struct VelaMapView: UIViewRepresentable {
+@@ -672,14 +698,17 @@ struct VelaMapView: UIViewRepresentable {
          }
  
          private func renderSignals(_ style: MLNStyle) {
 -            let lights = model.nav?.routeSignals ?? []
 -            let key = "\(lights.count)\(lights.first?.lat ?? 0)"
-+            let landmarks: [(LatLng, String)]
-+            if let controls = model.nav?.routeControls {
-+                landmarks = controls.map { ($0.location, $0.kind.rawValue) }
-+            } else if model.nav == nil && model.hasActiveJourney {
-+                landmarks = model.nearbyControls.map { ($0.location, $0.kind.rawValue) }
-+            } else {
-+                landmarks = (model.nav?.routeSignals ?? []).map { ($0, "traffic-light") }
-+            }
-+            let key = landmarks.map { "\($0.0.lat),\($0.0.lng),\($0.1)" }.joined(separator: "|")
-             guard key != lastSignalsKey else { return }
-             lastSignalsKey = key
+-            guard key != lastSignalsKey else { return }
+-            lastSignalsKey = key
 -            let features: [MLNPointFeature] = lights.map { p in
 -                let f = MLNPointFeature()
 -                f.coordinate = CLLocationCoordinate2D(latitude: p.lat, longitude: p.lng)
 -                return f
++            let controls = model.nav?.routeControls ?? (model.nav == nil && model.hasActiveJourney ? model.nearbyControls : nil)
++            let signals = controls == nil ? model.nav?.routeSignals ?? [] : []
++            guard controls != drawnControls || signals != drawnSignals else { return }
++            drawnControls = controls
++            drawnSignals = signals
++            let landmarks = controls?.map { ($0.location, $0.kind.rawValue) } ?? signals.map { ($0, "traffic-light") }
 +            let features: [MLNPointFeature] = landmarks.map { point, icon in
 +                let feature = MLNPointFeature()
 +                feature.coordinate = CLLocationCoordinate2D(latitude: point.lat, longitude: point.lng)
@@ -2277,7 +2304,16 @@ index 98dfdad..2489621 100644
              }
              (style.source(withIdentifier: "vela-signals") as? MLNShapeSource)?.shape = MLNShapeCollectionFeature(shapes: features)
          }
-@@ -849,6 +882,43 @@ struct VelaMapView: UIViewRepresentable {
+@@ -797,7 +826,7 @@ struct VelaMapView: UIViewRepresentable {
+ 
+         /** Transit lines for the view and a margin around it, when the layer is on. */
+         func loadRail(_ map: MLNMapView) {
+-            guard model.settings.transitLines, map.zoomLevel >= 10, railFetch == nil, model.nav == nil else { return }
++            guard model.settings.transitLines || model.hasActiveJourney, map.zoomLevel >= 10, railFetch == nil else { return }
+             let b = map.visibleCoordinateBounds
+             let z = Int(map.zoomLevel)
+             if let r = railBox, b.sw.latitude >= r.s, b.sw.longitude >= r.w, b.ne.latitude <= r.n, b.ne.longitude <= r.e,
+@@ -849,6 +878,43 @@ struct VelaMapView: UIViewRepresentable {
              }
          }
  
@@ -2321,7 +2357,7 @@ index 98dfdad..2489621 100644
          /** Ask Overpass for the cameras in view, a few 0.1° cells at a time, each cell once. */
          func loadCameras(_ map: MLNMapView) {
              let s = model.settings
-@@ -899,13 +969,16 @@ struct VelaMapView: UIViewRepresentable {
+@@ -899,13 +965,16 @@ struct VelaMapView: UIViewRepresentable {
          }
  
          private func renderResults(_ style: MLNStyle) {
@@ -2342,7 +2378,7 @@ index 98dfdad..2489621 100644
              guard key != lastResultsKey else { return }
              lastResultsKey = key
              let features: [MLNPointFeature] = list.enumerated().compactMap { i, p in
-@@ -935,13 +1008,19 @@ struct VelaMapView: UIViewRepresentable {
+@@ -935,13 +1004,19 @@ struct VelaMapView: UIViewRepresentable {
                      f.attributes = ["id": "stop\(i)", "icon": "pin-stop", "anchor": "center", "label": stop.name]
                      sel.append(f)
                  }
@@ -2363,7 +2399,7 @@ index 98dfdad..2489621 100644
              (style.source(withIdentifier: "vela-selected") as? MLNShapeSource)?.shape = MLNShapeCollectionFeature(shapes: sel)
          }
  
-@@ -963,8 +1042,10 @@ struct VelaMapView: UIViewRepresentable {
+@@ -963,8 +1038,10 @@ struct VelaMapView: UIViewRepresentable {
                  main = d.route
                  alts = d.current.filter { $0.id != main?.id }
              }
@@ -2376,7 +2412,7 @@ index 98dfdad..2489621 100644
              guard key != lastRouteKey else { return }
              lastRouteKey = key
  
-@@ -976,7 +1057,7 @@ struct VelaMapView: UIViewRepresentable {
+@@ -976,7 +1053,7 @@ struct VelaMapView: UIViewRepresentable {
              altSrc?.shape = MLNShapeCollectionFeature(shapes: alts.map { polyline($0.polyline) })
              let transitSrc = style.source(withIdentifier: "vela-transit") as? MLNShapeSource
              transitSrc?.shape = trip.map { t in
@@ -2385,7 +2421,7 @@ index 98dfdad..2489621 100644
                      polyline(leg.path, ["walk": leg.isWalk ? 1 : 0, "color": String(format: "#%06X", leg.color ?? 0x1F6FEB)])
                  })
              }
-@@ -1061,8 +1142,38 @@ struct VelaMapView: UIViewRepresentable {
+@@ -1061,8 +1138,38 @@ struct VelaMapView: UIViewRepresentable {
          }
  
          /** While navigating, NavGlide draws the arrow every frame; this only clears it afterwards. */
@@ -2424,7 +2460,7 @@ index 98dfdad..2489621 100644
              guard lastPuckKey != "" else { return }
              (style.source(withIdentifier: "vela-puck") as? MLNShapeSource)?.shape = nil
              lastPuckKey = ""
-@@ -1073,12 +1184,12 @@ struct VelaMapView: UIViewRepresentable {
+@@ -1073,12 +1180,12 @@ struct VelaMapView: UIViewRepresentable {
          func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
  
          @objc func tapped(_ g: UITapGestureRecognizer) {
@@ -2439,7 +2475,7 @@ index 98dfdad..2489621 100644
                      let hits = map.visibleFeatures(in: box, styleLayerIdentifiers: ["vela-route-bubble-0", "vela-route-alt", "vela-route-alt-edge"])
                      if let idx = hits.first?.attribute(forKey: "idx") as? Int {
                          self.model.selectRoute(idx)
-@@ -1140,12 +1251,26 @@ struct VelaMapView: UIViewRepresentable {
+@@ -1140,12 +1247,26 @@ struct VelaMapView: UIViewRepresentable {
                      self.model.select(place)
                      return
                  }
@@ -2468,7 +2504,7 @@ index 98dfdad..2489621 100644
                  if self.model.selected != nil {
                      self.model.closePlace()
                  } else if !self.model.results.isEmpty {
-@@ -1159,9 +1284,11 @@ struct VelaMapView: UIViewRepresentable {
+@@ -1159,9 +1280,11 @@ struct VelaMapView: UIViewRepresentable {
              pinDroppedAt = Date()
              let c = map.convert(g.location(in: map), toCoordinateFrom: map)
              Task { @MainActor in
@@ -2482,7 +2518,7 @@ index 98dfdad..2489621 100644
              }
          }
  
-@@ -1210,10 +1337,15 @@ struct VelaMapView: UIViewRepresentable {
+@@ -1210,10 +1333,15 @@ struct VelaMapView: UIViewRepresentable {
          nonisolated func mapView(_ mapView: MLNMapView, didUpdate userLocation: MLNUserLocation?) {
              guard let loc = userLocation?.location else { return }
              MainActor.assumeIsolated {
@@ -3706,7 +3742,7 @@ index 27594c3..3c584f4 100644
          speech.speak(u)
      }
 diff --git a/App/Sources/PlaceViews.swift b/App/Sources/PlaceViews.swift
-index 8ed5505..cae1dd4 100644
+index 8ed5505..d53782e 100644
 --- a/App/Sources/PlaceViews.swift
 +++ b/App/Sources/PlaceViews.swift
 @@ -1,3 +1,4 @@
@@ -3812,7 +3848,15 @@ index 8ed5505..cae1dd4 100644
  }
  
  struct PlaceBody: View {
-@@ -91,7 +114,7 @@ struct PlaceBody: View {
+@@ -72,6 +95,7 @@ struct PlaceBody: View {
+     let place: Place
+     @State private var tab = 0
+     @State private var hoursOpen = false
++    @State private var showingReviews = false
+     /** Driving time from here, shown on the Directions button like Google Maps. */
+     @State private var driveSeconds: Double?
+     @Environment(\.openURL) private var openURL
+@@ -91,7 +115,7 @@ struct PlaceBody: View {
                      .pickerStyle(.segmented)
                  }
                  if tab == 0 { overview } else { about }
@@ -3821,7 +3865,7 @@ index 8ed5505..cae1dd4 100644
                      .font(.caption).foregroundColor(.secondary)
              }
              .padding(.horizontal, 16)
-@@ -103,6 +126,7 @@ struct PlaceBody: View {
+@@ -103,6 +127,7 @@ struct PlaceBody: View {
  
      private func loadDriveTime() async {
          driveSeconds = nil
@@ -3829,7 +3873,7 @@ index 8ed5505..cae1dd4 100644
          guard let from = model.userLatLng, from.distance(to: place.location) > 300,
                from.distance(to: place.location) < 300_000 else { return }
          // The same way the directions get it, with the user's avoid settings and today's traffic, so
-@@ -131,7 +155,7 @@ struct PlaceBody: View {
+@@ -131,7 +156,7 @@ struct PlaceBody: View {
          ScrollView(.horizontal, showsIndicators: false) {
              HStack(spacing: 8) {
                  if let s = driveSeconds {
@@ -3838,18 +3882,17 @@ index 8ed5505..cae1dd4 100644
                          .font(.body.weight(.bold))
                          .padding(.horizontal, 16).frame(height: 52)
                          .background(Capsule().stroke(Color.secondary.opacity(0.35)))
-@@ -210,6 +234,15 @@ struct PlaceBody: View {
+@@ -210,6 +235,14 @@ struct PlaceBody: View {
                      }
                  }
              }
-+            if place.source == "google", (place.reviewCount ?? 0) > 0,
-+               let url = place.shareURL {
-+                Button { openURL(url) } label: {
-+                    Label("Open place and reviews in Google Maps", systemImage: "star.bubble")
++            if place.source == "google", (place.reviewCount ?? 0) > 0 {
++                Button { showingReviews = true } label: {
++                    Label(L10n.text("Reviews"), systemImage: "star.bubble")
 +                        .font(.subheadline.weight(.semibold))
 +                }
 +                .buttonStyle(.bordered)
-+                .accessibilityHint("Opens the selected place in Google Maps to see its full reviews")
++                .sheet(isPresented: $showingReviews) { PlaceReviewsSheet(place: place).kiteType() }
 +            }
          }
      }
@@ -3863,7 +3906,7 @@ index 8ed5505..cae1dd4 100644
          if mins < 60 { return "\(mins) min" }
          let f = DateFormatter()
          f.timeStyle = .short
-@@ -411,3 +444,41 @@ enum OtherApp: String, CaseIterable {
+@@ -411,3 +444,51 @@ enum OtherApp: String, CaseIterable {
          }
      }
  }
@@ -3875,6 +3918,14 @@ index 8ed5505..cae1dd4 100644
 +}
 +
 +private struct PlaceReviewsSheet: View {
++    private var reviewsURL: URL? {
++        if let id = place.placeId, !id.isEmpty {
++            var url = URLComponents(string: "https://search.google.com/local/reviews")
++            url?.queryItems = [URLQueryItem(name: "placeid", value: id)]
++            return url?.url
++        }
++        return place.shareURL
++    }
 +    @State private var showingReviews = false
 +    let place: Place
 +    @Environment(\.dismiss) private var dismiss
@@ -3884,15 +3935,17 @@ index 8ed5505..cae1dd4 100644
 +            List {
 +                Section {
 +                    PlaceMetaLine(place: place)
-+                    if let review = place.featuredReview {
-+                        Text(review)
++                    let excerpts = place.reviewExcerpts ?? place.featuredReview.map { [$0] } ?? []
++                    if !excerpts.isEmpty {
++                        ForEach(excerpts, id: \.self) { excerpt in Text(excerpt) }
++                        Text("Google Maps").font(.caption).foregroundStyle(.secondary)
 +                    } else {
 +                        Text("No review text available here.").foregroundColor(.secondary)
 +                    }
 +                } header: {
 +                    Text(place.name)
 +                }
-+                if place.source == "google", let url = place.shareURL {
++                if place.source == "google", let url = reviewsURL {
 +                    Button { showingReviews = true } label: {
 +                        Label(L10n.text("Open Google reviews"), systemImage: "text.bubble")
 +                    }.sheet(isPresented: $showingReviews) { ReviewsBrowser(url: url) }
@@ -5296,6 +5349,18 @@ index 0d1aec1..76beba0 100644
                  var vias: [Int: Route] = [:]
                  for i in g.indices {
                      let line = g[i].polyline
+diff --git a/VelaCore/Sources/VelaCore/Place.swift b/VelaCore/Sources/VelaCore/Place.swift
+index c1fa4ca..b389691 100644
+--- a/VelaCore/Sources/VelaCore/Place.swift
++++ b/VelaCore/Sources/VelaCore/Place.swift
+@@ -56,6 +56,7 @@ public struct Place: Identifiable, Hashable, Codable, Sendable {
+     public var hours: [String] = []
+     public var photoUrls: [String] = []
+     public var featuredReview: String?
++    public var reviewExcerpts: [String]?
+     public var editorialSummary: String?
+     public var about: [AboutSection] = []
+     public var featureId: String?
 diff --git a/VelaCore/Sources/VelaCore/Resources/cz-vignette-2026.json b/VelaCore/Sources/VelaCore/Resources/cz-vignette-2026.json
 new file mode 100644
 index 0000000..7aa3745
@@ -5609,6 +5674,26 @@ index 0000000..9d8a996
 +        }
 +    }
 +}
+diff --git a/VelaCore/Sources/VelaCore/SearchParser.swift b/VelaCore/Sources/VelaCore/SearchParser.swift
+index cd7797f..3bd898e 100644
+--- a/VelaCore/Sources/VelaCore/SearchParser.swift
++++ b/VelaCore/Sources/VelaCore/SearchParser.swift
+@@ -105,6 +105,15 @@ enum SearchParser {
+         p.featuredReview = str(field(entry, "featuredReview"))?
+             .trimmingCharacters(in: CharacterSet(charactersIn: "\"“” \n"))
+             .nilIfBlank
++        if let entries = arr(at(entry, 1, 142, 1)) {
++            var seen = Set<String>()
++            p.reviewExcerpts = entries.compactMap { row in
++                guard let value = str(at(row, 1, 0, 0))?.trimmingCharacters(in: .whitespacesAndNewlines),
++                      !value.isEmpty, seen.insert(value).inserted else { return nil }
++                return value
++            }
++            if p.reviewExcerpts?.isEmpty == true { p.reviewExcerpts = nil }
++        }
+         p.editorialSummary = str(field(entry, "editorialSummary"))?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
+         p.about = (arr(field(entry, "about")) ?? []).compactMap { s in
+             guard let title = str(at(s, 1)) else { return nil }
 diff --git a/VelaCore/Sources/VelaCore/StepFill.swift b/VelaCore/Sources/VelaCore/StepFill.swift
 index 40e76c0..c60e9b9 100644
 --- a/VelaCore/Sources/VelaCore/StepFill.swift
