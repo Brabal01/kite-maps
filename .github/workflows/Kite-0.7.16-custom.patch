@@ -3741,7 +3741,7 @@ index c1654aa..d74ab78 100644
      }
  }
 diff --git a/App/Sources/Navigator.swift b/App/Sources/Navigator.swift
-index 27594c3..5f11bc7 100644
+index 27594c3..ad90b51 100644
 --- a/App/Sources/Navigator.swift
 +++ b/App/Sources/Navigator.swift
 @@ -30,6 +30,8 @@ final class Navigator: ObservableObject {
@@ -3777,7 +3777,7 @@ index 27594c3..5f11bc7 100644
 +        } else {
 +            events = orderedControls
 +        }
-+        let next = events.lazy.filter { $0.meters >= along && $0.meters - along <= 2_000 }.prefix(6)
++        let next = events.filter { $0.meters >= along && $0.meters - along <= 2_000 }.prefix(6)
 +        let remaining = next.map { UpcomingRoadControl(control: $0.control, meters: (($0.meters - along) / 10).rounded() * 10) }
 +        if remaining != upcomingControls { upcomingControls = remaining }
 +    }
