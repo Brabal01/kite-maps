@@ -812,7 +812,9 @@ class Navigator(route0: Route, val destination: Place, stops0: List<Place>, priv
 
     /** Every few minutes on a drive, asks again for the way from here, like Waze. */
     private fun checkTraffic(p: RouteTracker.Progress, loc: Fix) {
-        if (route.mode != TravelMode.DRIVE || AppSettings.noGoogle || rerouting || trafficLoading || fasterOffer != null ||
+        val mapboxToken = AppSettings.activeMapboxToken
+        val useGoogle = !AppSettings.noGoogle
+        if (route.mode != TravelMode.DRIVE || (!useGoogle && mapboxToken == null) || rerouting || trafficLoading || fasterOffer != null ||
             p.remainingMeters <= 5000 || p.offRoute || since(trafficAt) <= 240) return
         trafficLoading = true
         trafficAt = now()
@@ -820,7 +822,9 @@ class Navigator(route0: Route, val destination: Place, stops0: List<Place>, priv
         val course = heading(loc); val id = route.id; val planned = p.remainingSeconds / trafficScale
         val to = destination.location; val via = stops.map { it.location }
         scope.launch {
-            val r = runCatching { Directions.routes(from, to, TravelMode.DRIVE, avoidHighways, avoidTolls, via = via, heading = course) }.getOrNull()
+            val r = runCatching {
+                Directions.routes(from, to, TravelMode.DRIVE, avoidHighways, avoidTolls, useGoogle, via, course, mapboxToken = mapboxToken)
+            }.getOrNull()
             trafficLoading = false
             val fresh = r?.routes?.firstOrNull() ?: return@launch
             val nowP = progress ?: return@launch
@@ -943,7 +947,8 @@ class Navigator(route0: Route, val destination: Place, stops0: List<Place>, priv
         val req = rerouteRequest
         scope.launch {
             val r = runCatching {
-                Directions.routes(from, to, mode, avoidHighways, avoidTolls, !AppSettings.noGoogle, stops.map { it.location }, course)
+                Directions.routes(from, to, mode, avoidHighways, avoidTolls, !AppSettings.noGoogle, stops.map { it.location }, course,
+                    mapboxToken = AppSettings.activeMapboxToken)
             }.getOrNull()
             if (stopped || req != rerouteRequest) return@launch
             rerouting = false

@@ -51,7 +51,7 @@ import java.util.Locale
 
 /** The map page: a big "Where to?" bar, Home and Work one tap away, and the results or place sheet. */
 @Composable
-fun BrowseOverlay(model: AppModel) {
+fun BrowseOverlay(model: AppModel, showMapbox: Boolean) {
     val dark = LocalDark.current
     val ctx = LocalContext.current
     val s = AppSettings
@@ -95,6 +95,11 @@ fun BrowseOverlay(model: AppModel) {
                     LocateButton(model)
                 }
             }
+        }
+
+        if (showMapbox && sheetH < full * 0.6f) {
+            MapboxAttribution(Modifier.align(Alignment.BottomCenter)
+                .padding(bottom = if (hasSheet) sheetH + 8.dp else navBottom + 86.dp))
         }
 
         AnimatedVisibility(hasSheet, Modifier.align(Alignment.BottomCenter), enter = slideInVertically { it }, exit = slideOutVertically { it }) {

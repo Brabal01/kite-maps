@@ -8,6 +8,12 @@ import android.graphics.RectF
 import android.location.Location
 import android.util.Log
 import android.view.HapticFeedbackConstants
+import android.widget.Toast
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import org.maplibre.android.MapLibre
+import org.maplibre.android.WellKnownTileServer
 import app.kite.core.*
 import kotlinx.coroutines.*
 import org.maplibre.android.camera.CameraPosition
@@ -26,6 +32,7 @@ import org.maplibre.android.style.sources.GeoJsonOptions
 import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.android.style.sources.RasterSource
 import org.maplibre.android.style.sources.TileSet
+import org.maplibre.android.style.sources.VectorSource
 import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
 import org.maplibre.geojson.LineString
@@ -54,6 +61,13 @@ class KiteMap(private val model: AppModel, private val context: Context) {
     private var view: MapView? = null
     private val scope get() = model.scope
     private var styleReady = false
+    private var selectedStyle: Basemap? = null
+    private var loadingStyle: Basemap? = null
+    var showingMapbox by mutableStateOf(false)
+        private set
+    private val overlayFont get() = arrayOf(if (showingMapbox) "Open Sans Bold" else "Noto Sans Bold")
+
+    private data class Basemap(val url: String, val token: String? = null)
     private var movedToUser = false
     private var pinDroppedAt = 0L
     private val originalLabels = mutableMapOf<String, Triple<PropertyValue<*>, PropertyValue<*>, PropertyValue<*>>>()
@@ -112,7 +126,15 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             m.uiSettings.setAttributionMargins(24, 0, 0, 24)
             m.uiSettings.isAttributionEnabled = true
             m.cameraPosition = CameraPosition.Builder().target(org.maplibre.android.geometry.LatLng(51.5074, -0.1278)).zoom(11.0).build()
-            m.setStyle(Style.Builder().fromUri(STYLE_URL)) { style -> styleLoaded(m, style) }
+            v.addOnDidFailLoadingMapListener {
+                if (loadingStyle?.token != null) {
+                    Toast.makeText(context, "Mapbox map unavailable. Using OpenFreeMap.", Toast.LENGTH_LONG).show()
+                    loadBasemap(m, Basemap(STYLE_URL))
+                }
+            }
+            if (selectedStyle == null) applyBasemap(dark, model.nav?.route?.mode == TravelMode.DRIVE,
+                AppSettings.satellite, AppSettings.activeMapboxToken)
+            else loadBasemap(m, checkNotNull(selectedStyle))
             m.addOnMapClickListener { tapped(m, it) }
             m.addOnMapLongClickListener { pressed(m, it); true }
             m.addOnCameraMoveStartedListener { reason ->
@@ -145,11 +167,45 @@ class KiteMap(private val model: AppModel, private val context: Context) {
 
     // Style
 
+    fun applyBasemap(dark: Boolean, driving: Boolean, satellite: Boolean, token: String?) {
+        val darkChanged = this.dark != dark
+        this.dark = dark
+        val id = when {
+            satellite -> "satellite-streets-v12"
+            driving && dark -> "navigation-night-v1"
+            driving -> "navigation-day-v1"
+            dark -> "dark-v11"
+            else -> "streets-v12"
+        }
+        val wanted = if (token == null) Basemap(STYLE_URL) else Basemap("mapbox://styles/mapbox/$id", token)
+        if (wanted != selectedStyle) {
+            selectedStyle = wanted
+            map?.let { loadBasemap(it, wanted) }
+        } else if (darkChanged) {
+            repaint()
+            render()
+        }
+    }
+
+    private fun loadBasemap(m: MapLibreMap, basemap: Basemap) {
+        val pending = basemap.copy()
+        loadingStyle = pending
+        styleReady = false
+        MapLibre.getInstance(context, basemap.token, WellKnownTileServer.Mapbox)
+        m.setStyle(Style.Builder().fromUri(basemap.url)) { style ->
+            if (loadingStyle !== pending) return@setStyle
+            loadingStyle = null
+            showingMapbox = basemap.token != null
+            styleLoaded(m, style)
+        }
+    }
+
     private fun styleLoaded(m: MapLibreMap, style: Style) {
         originalLabels.clear()
         for (l in style.layers) if (l is SymbolLayer) originalLabels[l.id] = Triple(l.textColor, l.textHaloColor, l.textHaloWidth)
         MapStyler.reset()
         MapIcons.register(style, dark)
+        if (showingMapbox) addMapboxLayers(style)
         addVelaLayers(style)
         styleReady = true
         heatTiles.styleReloaded()
@@ -207,19 +263,13 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         m.moveCamera(org.maplibre.android.camera.CameraUpdateFactory.newLatLngZoom(f.coord.ml(), 15.0))
     }
 
-    fun applyDark(d: Boolean) {
-        if (dark == d) return
-        dark = d
-        repaint()
-    }
-
     private fun repaint() {
         val style = map?.style ?: return
         if (!styleReady) return
         if (!dark) {
             for (l in style.layers) if (l is SymbolLayer) originalLabels[l.id]?.let { l.setProperties(it.first, it.second, it.third) }
         }
-        MapStyler.apply(style, dark)
+        if (!showingMapbox) MapStyler.apply(style, dark)
         MapIcons.swapPuck(style, dark)
         (style.getLayer("vela-rail-case") as? LineLayer)?.setProperties(lineColor(if (dark) c(0x000000, 0.9f) else c(0xFFFFFF, 0.9f)))
         val text = if (dark) c(0xE8EAED) else c(0x202124)
@@ -250,8 +300,44 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             circleStrokeColor(Color.rgb(ring shr 16 and 0xFF, ring shr 8 and 0xFF, ring and 0xFF)), circleStrokeWidth(3f),
             circleRadius(step(count, literal(14f), stop(10, 17f), stop(50, 21f)))).apply { minZoom = from; setFilter(has("point_count")) })
         style.addLayer(SymbolLayer("$id-count", id).withProperties(
-            textField(Expression.toString(count)), textFont(arrayOf("Noto Sans Bold")), textSize(13f),
+            textField(Expression.toString(count)), textFont(overlayFont), textSize(13f),
             textColor(Color.WHITE), textAllowOverlap(true), textIgnorePlacement(true)).apply { minZoom = from; setFilter(has("point_count")) })
+    }
+
+    private fun mapboxTrafficLayers(style: Style) =
+        style.layers.filterIsInstance<LineLayer>().filter { it.sourceLayer == "traffic" }
+
+    private fun addMapboxLayers(style: Style) {
+        val labels = firstSymbolLayer(style)
+        val building = style.layers.filterIsInstance<FillLayer>().firstOrNull { it.sourceLayer == "building" }
+        if (building != null && style.layers.none { it is FillExtrusionLayer && it.sourceLayer == "building" }) {
+            val extrusion = FillExtrusionLayer("kite-mapbox-buildings", building.sourceId).withSourceLayer("building")
+                .withFilter(eq(get("extrude"), literal("true")))
+                .withProperties(
+                    fillExtrusionColor(c(if (dark) 0x3C4655 else 0xC7C8C0)),
+                    fillExtrusionHeight(toNumber(get("height"))),
+                    fillExtrusionBase(toNumber(get("min_height"))),
+                )
+            extrusion.minZoom = 15f
+            if (labels == null) style.addLayer(extrusion) else style.addLayerBelow(extrusion, labels)
+        }
+
+        if (mapboxTrafficLayers(style).isEmpty()) {
+            val id = "kite-mapbox-traffic"
+            style.addSource(VectorSource(id, "mapbox://mapbox.mapbox-traffic-v1"))
+            val traffic = LineLayer(id, id).withSourceLayer("traffic")
+                .withFilter(neq(get("congestion"), literal("low")))
+                .withProperties(
+                    lineColor(match(get("congestion"), color(Color.TRANSPARENT),
+                        stop("moderate", color(c(0xF59E0B))), stop("heavy", color(c(0xEF4444))),
+                        stop("severe", color(c(0xB91C1C))))),
+                    lineWidth(interpolate(linear(), zoom(), stop(8, 1.5f), stop(16, 3.5f))),
+                    lineOffset(interpolate(linear(), zoom(), stop(8, 0.5f), stop(16, 2.5f))),
+                    visibility(Property.NONE),
+                )
+            traffic.minZoom = 8f
+            if (labels == null) style.addLayer(traffic) else style.addLayerBelow(traffic, labels)
+        }
     }
 
     private fun addVelaLayers(style: Style) {
@@ -278,7 +364,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         val trafficLayer = RasterLayer("vela-traffic", "vela-traffic").withProperties(rasterOpacity(0.6f), rasterFadeDuration(900f), visibility(Property.NONE))
         (style.getLayer("building-3d") ?: style.getLayer("building"))?.let { style.addLayerAbove(trafficLayer, it.id) } ?: style.addLayer(trafficLayer)
 
-        val labels = firstSymbolLayer(style)
+        val labels = if (showingMapbox) null else firstSymbolLayer(style)
         fun insert(l: Layer) { if (labels != null) style.addLayerBelow(l, labels) else style.addLayer(l) }
         src("vela-route-alt"); src("vela-route", metrics = true); src("vela-route-traffic"); src("vela-route-done")
 
@@ -361,27 +447,27 @@ class KiteMap(private val model: AppModel, private val context: Context) {
 
         src("vela-mine")
         style.addLayer(SymbolLayer("vela-mine", "vela-mine").withProperties(
-            iconImage(get("icon")), iconAllowOverlap(true), textField(get("label")), textFont(arrayOf("Noto Sans Bold")),
+            iconImage(get("icon")), iconAllowOverlap(true), textField(get("label")), textFont(overlayFont),
             textSize(11f), textAnchor(Property.TEXT_ANCHOR_TOP), textOffset(arrayOf(0f, 1.1f)), textOptional(true),
             textMaxWidth(8f)).apply { minZoom = 9f })
 
         src("vela-results")
         style.addLayer(SymbolLayer("vela-results", "vela-results").withProperties(
-            iconImage(get("icon")), iconAllowOverlap(true), textField(get("label")), textFont(arrayOf("Noto Sans Bold")),
+            iconImage(get("icon")), iconAllowOverlap(true), textField(get("label")), textFont(overlayFont),
             textSize(12f), textAnchor(Property.TEXT_ANCHOR_LEFT), textOffset(arrayOf(1.4f, 0f)), textOptional(true),
             textMaxWidth(8f), textJustify(Property.TEXT_JUSTIFY_LEFT), symbolSortKey(get("rank"))))
 
         src("vela-selected")
         style.addLayer(SymbolLayer("vela-selected", "vela-selected").withProperties(
             iconImage(get("icon")), iconAnchor(get("anchor")), iconAllowOverlap(true), textAllowOverlap(false),
-            textField(get("label")), textFont(arrayOf("Noto Sans Bold")), textSize(13f), textAnchor(Property.TEXT_ANCHOR_TOP),
+            textField(get("label")), textFont(overlayFont), textSize(13f), textAnchor(Property.TEXT_ANCHOR_TOP),
             textOffset(arrayOf(0f, 0.4f)), textOptional(true)))
 
         src("vela-route-bubbles")
         for (selected in listOf(false, true)) {
             val b = SymbolLayer("vela-route-bubble-${if (selected) 1 else 0}", "vela-route-bubbles").withProperties(
                 iconImage(if (selected) "bubble-sel" else "bubble-alt"), iconTextFit(Property.ICON_TEXT_FIT_BOTH),
-                iconTextFitPadding(arrayOf(6f, 12f, 6f, 12f)), textField(get("label")), textFont(arrayOf("Noto Sans Bold")),
+                iconTextFitPadding(arrayOf(6f, 12f, 6f, 12f)), textField(get("label")), textFont(overlayFont),
                 textSize(15f), textColor(if (selected) Color.WHITE else c(0x202124)), iconAllowOverlap(true), textAllowOverlap(true))
             b.setFilter(eq(get("sel"), literal(if (selected) 1 else 0)))
             style.addLayer(b)
@@ -408,7 +494,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         src("vela-next-road")
         style.addLayer(SymbolLayer("vela-next-road", "vela-next-road").withProperties(
             iconImage("road-pill"), iconTextFit(Property.ICON_TEXT_FIT_BOTH), iconTextFitPadding(arrayOf(5f, 11f, 5f, 11f)),
-            textField(get("label")), textFont(arrayOf("Noto Sans Bold")), textSize(16f), textColor(c(0x06201C)),
+            textField(get("label")), textFont(overlayFont), textSize(16f), textColor(c(0x06201C)),
             textPitchAlignment(Property.TEXT_PITCH_ALIGNMENT_VIEWPORT), iconAllowOverlap(true), textAllowOverlap(true)))
 
         src(NavGlide.PUCK)
@@ -463,21 +549,24 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             if (m.locationComponent.isLocationComponentEnabled == navigating) m.locationComponent.isLocationComponentEnabled = !navigating
         } else if (LocationService.authorized) enableLocation(style)
         // Not before the welcome screen's choice: "Open data only" means nothing ever went to Google.
-        visible(style, "vela-traffic", s.traffic && !navigating && !s.noGoogle && s.welcomed)
+        visible(style, "vela-traffic", !showingMapbox && s.traffic && !navigating && !s.noGoogle && s.welcomed)
+        if (showingMapbox) {
+            mapboxTrafficLayers(style).forEach { visible(style, it.id, s.traffic && !navigating) }
+        }
         // The Surveillance layer just switched on: fetch it now, not at the next pan (only on the
         // switch, so a failed fetch keeps its 30-second pause).
         if (s.surveillanceCameras && !surveillanceWasOn) loadSurveillance(m)
         surveillanceWasOn = s.surveillanceCameras
-        visible(style, "vela-sat", s.satellite)
+        visible(style, "vela-sat", s.satellite && !showingMapbox)
         visible(style, "vela-terrain", s.terrain && !s.satellite)
         for (id in listOf("vela-rail", "vela-rail-case")) visible(style, id, s.transitLines && !navigating)
         if (styledDriving != navigating) {
-            MapStyler.drive(style, navigating)
+            if (!showingMapbox) MapStyler.drive(style, navigating)
             styledDriving = navigating
             (style.getLayer("vela-route-line") as? LineLayer)?.setProperties(lineWidth(if (navigating) 12f else 10f))
             (style.getLayer("vela-route-edge") as? LineLayer)?.setProperties(lineWidth(if (navigating) 22f else 15f))
         }
-        for (id in listOf("building", "building-3d")) visible(style, id, !s.satellite && !navigating)
+        if (!showingMapbox) for (id in listOf("building", "building-3d")) visible(style, id, !s.satellite && !navigating)
         renderResults(style)
         renderRoutes(style)
         renderPuck(style)

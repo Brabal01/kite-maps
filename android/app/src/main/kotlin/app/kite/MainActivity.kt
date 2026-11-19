@@ -104,7 +104,12 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
         LocationService.onUpdate = { f -> modelUpdate?.invoke(f); kiteMap.pushFix(f) }
         onDispose { LocationService.onUpdate = modelUpdate }
     }
-    LaunchedEffect(dark) { kiteMap.applyDark(dark) }
+    val driving = model.nav?.route?.mode == app.kite.core.TravelMode.DRIVE
+    val mapboxToken = s.activeMapboxToken
+    val satellite = s.satellite
+    LaunchedEffect(dark, driving, satellite, mapboxToken) {
+        kiteMap.applyBasemap(dark, driving, satellite, mapboxToken)
+    }
 
     // Redraw the map's layers whenever anything they show changes.
     LaunchedEffect(Unit) {
@@ -161,10 +166,10 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
 
         val nav = model.nav
         when {
-            nav != null -> NavigationOverlay(model, nav)
-            model.directions != null -> DirectionsOverlay(model)
+            nav != null -> NavigationOverlay(model, nav, kiteMap.showingMapbox)
+            model.directions != null -> DirectionsOverlay(model, kiteMap.showingMapbox)
             else -> when (model.tab) {
-                AppTab.MAP -> BrowseOverlay(model)
+                AppTab.MAP -> BrowseOverlay(model, kiteMap.showingMapbox)
                 AppTab.SAVED -> SavedPage(model)
                 AppTab.SETTINGS -> SettingsPage(model)
             }

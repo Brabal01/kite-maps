@@ -19,7 +19,7 @@ else
 fi
 cd "$WORK"
 mkdir -p repo metadata
-cp "$HERE/metadata/app.kite.yml" metadata/
+cp "$HERE/metadata/app.kite.driving.yml" metadata/
 
 # The same key that signs the app signs the repo's index, so there's one secret to keep.
 echo "$KITE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/repo.jks"
@@ -41,7 +41,7 @@ echo "apksigner: $SIGNER" >> config.yml
 chmod 600 config.yml
 
 CODE=$(echo "$VERSION" | awk -F. '{print $1*10000 + $2*100 + $3}')
-cp "$APK" "repo/app.kite_${CODE}.apk"
+cp "$APK" "repo/app.kite.driving_${CODE}.apk"
 set +e
 fdroid update --create-metadata --pretty --use-date-from-apk 2>&1 | grep -v "keystorepass\|keypass"
 STATUS=${PIPESTATUS[0]}
@@ -52,7 +52,7 @@ if [ "$STATUS" -ne 0 ] || [ ! -f repo/index-v1.jar ] || [ ! -f repo/entry.jar ];
   echo "fdroid update failed (exit $STATUS): the repo index wasn't made, so nothing is published."
   exit 1
 fi
-if [ ! -f "repo/app.kite_${CODE}.apk" ]; then
+if [ ! -f "repo/app.kite.driving_${CODE}.apk" ]; then
   echo "fdroid moved the APK out of the repo (bad signature?): not publishing."
   exit 1
 fi

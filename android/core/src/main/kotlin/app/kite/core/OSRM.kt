@@ -82,7 +82,7 @@ object OSRM {
 
     private fun loc(x: Any?): LatLng? = x.asList()?.let { if (it.size == 2) LatLng(it[1].num() ?: return null, it[0].num() ?: return null) else null }
 
-    fun parseRoot(root: Map<String, Any?>, mode: TravelMode): List<Route> {
+    fun parseRoot(root: Map<String, Any?>, mode: TravelMode, source: String = "osm"): List<Route> {
         val routes = root["routes"].asMaps() ?: return emptyList()
         return routes.mapNotNull { r ->
             val geo = r["geometry"] as? String ?: return@mapNotNull null
@@ -127,7 +127,9 @@ object OSRM {
                     val mt = maneuverType(type, modifier, Geo.drivesOnLeft(at))
                     val signs = Signs(step["destinations"] as? String, step["exits"] as? String, maneuvers.lastOrNull()?.road)
                     val exit = m["exit"].int()
-                    val man = Maneuver(mt, instruction(type, modifier, stepRoad, exit, mode, signs), at,
+                    val text = (m["instruction"] as? String)?.takeIf { source == "mapbox" && it.isNotBlank() }
+                        ?: instruction(type, modifier, stepRoad, exit, mode, signs)
+                    val man = Maneuver(mt, text, at,
                         min(along, cum.last()), dist, stepRoad)
                     man.lanes = lanes(step)
                     man.exit = exit
@@ -158,8 +160,15 @@ object OSRM {
             maneuvers = keepLaneThroughMerges(maneuvers, mergeSides)
             maneuvers.lastOrNull()?.alongMeters = cum.last()
             val via = roads.maxByOrNull { it.value }?.key
-            val route = Route(mode, line, distance, duration, null, via, maneuvers, source = "osm")
-            route.speedLimits = speedLimits(legs, cum)
+            if (source == "mapbox" && (maneuvers.firstOrNull()?.type != ManeuverType.DEPART ||
+                    maneuvers.lastOrNull()?.type != ManeuverType.ARRIVE)) return@mapNotNull null
+            val typical = r["duration_typical"].num()?.takeIf { source == "mapbox" && it > 0 }
+            val route = Route(mode, line, distance, typical ?: duration, duration.takeIf { typical != null },
+                via, maneuvers, source = source)
+            // Mapbox annotations can describe a different number of segments than the overview.
+            val annotationCount = legs.sumOf { it["annotation"].asMap()?.get("maxspeed").asList()?.size ?: 0 }
+            if (source != "mapbox" || annotationCount == cum.lastIndex) route.speedLimits = speedLimits(legs, cum)
+            if (source == "mapbox") route.trafficSpans = MapboxDirections.trafficSpans(legs, cum)
             route
         }
     }
@@ -428,8 +437,14 @@ object Directions {
         a: LatLng, b: LatLng, mode: TravelMode,
         avoidHighways: Boolean = false, avoidTolls: Boolean = false,
         useGoogle: Boolean = true, via: List<LatLng> = emptyList(), heading: Double? = null,
-        alternatives: Boolean = false,
+        alternatives: Boolean = false, mapboxToken: String? = null,
     ): Result = withContext(Dispatchers.Default) {
+        if (mapboxToken != null && mode == TravelMode.DRIVE) {
+            val primary = MapboxDirections.routes(a, b, via, heading, avoidHighways, avoidTolls, alternatives, mapboxToken)
+                .filter { reaches(it.polyline, a, b) }
+                .map { StepMerge.tidy(it.maneuvers); Roundabouts.settle(it) }
+            if (primary.isNotEmpty()) return@withContext Result(primary)
+        }
         // Off the main thread: fitting the open router's steps onto a long route (a drive across the
         // country) is millions of sums, enough to freeze the screen for seconds.
         // Ask both at once: Google's route knows traffic, OSRM's steps read better.

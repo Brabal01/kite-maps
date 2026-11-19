@@ -18,6 +18,23 @@
 
 </div>
 
+## Kite Driving on Android
+
+This fork starts at Kite Maps v0.7.16. It installs as **Kite Driving** (`app.kite.driving`).
+
+Open **Settings → Map & display → Mapbox public token** and save a public Mapbox token (`pk.…`).
+Mapbox becomes the preferred basemap and provider for car routing, including traffic and
+rerouting. OpenFreeMap and Kite routing provide a fallback. You can switch providers under
+**Settings → Map & display → Prefer Mapbox**. The separate **Use Kite without Google** setting
+controls Google services.
+
+The new turn panel takes its layout cues from [Horizon Maps](https://github.com/benbishop028-arch/Horizon-Maps).
+Mapbox vector styles are rendered by MapLibre. The attribution logo comes from
+[Mapbox GL JS 1.13.3](https://github.com/mapbox/mapbox-gl-js/tree/v1.13.3/src/css/svg).
+See [the Mapbox GL JS license](licenses/Mapbox-GL-JS.txt).
+
+Build the test APK with `cd android && bash gradlew :core:test :app:assembleDebug`.
+
 > [!note]
 > **Kite is a hobby project in beta.** It's not on the App Store or Google Play: you install it
 > yourself (AltStore on iPhone, F-Droid on Android). Expect bugs, and please [open an issue](https://github.com/matteofx1/kite-maps/issues)

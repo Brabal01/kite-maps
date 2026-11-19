@@ -46,6 +46,12 @@ object AppSettings {
     var voice by bool("voice", true)
     /** The voice button's middle setting, "Alerts only": remembered with `voice`, so the next drive starts the same. */
     var voiceAlertsOnly by bool("voiceAlertsOnly")
+    var mapboxEnabled by bool("mapboxEnabled", true)
+    var mapboxPublicToken by Pref("mapboxPublicToken", { it.getString("mapboxPublicToken", "").orEmpty() },
+        { e, token -> e.putString("mapboxPublicToken", token) })
+    val activeMapboxToken: String? get() = mapboxPublicToken.takeIf {
+        mapboxEnabled && app.kite.core.MapboxDirections.isPublicToken(it)
+    }
     var traffic by bool("traffic", true)
     var satellite by bool("satellite")
     /** Hill shading, and metro/rail lines in their colors. */

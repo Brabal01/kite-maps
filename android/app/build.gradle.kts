@@ -15,7 +15,7 @@ android {
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "app.kite"
+        applicationId = "app.kite.driving"
         minSdk = 26
         targetSdk = 35
         versionCode = kiteCode

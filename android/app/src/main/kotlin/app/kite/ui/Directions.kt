@@ -57,7 +57,7 @@ import kotlin.math.max
 
 /** Route preview: the from/to card on top, routes on the map, the trip sheet below. */
 @Composable
-fun DirectionsOverlay(model: AppModel) {
+fun DirectionsOverlay(model: AppModel, showMapbox: Boolean) {
     val density = LocalDensity.current
     var cardHeight by remember { mutableStateOf(130.dp) }
     val statusTop = with(density) { WindowInsets.statusBars.getTop(this).toDp() }
@@ -68,6 +68,10 @@ fun DirectionsOverlay(model: AppModel) {
             BottomSheet(model.detent, { model.detent = it }, full, tripPeek(d),
                 topClearance = statusTop + 6.dp + cardHeight + 16.dp,
                 header = { TripHeader(model) }, content = { TripBody(model) })
+        }
+        if (showMapbox) {
+            MapboxAttribution(Modifier.align(Alignment.TopStart).statusBarsPadding()
+                .padding(start = 16.dp, top = cardHeight + 9.dp))
         }
         if (d != null) {
             Box(Modifier.statusBarsPadding().padding(top = 6.dp).onSizeChanged { cardHeight = with(density) { it.height.toDp() } }) {

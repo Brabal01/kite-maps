@@ -128,7 +128,7 @@ private suspend fun mapPicture(model: AppModel): ByteArray? {
 
 private fun shareFile(ctx: Context, file: File) {
     runCatching {
-        val uri = FileProvider.getUriForFile(ctx, "app.kite.files", file)
+        val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.files", file)
         val send = Intent(Intent.ACTION_SEND).setType("application/zip").putExtra(Intent.EXTRA_STREAM, uri)
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         ctx.startActivity(Intent.createChooser(send, "Share diagnostics").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))

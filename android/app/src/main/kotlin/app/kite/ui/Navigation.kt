@@ -69,7 +69,7 @@ private fun hex(v: Long) = Color(0xFF000000 or v)
 
 /** Turn-by-turn: the see-through turn strip, map buttons, and the slim trip bar. */
 @Composable
-fun NavigationOverlay(model: AppModel, nav: Navigator) {
+fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
     val dark = LocalDark.current
     val ctx = LocalContext.current
     var showSteps by remember { mutableStateOf(false) }
@@ -145,6 +145,8 @@ fun NavigationOverlay(model: AppModel, nav: Navigator) {
             }
         }
 
+        if (showMapbox) MapboxAttribution(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 73.dp))
+
         // One column, so however many warnings are up, they push the map buttons down rather than cover them.
         Column(Modifier.fillMaxSize().systemBarsPadding(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Column(Modifier.padding(horizontal = 12.dp).padding(top = 4.dp).animateContentSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -153,6 +155,8 @@ fun NavigationOverlay(model: AppModel, nav: Navigator) {
                         note = if (nav.wazeWarned > 0) "Waze drivers warned you about ${nav.wazeWarned} report${if (nav.wazeWarned == 1) "" else "s"} on the way" else null) {
                         model.endNavigation()
                     }
+                } else if (nav.route.mode == TravelMode.DRIVE) {
+                    DrivingBanner(nav, compact = h < 480.dp)
                 } else InstructionBanner(nav)
                 // One warning at a time; the others wait in the pill under it.
                 when (mainAlert) {
@@ -330,6 +334,79 @@ object Banner {
     fun ordinal(n: Int): String {
         if (n % 100 in 11..13) return "${n}th"
         return when (n % 10) { 1 -> "${n}st"; 2 -> "${n}nd"; 3 -> "${n}rd"; else -> "${n}th" }
+    }
+}
+
+private val drivePanel = Color(0xFF10213A)
+private val drivePanelInset = Color(0xFF1C3555)
+private val drivePanelAccent = Color(0xFF88D9FF)
+private val drivePanelSecondary = Color(0xFFC4D7EA)
+
+@Composable
+private fun DrivingBanner(nav: Navigator, compact: Boolean) {
+    val maneuver = nav.nextManeuver
+    val distance = nav.progress?.distanceToNext
+    val leftTraffic = maneuver?.let { Geo.drivesOnLeft(it.location) } ?: false
+    val headline = Banner.headline(maneuver)
+    val parts = Banner.split(headline)
+    val road = parts?.second ?: maneuver?.road?.takeIf { it.isNotBlank() && it != headline }
+    val instruction = parts?.first ?: headline
+    val lanes = if (maneuver != null && distance != null && distance < 1_500) LaneGuide.lanes(maneuver, leftTraffic) else null
+    val farAway = distance != null && distance > 3_200 && maneuver?.type != ManeuverType.ARRIVE
+    val shape = RoundedCornerShape(18.dp)
+    val small = compact || farAway
+
+    Column(Modifier.widthIn(max = 452.dp).fillMaxWidth().shadow(6.dp, shape).clip(shape).background(drivePanel)) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = if (small) 8.dp else 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(13.dp),
+        ) {
+            val size = if (small) 46.dp else 66.dp
+            Box(Modifier.size(size).clip(RoundedCornerShape(12.dp)).background(drivePanelInset), contentAlignment = Alignment.Center) {
+                if (maneuver?.type == ManeuverType.ROUNDABOUT && maneuver.exit != null) {
+                    RoundaboutDiagram(maneuver.roundabout, maneuver.exit ?: 1, leftTraffic, Modifier.size(size - 8.dp),
+                        inkColor = Color.White, routeColor = drivePanelAccent)
+                } else {
+                    Icon(maneuverIcon(maneuver?.type ?: ManeuverType.STRAIGHT), null,
+                        tint = Color.White, modifier = Modifier.size(size - 13.dp))
+                }
+            }
+            Column(Modifier.weight(1f)) {
+                if (distance != null) Text(Fmt.distance(distance), color = Color.White,
+                    fontSize = if (small) 26.sp else 36.sp, lineHeight = if (small) 29.sp else 38.sp,
+                    fontWeight = FontWeight.ExtraBold, maxLines = 1)
+                Text(road ?: instruction, color = Color.White, fontSize = if (small) 16.sp else 20.sp,
+                    fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (road != null && (!small || maneuver?.type == ManeuverType.ROUNDABOUT)) {
+                    Text(instruction, color = drivePanelSecondary, fontSize = 13.sp,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
+        if (lanes != null && maneuver != null) {
+            Row(Modifier.fillMaxWidth().background(drivePanelInset).padding(horizontal = 12.dp, vertical = 5.dp),
+                horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                LaneStrip(lanes.first, maneuver.type, maneuver.roundabout?.let { it.exits.getOrNull(it.taken) },
+                    tileSize = if (compact) 29.dp else 34.dp, driving = true)
+            }
+        }
+        val then = nav.thenManeuver
+        if (!farAway && then != null) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(maneuverIcon(then.type), null, tint = drivePanelAccent, modifier = Modifier.size(19.dp))
+                Text("Then", color = drivePanelSecondary, fontSize = 13.sp)
+                Text(Banner.headline(then), color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        if (distance != null && distance < 450 && maneuver?.type != ManeuverType.ARRIVE) {
+            val progress = (1 - distance / 450).toFloat().coerceIn(0f, 1f)
+            Box(Modifier.fillMaxWidth().height(3.dp).background(drivePanelInset)) {
+                Box(Modifier.fillMaxWidth(progress).fillMaxHeight().background(drivePanelAccent))
+            }
+        }
     }
 }
 
@@ -1067,7 +1144,7 @@ private val ShieldShape = GenericShape { size, _ ->
 
 /** Which lanes to be in, the way Waze and Google draw it: the right ones lit up, the rest dim. */
 @Composable
-fun LaneStrip(lanes: List<Lane>, turn: ManeuverType, exitAngle: Double?) {
+fun LaneStrip(lanes: List<Lane>, turn: ManeuverType, exitAngle: Double?, tileSize: Dp = 42.dp, driving: Boolean = false) {
     // A lane that goes several ways shows the way this turn goes when it's a good lane.
     fun pick(lane: Lane): String {
         if (!lane.valid || lane.indications.size <= 1) return lane.indications.firstOrNull() ?: "straight"
@@ -1083,14 +1160,20 @@ fun LaneStrip(lanes: List<Lane>, turn: ManeuverType, exitAngle: Double?) {
             ManeuverType.UTURN -> listOf("uturn")
             else -> listOf("straight")
         }
-        return want.firstOrNull { it in lane.indications } ?: lane.indications[0]
+        return want.firstOrNull { it in lane.indications } ?: lane.indications.firstOrNull() ?: "straight"
     }
     val dark = LocalDark.current
     Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
         lanes.take(6).forEach { lane ->
-            Box(Modifier.size(42.dp).clip(RoundedCornerShape(13.dp)).background(if (lane.valid) Vela.accent(dark) else Vela.primary(dark).copy(alpha = 0.08f)),
+            val fill = if (driving) {
+                if (lane.valid) drivePanelAccent else drivePanel
+            } else if (lane.valid) Vela.accent(dark) else Vela.primary(dark).copy(alpha = 0.08f)
+            val ink = if (driving) {
+                if (lane.valid) drivePanel else drivePanelSecondary
+            } else if (lane.valid) Vela.onAccent(dark) else Vela.muted(dark).copy(alpha = 0.8f)
+            Box(Modifier.size(tileSize).clip(RoundedCornerShape(tileSize * 0.28f)).background(fill),
                 contentAlignment = Alignment.Center) {
-                Icon(laneIcon(pick(lane)), null, tint = if (lane.valid) Vela.onAccent(dark) else Vela.muted(dark).copy(alpha = 0.8f), modifier = Modifier.size(28.dp))
+                Icon(laneIcon(pick(lane)), null, tint = ink, modifier = Modifier.size(tileSize * 2 / 3))
             }
         }
     }
@@ -1112,7 +1195,10 @@ fun laneIcon(indication: String): ImageVector = when (indication) {
  * only your way round and out lit up. Without the real layout, the exits are spread evenly.
  */
 @Composable
-fun RoundaboutDiagram(shape: RoundaboutShape?, exit: Int, clockwise: Boolean, modifier: Modifier = Modifier) {
+fun RoundaboutDiagram(
+    shape: RoundaboutShape?, exit: Int, clockwise: Boolean, modifier: Modifier = Modifier,
+    inkColor: Color = Color.Unspecified, routeColor: Color = Color.Unspecified,
+) {
     val l = remember(shape, exit, clockwise) {
         if (shape != null && shape.taken in shape.exits.indices) shape else {
             // Evenly spread up to yours, a little short of the full circle.
@@ -1126,8 +1212,8 @@ fun RoundaboutDiagram(shape: RoundaboutShape?, exit: Int, clockwise: Boolean, mo
     val font = Rounded
     // Your way round in teal, every other road dim, on the see-through strip (dark or light).
     val dark = LocalDark.current
-    val lit = Vela.accentText(dark)
-    val ink = Vela.primary(dark)
+    val lit = if (routeColor != Color.Unspecified) routeColor else Vela.accentText(dark)
+    val ink = if (inkColor != Color.Unspecified) inkColor else Vela.primary(dark)
     Canvas(modifier) {
         val w = size.width
         val c = Offset(w / 2, size.height / 2)

@@ -376,12 +376,56 @@ private fun MapSettings() {
         RowDivider()
         ToggleRow("Parking button on the map", Icons.Filled.LocalParking, 0x2563EB, s.parkingButton) { s.parkingButton = it }
     }
+    MapboxSettings()
     SettingsGroup(header = "While driving",
         footer = "Kite still zooms in for turns and out on long roads. Closer shows the streets bigger; Wider shows more road ahead. Normal is how Kite has always been.") {
         Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             SettingLabel("Map zoom while driving", Icons.Filled.ZoomIn, 0x0F766E)
             Segmented(MapZoom.entries.toList(), s.mapZoom, { it.title }) { s.mapZoom = it }
         }
+    }
+}
+
+@Composable
+private fun MapboxSettings() {
+    val s = AppSettings
+    var editing by remember { mutableStateOf(false) }
+    val configured = MapboxDirections.isPublicToken(s.mapboxPublicToken)
+    SettingsGroup(header = "Map provider",
+        footer = "Mapbox supplies the map and calculates car routes with traffic. Mapbox receives the map area and route coordinates. OpenFreeMap and Kite routing are available as a fallback.") {
+        ToggleRow("Prefer Mapbox", Icons.Outlined.Map, 0x1D4ED8, s.mapboxEnabled) { s.mapboxEnabled = it }
+        RowDivider()
+        Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).tap { editing = true }.padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            SettingLabel("Mapbox public token", Icons.Filled.Key, 0x334155, Modifier.weight(1f))
+            Text(if (configured) "Edit" else "Add", color = secondaryText)
+        }
+    }
+    if (editing) {
+        var token by remember { mutableStateOf(s.mapboxPublicToken) }
+        val value = token.trim()
+        val valid = MapboxDirections.isPublicToken(value)
+        AlertDialog(
+            onDismissRequest = { editing = false },
+            title = { Text("Mapbox public token") },
+            text = {
+                OutlinedTextField(token, { token = it }, label = { Text("Public access token") },
+                    placeholder = { Text("pk.…") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                    isError = value.isNotEmpty() && !valid,
+                    supportingText = { Text("Use a public token from your Mapbox account.") })
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    s.mapboxPublicToken = value
+                    s.mapboxEnabled = true
+                    editing = false
+                }, enabled = valid) { Text("Save") }
+            },
+            dismissButton = {
+                if (configured) TextButton(onClick = { s.mapboxPublicToken = ""; editing = false }) { Text("Remove") }
+                TextButton(onClick = { editing = false }) { Text("Cancel") }
+            },
+        )
     }
 }
 
@@ -421,7 +465,7 @@ private fun PlacesSettings(model: AppModel) {
 @Composable
 private fun PrivacySettings() {
     val s = AppSettings
-    SettingsGroup(footer = "Off (the usual): search, place details, routes and live traffic come from Google, asked anonymously with no account. On: everything comes from free open-data services instead and nothing goes to Google, but search and routes are less complete.") {
+    SettingsGroup(footer = "Turn this on to use open data for search, place details and Kite routing. If you enabled Mapbox in Map settings, Mapbox still provides the map and car routing.") {
         ToggleRow("Use Kite without Google", Icons.Filled.Lock, 0x475569, s.noGoogle) { s.noGoogle = it }
     }
 }

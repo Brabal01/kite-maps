@@ -112,14 +112,14 @@ data class Route(
     var distanceMeters: Double,
     /** Seconds without traffic. */
     var typicalSeconds: Double,
-    /** Seconds in current traffic, when Google knows it. */
+    /** Seconds in current traffic, when the routing provider knows it. */
     var trafficSeconds: Double?,
     var summary: String?,
     var maneuvers: MutableList<Maneuver>,
     var trafficSpans: List<TrafficSpan> = emptyList(),
     /** Speed limits along the route, from OpenStreetMap. */
     var speedLimits: List<SpeedLimit> = emptyList(),
-    /** "google" or "osm". */
+    /** "google", "osm" or "mapbox". */
     var source: String,
     /** False when Google left steps out (it folds long motorway stretches away), so the turns can't be placed. */
     var stepsComplete: Boolean = true,

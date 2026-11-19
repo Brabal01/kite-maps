@@ -14,7 +14,8 @@ class KiteApp : Application() {
         KeyValue.store = PrefsStore(getSharedPreferences("kite", MODE_PRIVATE))
         RoadCache.defaultFile = File(cacheDir, "roads.json")
         WazeCameraStore.defaultFile = File(cacheDir, "waze-cameras.json")
-        org.maplibre.android.MapLibre.getInstance(this)
+        org.maplibre.android.MapLibre.getInstance(this, AppSettings.activeMapboxToken,
+            org.maplibre.android.WellKnownTileServer.Mapbox, org.maplibre.android.RenderingEngine.Type.OPENGL)
     }
 
     companion object {

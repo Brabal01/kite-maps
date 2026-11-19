@@ -575,11 +575,13 @@ class AppModel {
         // Already driving (asked at a red light, say): no route that starts with a U-turn.
         val moving = location.last?.let { l -> if (l.speed >= 4 && l.courseKnown) l.course else null }
         val heading = if (d.reversed) null else moving
+        val mapboxToken = settings.activeMapboxToken
         for (m in TravelMode.entries) {
             edit { it.copy(loading = it.loading + m) }
             scope.launch {
                 val r = runCatching {
-                    Directions.routes(from, to, m, hw, tolls, google, via, if (m == TravelMode.DRIVE) heading else null, alternatives = true)
+                    Directions.routes(from, to, m, hw, tolls, google, via, if (m == TravelMode.DRIVE) heading else null,
+                        alternatives = true, mapboxToken = mapboxToken)
                 }.getOrElse { Directions.Result(emptyList(), it.message) }
                 if (directions?.destination?.id != d.destination.id || routesRequest != req) return@launch
                 edit {
