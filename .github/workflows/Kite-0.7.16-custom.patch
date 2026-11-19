@@ -1,0 +1,330 @@
+diff --git a/App/Sources/AppSettings.swift b/App/Sources/AppSettings.swift
+index 414d7de..4208ef8 100644
+--- a/App/Sources/AppSettings.swift
++++ b/App/Sources/AppSettings.swift
+@@ -62,6 +62,8 @@ final class AppSettings: ObservableObject {
+     @Published var mapZoom: MapZoom { didSet { d.set(mapZoom.rawValue, forKey: "mapZoom") } }
+     /** The driving map's 3D, 2D or north-up choice from the map button, kept for the next drive. */
+     @Published var driveLook: MapLook { didSet { d.set(driveLook.rawValue, forKey: "driveLook") } }
++    /** Show 2D footprints and 3D extrusions on the navigation map, not just while browsing. */
++    @Published var navBuildings: Bool { didSet { d.set(navBuildings, forKey: "navBuildings") } }
+     /** Live reports from Waze drivers (police, crashes, hazards…): on the map, and warned about while driving. */
+     @Published var waze: Bool { didSet { d.set(waze, forKey: "waze"); if !waze { Task { @MainActor in WazeWeb.shared.shutDown() } } } }
+     /** The "Waze alerts (beta)" question has been answered, on first launch or after updating. */
+@@ -124,6 +126,7 @@ final class AppSettings: ObservableObject {
+         speedingAlert = d.bool(forKey: "speedingAlert")
+         mapZoom = MapZoom(rawValue: d.string(forKey: "mapZoom") ?? "") ?? .normal
+         driveLook = MapLook(rawValue: d.string(forKey: "driveLook") ?? "") ?? .tilted
++        navBuildings = d.object(forKey: "navBuildings") as? Bool ?? true
+         parkingButton = d.object(forKey: "parkingButton") as? Bool ?? true
+         liveCams = d.object(forKey: "liveCams") as? Bool ?? true
+         liveRoadCams = d.object(forKey: "liveRoadCams") as? Bool ?? true
+diff --git a/App/Sources/MapStyler.swift b/App/Sources/MapStyler.swift
+index 128a87b..a6ffa75 100644
+--- a/App/Sources/MapStyler.swift
++++ b/App/Sources/MapStyler.swift
+@@ -113,9 +113,9 @@ enum MapStyler {
+         }
+     }
+ 
+-    /** Layers that only get in the way while driving: shop and bin icons, footpaths, buildings, one-way arrows. */
++    /** Layers that only get in the way while driving: shop icons, footpaths, one-way arrows. */
+     private static func clutter(_ id: String) -> Bool {
+-        id.hasPrefix("poi_") || id == "building" || id == "building-3d" || id.contains("path_pedestrian")
++        id.hasPrefix("poi_") || id.contains("path_pedestrian")
+             || id == "highway-name-path" || id.hasPrefix("road_one_way_arrow") || id.hasSuffix("_hatching")
+             || ["landuse_pitch", "landuse_track", "landuse_cemetery", "landuse_hospital", "landuse_school",
+                 "aeroway_fill", "aeroway_runway", "aeroway_taxiway", "airport"].contains(id)
+diff --git a/App/Sources/MapView.swift b/App/Sources/MapView.swift
+index 98dfdad..c085c55 100644
+--- a/App/Sources/MapView.swift
++++ b/App/Sources/MapView.swift
+@@ -558,7 +558,10 @@ struct VelaMapView: UIViewRepresentable {
+                 (style.layer(withIdentifier: "vela-route-line") as? MLNLineStyleLayer)?.lineWidth = NSExpression(forConstantValue: navigating ? 12 : 10)
+                 (style.layer(withIdentifier: "vela-route-edge") as? MLNLineStyleLayer)?.lineWidth = NSExpression(forConstantValue: navigating ? 22 : 15)
+             }
+-            for id in ["building", "building-3d"] { style.layer(withIdentifier: id)?.isVisible = !s.satellite && !navigating }
++            // The map-style driving simplification must not silently remove buildings.
++            // Keep the user's setting independent of the camera's 2D/3D pitch.
++            let showBuildings = !s.satellite && (!navigating || s.navBuildings)
++            for id in ["building", "building-3d"] { style.layer(withIdentifier: id)?.isVisible = showBuildings }
+             renderResults(style)
+             renderRoutes(style)
+             renderPuck(style)
+diff --git a/App/Sources/NavigationViews.swift b/App/Sources/NavigationViews.swift
+index c1654aa..06ff323 100644
+--- a/App/Sources/NavigationViews.swift
++++ b/App/Sources/NavigationViews.swift
+@@ -177,11 +177,18 @@ struct NavigationOverlay: View {
+                         .shadow(color: .black.opacity(0.3), radius: 6, y: 2)
+                         .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .bottomTrailing)))
+                     }
+-                    // 3D, 2D or north up: one tap each, and the drive carries on.
+-                    MapLookButton(look: settings.driveLook, size: 52) {
+-                        model.cycleDriveLook()
+-                        let look = settings.driveLook
+-                        withAnimation(.easeOut(duration: 0.2)) { buttonNote = ButtonNote(title: look.title, detail: look.detail) }
++                    HStack(spacing: 10) {
++                        if !nav.arrived {
++                            MapFab(icon: "arrow.up.left.and.arrow.down.right", size: 52) {
++                                model.overviewNav()
++                            }
++                            .accessibilityLabel("Show remaining route")
++                        }
++                        MapLookButton(look: settings.driveLook, size: 52) {
++                            model.cycleDriveLook()
++                            let look = settings.driveLook
++                            withAnimation(.easeOut(duration: 0.2)) { buttonNote = ButtonNote(title: look.title, detail: look.detail) }
++                        }
+                     }
+                     MapFab(icon: nav.voiceMode.icon, tint: nav.voiceMode == .alerts ? Vela.accentText(scheme) : .primary, size: 52) {
+                         nav.voiceMode = nav.voiceMode.next
+@@ -427,6 +434,11 @@ struct InstructionBanner: View {
+             HStack(spacing: 6) {
+                 Text("Then").font(.system(size: 14, weight: .semibold)).foregroundColor(Vela.muted(scheme))
+                 Image(systemName: maneuverSymbol(then.type)).font(.system(size: 18, weight: .heavy))
++                if let meters = nav.thenDistanceMeters, meters >= 10 {
++                    Text("after \(Fmt.distance(meters))")
++                        .font(.system(size: 13, weight: .semibold))
++                        .lineLimit(1).minimumScaleFactor(0.7)
++                }
+                 if then.type == .roundabout, let n = then.exit {
+                     // Which exit, so the next roundabout is known before the banner changes.
+                     Text("\(n)").font(.system(size: 14, weight: .heavy)).foregroundColor(.white)
+@@ -782,7 +794,7 @@ struct FasterRouteCard: View {
+             VStack(spacing: 2) {
+                 Text("Faster route · saves \(offer.minutes) min").font(.system(size: 23, weight: .heavy))
+                     .lineLimit(1).minimumScaleFactor(0.7)
+-                Text((offer.via.map { "via \($0) · " } ?? "") + "taking it in a few seconds").font(.system(size: 16, weight: .medium))
++                Text((offer.via.map { "via \($0) · " } ?? "") + "Choose whether to switch").font(.system(size: 16, weight: .medium))
+                     .foregroundColor(Vela.muted(scheme)).lineLimit(1).minimumScaleFactor(0.75)
+             }
+             // What else changes: only shown when something does, so a plain faster way looks as before.
+diff --git a/App/Sources/Navigator.swift b/App/Sources/Navigator.swift
+index 27594c3..332b0c7 100644
+--- a/App/Sources/Navigator.swift
++++ b/App/Sources/Navigator.swift
+@@ -261,6 +261,13 @@ final class Navigator: ObservableObject {
+         return b.alongMeters - a.alongMeters < 300 ? b : nil
+     }
+ 
++    /** Distance along the planned route from the next maneuver to the following close one. */
++    var thenDistanceMeters: Double? {
++        guard let i = progress?.nextIndex, i < route.maneuvers.count,
++              let then = thenManeuver else { return nil }
++        return max(0, then.alongMeters - route.maneuvers[i].alongMeters)
++    }
++
+     /**
+      * No fix for a few seconds while driving on the route: carry on along it at the speed the car
+      * had, once a second, for up to three minutes (the longest road tunnels in Britain take about
+@@ -885,8 +892,7 @@ final class Navigator: ObservableObject {
+ 
+     /**
+      * Every few minutes on a drive, asks again for the way from here, like Waze: the arrival time
+-     * follows the traffic, and a clearly faster way (5 minutes and a tenth of what's left) is taken,
+-     * with a word about it.
++     * follows the traffic, and a clearly faster way (5 minutes and a tenth of what's left) is offered.
+      */
+     private func checkTraffic(_ p: RouteTracker.Progress, _ loc: CLLocation) {
+         guard route.mode == .drive, !AppSettings.shared.noGoogle, !rerouting, !trafficLoading, !demoAlerts, fasterOffer == nil,
+@@ -902,13 +908,15 @@ final class Navigator: ObservableObject {
+             // Arrived (or ended) while asking: no new route, and no "Found a faster route" in the car park.
+             guard !self.stopped, !self.arrived,
+                   let fresh = r.routes.first, self.route.id == id, !self.rerouting, let now = self.progress,
+-                  planned > 0, fresh.trafficSeconds != nil else { return }
++                  !now.offRoute, planned > 0, fresh.trafficSeconds != nil else { return }
+             let current = now.remainingSeconds
+             let saving = current - fresh.durationSeconds
+-            // The same way, more or less: just a better arrival time.
+-            let sameWay = abs(fresh.distanceMeters - now.remainingMeters) < max(300, now.remainingMeters * 0.03)
++            let line = self.route.polyline
++            let length = Geo.length(line)
++            let original = Geo.slice(line, from: p.alongMeters, to: length)
++            let sameWay = Geo.isNearRoute(fresh.polyline, reference: original)
+             if !sameWay, saving > max(300, current * 0.1) {
+-                let left = Geo.slice(self.route.polyline, from: now.alongMeters, to: Geo.length(self.route.polyline))
++                let left = Geo.slice(line, from: now.alongMeters, to: length)
+                 self.offerFaster(fresh, saving: saving, remainingMeters: now.remainingMeters, remainingLine: left)
+             } else if sameWay {
+                 self.trafficScale = min(3, max(0.5, fresh.durationSeconds / planned))
+@@ -917,8 +925,7 @@ final class Navigator: ObservableObject {
+     }
+ 
+     /**
+-     * A faster way is offered on a card with two big buttons, like Waze, rather than the line on the
+-     * map just changing. Left alone, it's taken after a few seconds, so ignoring it works as before.
++     * A faster way is offered on a card. The current route stays active until the driver accepts.
+      */
+     private func offerFaster(_ fresh: Route, saving: Double, remainingMeters: Double, remainingLine: [LatLng]) {
+         let minutes = max(1, Int((saving / 60).rounded()))
+@@ -932,11 +939,11 @@ final class Navigator: ObservableObject {
+         speak("Found a faster route. It saves \(minutes) minutes.")
+         DispatchQueue.main.asyncAfter(deadline: .now() + Self.fasterWait) { [weak self] in
+             guard let self, self.fasterOffer == offer else { return }
+-            self.takeFaster()
++            self.keepRoute()
+         }
+     }
+ 
+-    /** "Take it" on the card, or nothing tapped in time. */
++    /** "Take it" on the card. */
+     func takeFaster() {
+         let fresh = fasterRoute
+         fasterOffer = nil
+diff --git a/App/Sources/PlaceViews.swift b/App/Sources/PlaceViews.swift
+index 8ed5505..f9c9a5b 100644
+--- a/App/Sources/PlaceViews.swift
++++ b/App/Sources/PlaceViews.swift
+@@ -210,6 +210,15 @@ struct PlaceBody: View {
+                     }
+                 }
+             }
++            if place.source == "google", (place.reviewCount ?? 0) > 0,
++               let url = place.shareURL {
++                Button { openURL(url) } label: {
++                    Label("Open place and reviews in Google Maps", systemImage: "star.bubble")
++                        .font(.subheadline.weight(.semibold))
++                }
++                .buttonStyle(.bordered)
++                .accessibilityHint("Opens the selected place in Google Maps to see its full reviews")
++            }
+         }
+     }
+ 
+diff --git a/App/Sources/SettingsViews.swift b/App/Sources/SettingsViews.swift
+index 7a950f4..1cff158 100644
+--- a/App/Sources/SettingsViews.swift
++++ b/App/Sources/SettingsViews.swift
+@@ -248,6 +248,9 @@ struct SettingsView: View {
+                 Toggle(isOn: $settings.parkingButton) { SettingLabel("Parking button on the map", icon: "parkingsign", color: 0x2563EB) }
+             }
+             Section {
++                Toggle(isOn: $settings.navBuildings) {
++                    SettingLabel("Buildings while navigating", icon: "building.2.fill", color: 0x64748B)
++                }
+                 VStack(alignment: .leading, spacing: 10) {
+                     SettingLabel("Map zoom while driving", icon: "plus.magnifyingglass", color: 0x0F766E)
+                     Picker("Map zoom while driving", selection: $settings.mapZoom) {
+diff --git a/VelaCore/Sources/VelaCore/Cameras.swift b/VelaCore/Sources/VelaCore/Cameras.swift
+index 98bb2ba..086a855 100644
+--- a/VelaCore/Sources/VelaCore/Cameras.swift
++++ b/VelaCore/Sources/VelaCore/Cameras.swift
+@@ -252,18 +252,30 @@ public enum Overpass {
+     }
+ 
+     /**
+-     * The traffic lights on the route itself, one per junction: a junction's lights are often mapped
+-     * once per road into it, so lights within 40 m of each other along the route are drawn once.
++     * Traffic lights close to the traveled route, one marker per junction. OSM often includes
++     * multiple signals for opposite approaches. Use the closest candidate in a 40 m cluster,
++     * then snap the icon to the route so it doesn't float over a neighboring lane or pavement.
++     * Without direction-specific OSM tags this is a proximity heuristic, not proof that a signal
++     * faces the driver. Never use it to make a driving or safety decision.
+      */
+     public static func signalsOnRoute(_ signals: [LatLng], line: [LatLng]) -> [LatLng] {
+         guard line.count >= 2 else { return [] }
+         let cum = Geo.cumulative(line)
+-        let on = signals.map { ($0, Geo.project($0, on: line, cumulative: cum)) }
+-            .filter { $0.1.offset < 20 }
+-            .sorted { $0.1.along < $1.1.along }
+-        var out: [(LatLng, Double)] = []
+-        for (p, at) in on where out.last.map({ at.along - $0.1 >= 40 }) ?? true { out.append((p, at.along)) }
+-        return out.map(\.0)
++        let near = signals.map { Geo.project($0, on: line, cumulative: cum) }
++            .filter { $0.offset <= 12 }
++            .sorted { $0.along < $1.along }
++        var junctions: [(start: Double, along: Double, offset: Double)] = []
++        for p in near {
++            if let i = junctions.indices.last, p.along - junctions[i].start < 40 {
++                if p.offset < junctions[i].offset {
++                    junctions[i].along = p.along
++                    junctions[i].offset = p.offset
++                }
++            } else {
++                junctions.append((start: p.along, along: p.along, offset: p.offset))
++            }
++        }
++        return junctions.map { Geo.point(along: line, meters: $0.along, cumulative: cum) }
+     }
+ 
+     static func parseWays(_ data: Data) -> [LimitWay] {
+diff --git a/VelaCore/Sources/VelaCore/Route.swift b/VelaCore/Sources/VelaCore/Route.swift
+index bbd6670..e06ec4b 100644
+--- a/VelaCore/Sources/VelaCore/Route.swift
++++ b/VelaCore/Sources/VelaCore/Route.swift
+@@ -296,6 +296,21 @@ public enum Geo {
+ 
+     public static func length(_ line: [LatLng]) -> Double { cumulative(line).last ?? 0 }
+ 
++    /// Check whether a refreshed route still follows the current route's corridor.
++    public static func isNearRoute(_ candidate: [LatLng], reference: [LatLng]) -> Bool {
++        guard candidate.count >= 2, reference.count >= 2 else { return true }
++        let candidateDistances = cumulative(candidate)
++        let referenceDistances = cumulative(reference)
++        let distance = candidateDistances[candidate.count - 1]
++        guard distance > 0 else { return true }
++        // Ignore small differences in how the endpoints were snapped to the road.
++        let step = max(50, distance / 100)
++        return stride(from: step, to: distance - step, by: step).allSatisfy { offset in
++            let sample = point(along: candidate, meters: offset, cumulative: candidateDistances)
++            return project(sample, on: reference, cumulative: referenceDistances).offset <= 80
++        }
++    }
++
+     /** The point [meters] along [line]. */
+     public static func point(along line: [LatLng], meters: Double, cumulative cum: [Double]? = nil) -> LatLng {
+         guard line.count >= 2 else { return line.first ?? LatLng(0, 0) }
+diff --git a/VelaCore/Tests/VelaCoreTests/CameraTests.swift b/VelaCore/Tests/VelaCoreTests/CameraTests.swift
+index 69679f5..7b4004a 100644
+--- a/VelaCore/Tests/VelaCoreTests/CameraTests.swift
++++ b/VelaCore/Tests/VelaCoreTests/CameraTests.swift
+@@ -21,7 +21,24 @@ final class CameraTests: XCTestCase {
+         XCTAssertEqual(lights.count, 4)
+         let line = [LatLng(0, 0), LatLng(0.01, 0)]
+         let on = Overpass.signalsOnRoute(lights, line: line)
+-        XCTAssertEqual(on, [LatLng(0.0050, 0.0001), LatLng(0.0095, 0)])
++        guard on.count == 2 else { return XCTFail("Expected two intersections") }
++        XCTAssertEqual(on[0].lat, 0.0052, accuracy: 0.00001)
++        XCTAssertEqual(on[0].lng, 0, accuracy: 0.00001)
++        XCTAssertEqual(on[1].lat, 0.0095, accuracy: 0.00001)
++        XCTAssertEqual(on[1].lng, 0, accuracy: 0.00001)
++    }
++
++    func testTrafficLightsChooseNearestApproach() {
++        let line = [LatLng(50.0, 14.0), LatLng(50.01, 14.0)]
++        let lights = [
++            LatLng(50.0050, 14.00010), // opposite approach, roughly 7 m from the route
++            LatLng(50.0051, 14.00001), // on our approach, less than 1 m from it
++            LatLng(50.0052, 14.00100), // cross street: too far away
++        ]
++        let on = Overpass.signalsOnRoute(lights, line: line)
++        guard on.count == 1 else { return XCTFail("Expected one intersection") }
++        XCTAssertEqual(on[0].lat, 50.0051, accuracy: 0.00001)
++        XCTAssertEqual(on[0].lng, 14.0, accuracy: 0.00001)
+     }
+ 
+     func testQuery() {
+diff --git a/VelaCore/Tests/VelaCoreTests/RoutingTests.swift b/VelaCore/Tests/VelaCoreTests/RoutingTests.swift
+index 6901a91..c3a2961 100644
+--- a/VelaCore/Tests/VelaCoreTests/RoutingTests.swift
++++ b/VelaCore/Tests/VelaCoreTests/RoutingTests.swift
+@@ -2,6 +2,18 @@ import XCTest
+ @testable import VelaCore
+ 
+ final class RoutingTests: XCTestCase {
++    func testTrafficRefreshDistinguishesAlternativesOfEqualLength() {
++        let start = LatLng(0, 0)
++        let end = LatLng(0.05, 0)
++        let east = [start, LatLng(0.025, 0.005), end]
++        let west = [start, LatLng(0.025, -0.005), end]
++        let refreshed = [start, LatLng(0.025, 0.0051), end]
++
++        XCTAssertEqual(Geo.length(east), Geo.length(west), accuracy: 1)
++        XCTAssertFalse(Geo.isNearRoute(west, reference: east))
++        XCTAssertTrue(Geo.isNearRoute(refreshed, reference: east))
++    }
++
+     func testDecodePolyline5() {
+         // Google's documented example.
+         let pts = Geo.decodePolyline("_p~iF~ps|U_ulLnnqC_mqNvxq`@", precision: 1e5)
