@@ -107,6 +107,13 @@ class AppModel {
     var sort by mutableStateOf(SortMode.RELEVANCE)
     var directions by mutableStateOf<DirectionsState?>(null)
     var nav by mutableStateOf<Navigator?>(null)
+    var transitGuidance by mutableStateOf<TransitGuidance?>(null)
+        private set
+    private var transitWalkJob: Job? = null
+    private var transitBoardJob: Job? = null
+    private var transitClockJob: Job? = null
+    private var transitDeparturesJob: Job? = null
+    private var transitCameraAt = 0L
     var showLayers by mutableStateOf(false)
     var tab by mutableStateOf(AppTab.MAP)
     /** Live Waze reports in view, for the "Live from Waze" chip; null until Waze answers. */
@@ -729,7 +736,6 @@ class AppModel {
         routesRequest++
         val req = routesRequest
         val hw = settings.avoidHighways; val tolls = settings.avoidTolls; val google = !settings.noGoogle
-        val openWalking = settings.openWalking
         // Already driving (asked at a red light, say): no route that starts with a U-turn.
         val moving = location.last?.let { l -> if (l.speed >= 4 && l.courseKnown) l.course else null }
         val heading = if (d.reversed) null else moving
@@ -739,7 +745,7 @@ class AppModel {
             scope.launch {
                 val r = runCatching {
                     Directions.routes(from, to, m, hw, tolls, google, via, if (m == TravelMode.DRIVE) heading else null,
-                        alternatives = true, mapboxToken = mapboxToken, preferOpenWalking = openWalking)
+                        alternatives = true, mapboxToken = mapboxToken)
                 }.getOrElse { Directions.Result(emptyList(), it.message) }
                 if (directions?.destination?.id != d.destination.id || routesRequest != req) return@launch
                 edit {
@@ -819,6 +825,158 @@ class AppModel {
 
     private var navZoomSteps = 0
 
+    fun startTransitNavigation() {
+        val d = directions ?: return
+        val trip = d.pickedTrip?.takeIf { it.legs.isNotEmpty() } ?: return
+        if (d.reversed || nav != null || transitGuidance != null) return
+        val session = TransitGuidance(trip, d.destination)
+        transitGuidance = session
+        settings.trip = null
+        resumeOffer = null
+        location.setNavigating(true)
+        DriveService.start(KiteApp.app, "Using transit with Kite")
+        transitClockJob = scope.launch {
+            while (transitGuidance === session && session.phase != TransitGuidance.Phase.COMPLETE) {
+                delay(5_000)
+                session.tick(System.currentTimeMillis())
+            }
+        }
+        session.prepareLeg()
+        setTransitLeg(session)
+    }
+
+    private fun setTransitLeg(session: TransitGuidance) {
+        transitWalkJob?.cancel()
+        transitBoardJob?.cancel()
+        transitDeparturesJob?.cancel()
+        nav?.stop()
+        nav = null
+        glide.stop()
+        transitCameraAt = 0
+        val leg = session.leg
+        if (leg == null) {
+            location.setNavigating(false)
+            DriveService.stop(KiteApp.app)
+        } else when (session.phase) {
+            TransitGuidance.Phase.WALK -> walkTransitLeg(session, location.last)
+            TransitGuidance.Phase.BOARD -> {
+                (leg.calls.firstOrNull()?.at ?: leg.path.firstOrNull())?.let {
+                    frame(listOf(it), bottomFraction = 0.23f, top = 135)
+                }
+                DriveService.show(KiteApp.app, "Board ${leg.line} at ${leg.fromName}", leg.headsign ?: leg.toName)
+                val first = leg.calls.firstOrNull()
+                if (first?.stopId != null && leg.tripId != null) {
+                    transitDeparturesJob = scope.launch {
+                        while (transitGuidance === session && session.phase == TransitGuidance.Phase.BOARD) {
+                            val board = withContext(Dispatchers.Default) {
+                                Transitous.departures(first.at, stopId = first.stopId, stopName = first.name)
+                            }
+                            if (transitGuidance === session && session.leg === leg)
+                                session.liveDeparture = board?.departures?.firstOrNull { it.tripId == leg.tripId }
+                            delay(40_000)
+                        }
+                    }
+                }
+            }
+            else -> {}
+        }
+        mapTick++
+    }
+
+    private fun walkTransitLeg(session: TransitGuidance, fix: Fix?) {
+        val leg = session.leg ?: return
+        if (!leg.isWalk || transitWalkJob?.isActive == true) return
+        val destination = leg.path.lastOrNull()
+        val origin = fix?.coord ?: leg.path.firstOrNull()
+        if (destination == null || origin == null) {
+            session.walkingError = true
+            return
+        }
+        val name = leg.toName.takeUnless { it.isBlank() || it == "END" } ?: session.destination.name
+        if (origin.distanceTo(destination) < 30 && leg.distanceMeters < 80) {
+            advanceTransitLeg()
+            return
+        }
+        val end = Place("transit-walk:${session.legIndex}", name, destination, "transitous")
+        val index = session.legIndex
+        session.walkingError = false
+        transitWalkJob = scope.launch {
+            val route = if (leg.walkSteps.isNotEmpty() && leg.path.size >= 2 && origin.distanceTo(leg.path.first()) < 50) {
+                Route(TravelMode.WALK, leg.path, leg.distanceMeters, leg.durationSeconds, null, null,
+                    leg.walkSteps.map { it.copy() }.toMutableList(), source = "transitous")
+            } else Directions.routes(origin, destination, TravelMode.WALK, useGoogle = false).routes.firstOrNull()
+            if (transitGuidance !== session || session.legIndex != index) return@launch
+            if (route == null) {
+                session.walkingError = true
+                frame(leg.path, bottomFraction = 0.24f, top = 135)
+                return@launch
+            }
+            val walking = Navigator(route, end, emptyList(), scope)
+            nav = walking
+            location.last?.let { now ->
+                walking.handle(now)
+                if (walking.arrived) { advanceTransitLeg(); return@launch }
+                followCamera(walking, now)
+            }
+            mapTick++
+        }
+    }
+
+    fun retryTransitWalk() {
+        val session = transitGuidance ?: return
+        walkTransitLeg(session, location.last)
+    }
+
+    fun boardTransit() {
+        val session = transitGuidance ?: return
+        val leg = session.leg ?: return
+        if (session.phase != TransitGuidance.Phase.BOARD || session.boarding) return
+        session.boarding = true
+        transitBoardJob = scope.launch {
+            val tracker = withContext(Dispatchers.Default) { TransitRide(leg) }
+            if (transitGuidance !== session || session.leg !== leg) return@launch
+            transitDeparturesJob?.cancel()
+            session.board(tracker)
+            frame(leg.path, bottomFraction = 0.24f, top = 148)
+            DriveService.show(KiteApp.app, "Riding ${leg.line}", "Get off at ${leg.toName}")
+            mapTick++
+        }
+    }
+
+    fun advanceTransitLeg() {
+        val session = transitGuidance ?: return
+        nav?.stop()
+        nav = null
+        session.advance()
+        setTransitLeg(session)
+    }
+
+    fun replanTransit() {
+        val destination = transitGuidance?.destination ?: return
+        endNavigation()
+        openDirections(destination)
+        showTransit()
+    }
+
+    fun followTransit() {
+        val session = transitGuidance ?: return
+        session.following = true
+        nav?.let { recenterNav(); return }
+        location.last?.let {
+            transitCameraAt = 0
+            focusTransitRide(session, it)
+        }
+    }
+
+    private fun focusTransitRide(session: TransitGuidance, f: Fix) {
+        val m = map ?: return
+        if (!session.following || glide.mapTouched || session.phase != TransitGuidance.Phase.RIDE || f.accuracy > 75) return
+        val time = android.os.SystemClock.elapsedRealtime()
+        if (time - transitCameraAt < 1200 || m.cameraPosition.target?.kite()?.distanceTo(f.coord)?.let { it < 24 } == true) return
+        transitCameraAt = time
+        MapCam.animate(m, CameraPosition.Builder().target(f.coord.ml()).zoom(15.4).tilt(0.0).bearing(0.0).build(), ms = 500)
+    }
+
     fun startNavigation() {
         val d = directions ?: return
         val route = d.route ?: return
@@ -844,6 +1002,12 @@ class AppModel {
     }
 
     fun endNavigation() {
+        transitWalkJob?.cancel()
+        transitWalkJob = null
+        transitBoardJob?.cancel()
+        transitClockJob?.cancel()
+        transitDeparturesJob?.cancel()
+        transitGuidance = null
         placingStop = false
         stopPinWasFollowing = false
         closeStopSearch(restore = false)
@@ -900,6 +1064,17 @@ class AppModel {
 
     private fun locationChanged(f: Fix) {
         if (location.reducedAccuracy || f.accuracy > 200) areaRisk = null
+        val transit = transitGuidance
+        if (transit != null) {
+            val walking = nav
+            if (transit.phase == TransitGuidance.Phase.WALK && walking != null) {
+                walking.handle(f)
+                if (walking.arrived) advanceTransitLeg()
+                else { followCamera(walking, f); driveNote(walking); mapTick++ }
+            } else if (transit.observe(f)) advanceTransitLeg()
+            else focusTransitRide(transit, f)
+            return
+        }
         val n = nav ?: run { followBrowse(f, entering = false); return }
         n.handle(f)
         followCamera(n, f)
@@ -1015,17 +1190,20 @@ class AppModel {
 
     fun frame(points: List<LatLng>, bottomFraction: Float = 0.45f, top: Int = 130) {
         val m = map ?: return
-        if (points.isEmpty()) return
+        val unique = points.distinct()
+        if (unique.isEmpty()) return
         // Showing a place or a route: stop following, or the next fix would pull the map away.
         browseFollowing = false
         if (nav == null) browseLook = MapLook.NORTH
-        if (points.size == 1) {
-            MapCam.animate(m, CameraPosition.Builder().target(points[0].ml()).zoom(MapCam.zoomFor(1200.0, points[0].lat, mapWidthDp))
+        if (unique.size == 1) {
+            MapCam.animate(m, CameraPosition.Builder().target(unique[0].ml()).zoom(MapCam.zoomFor(1200.0, unique[0].lat, mapWidthDp))
                 .tilt(0.0).bearing(0.0).build(), ms = 300)
             return
         }
-        val b = LatLngBounds.Builder().apply { points.forEach { include(it.ml()) } }.build()
-        MapCam.fit(m, b, intArrayOf(40, top, 40, (mapHeightDp * bottomFraction + 20).toInt()), ms = 600)
+        val b = LatLngBounds.Builder().apply { unique.forEach { include(it.ml()) } }.build()
+        val topInset = top.coerceAtMost((mapHeightDp * 0.35f).toInt())
+        val bottomInset = (mapHeightDp * bottomFraction + 20).toInt().coerceAtMost((mapHeightDp * 0.55f).toInt())
+        MapCam.fit(m, b, intArrayOf(40, topInset, 40, bottomInset), ms = 600)
     }
 
     companion object {

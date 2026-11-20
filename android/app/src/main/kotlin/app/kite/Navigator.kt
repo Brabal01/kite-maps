@@ -119,9 +119,36 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
     var policeRisk by mutableStateOf<Int?>(null); private set
     var aircraftNear by mutableStateOf<AircraftNear?>(null); private set
     var averageCheck by mutableStateOf<AverageCheck?>(null); private set
-    /** Traffic lights on the route, one per junction, drawn on the map like Waze. */
-    var routeSignals by mutableStateOf<List<LatLng>>(emptyList()); private set
     var roadControls by mutableStateOf<List<Overpass.RoadControl>>(emptyList()); private set
+    private var nearRoadControls = emptyList<Overpass.RoadControl>()
+    private var allRoadControls = emptyList<Overpass.RoadControl>()
+    private var roadControlsJob: Job? = null
+    private var roadControlsAt = 0L
+    private var roadControlsAlong = -10_000.0
+
+    private fun publishRoadControls() {
+        roadControls = (nearRoadControls + allRoadControls.filter { remote ->
+            nearRoadControls.none { it.kind == remote.kind && abs(it.along - remote.along) < 35 }
+        }).sortedBy { it.along }
+    }
+
+    private fun refreshRoadControls(along: Double) {
+        if (route.mode != TravelMode.DRIVE || roadControlsJob?.isActive == true ||
+            (since(roadControlsAt) < 90 && abs(along - roadControlsAlong) < 1_400)) return
+        roadControlsAt = now()
+        roadControlsAlong = along
+        val current = route
+        val from = (along - 100).coerceAtLeast(0.0)
+        roadControlsJob = scope.launch {
+            val local = withContext(Dispatchers.Default) {
+                val line = Geo.slice(current.polyline, from, along + 4_200)
+                Overpass.controlsOnRoute(line)
+            } ?: return@launch
+            if (stopped || route.id != current.id) return@launch
+            nearRoadControls = local.map { it.copy(along = it.along + from) }
+            publishRoadControls()
+        }
+    }
     var routeWaze by mutableStateOf<List<PlacedAlert>>(emptyList()); private set
     /** Stops still ahead, in trip order; each is dropped once reached. */
     var stops by mutableStateOf(stops0); private set
@@ -257,6 +284,7 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
     fun stop() {
         stopped = true
         gpsWatch.cancel()
+        roadControlsJob?.cancel()
         Voice.stop()
     }
 
@@ -375,6 +403,7 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
         }
         announce(p)
         checkTraffic(p, loc)
+        if (!p.offRoute) refreshRoadControls(p.alongMeters)
         checkCameras(p)
         checkWaze(p)
         checkRisk(p)
@@ -459,7 +488,11 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
         zones = emptyList()
         zoneEntry = null
         averageCheck = null
-        routeSignals = emptyList()
+        roadControlsJob?.cancel()
+        roadControlsAt = 0L
+        roadControlsAlong = -10_000.0
+        nearRoadControls = emptyList()
+        allRoadControls = emptyList()
         roadControls = emptyList()
         camerasTick++
         val s = AppSettings
@@ -500,13 +533,19 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
             val known = withContext(Dispatchers.Default) {
                 val k = RoadCache.shared.along(line)
                 val cams = CameraAlerts.project(k.cameras.filter { if (it.kind == RoadCamera.Kind.SPEED) speed else plate }, line)
-                Triple(cams, if (k.ways.isEmpty()) emptyList() else Overpass.speedLimits(k.ways, line), k.signals)
+                val cachedControls = Overpass.projectControls(k.signals.map {
+                    Overpass.RoadsideNode(Overpass.ControlKind.SIGNAL, it)
+                }, line)
+                Triple(cams, if (k.ways.isEmpty()) emptyList() else Overpass.speedLimits(k.ways, line), cachedControls)
             }
             if (route.id != id || fullRoadData) return
             if (known.second.isNotEmpty() && !matchedLimits) setLimits(known.second)
             routeCameras = onOurSide(known.first)
             zones = CameraAlerts.averageZones(known.first)
-            routeSignals = known.third
+            if (allRoadControls.isEmpty() && known.third.isNotEmpty()) {
+                allRoadControls = known.third
+                publishRoadControls()
+            }
             camerasTick++
         }
         scope.launch { useKnown() }
@@ -516,7 +555,10 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
             scope.launch {
                 val limits = !matcher.await()
                 val first = Overpass.alongRoute(start, speed, plate, limits) ?: return@launch
-                if (!stopped && route.id == id && !fullRoadData) roadControls = first.controls
+                if (!stopped && route.id == id && !fullRoadData) {
+                    allRoadControls = first.controls
+                    publishRoadControls()
+                }
                 useKnown()
             }
         }
@@ -536,8 +578,8 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
             routeCameras = onOurSide(CameraAlerts.project(found.cameras, line))
             if (!matchedLimits) setLimits(Overpass.speedLimits(found.ways, line))
             zones = CameraAlerts.merge(found.zones, CameraAlerts.averageZones(routeCameras))
-            routeSignals = found.signals
-            roadControls = found.controls
+            allRoadControls = found.controls
+            publishRoadControls()
             camerasTick++
         }
     }
@@ -985,13 +1027,12 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
         val course = if (route.mode == TravelMode.DRIVE) heading(loc) else null
         val mode = route.mode
         val to = parking?.location ?: destination.location
-        val openWalking = AppSettings.openWalking
         rerouteRequest++
         val req = rerouteRequest
         scope.launch {
             val r = runCatching {
                 Directions.routes(from, to, mode, avoidHighways, avoidTolls, !AppSettings.noGoogle, stops.map { it.location }, course,
-                    mapboxToken = AppSettings.activeMapboxToken, preferOpenWalking = openWalking)
+                    mapboxToken = AppSettings.activeMapboxToken)
             }.getOrNull()
             if (stopped || req != rerouteRequest) return@launch
             rerouting = false

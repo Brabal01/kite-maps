@@ -63,34 +63,6 @@ object OutdoorData {
         return (reviewed + open.filterNot { p -> reviewed.any { same(it, p) } } + rest).distinctBy { it.id }
     }
 
-    data class Trail(val bike: Boolean, val points: List<LatLng>)
-
-    suspend fun trails(at: LatLng, radius: Double, hiking: Boolean, cycling: Boolean): List<Trail>? {
-        val box = bounds(at, radius)
-        val b = "${box.s},${box.w},${box.n},${box.e}"
-        val modes = listOfNotNull("hiking|foot|walking".takeIf { hiking }, "bicycle|mtb".takeIf { cycling }).joinToString("|")
-        if (modes.isEmpty()) return emptyList()
-        val data = Overpass.query("""[out:json][timeout:15];relation["type"="route"]["route"~"^($modes)$"]($b);out geom($b) 140;""")
-            ?: return null
-        val elements = Json.obj(data)?.get("elements").asMaps().orEmpty()
-        return elements.flatMap { route ->
-            val bike = route["tags"].asMap()?.get("route") in setOf("bicycle", "mtb")
-            route["members"].asMaps().orEmpty().filter { it["type"] == "way" }.flatMap { way ->
-                val runs = mutableListOf<List<LatLng>>()
-                var run = mutableListOf<LatLng>()
-                for (entry in way["geometry"].asList().orEmpty()) {
-                    val p = entry.asMap()?.let(::point)
-                    if (p != null) run += p else {
-                        if (run.size > 1) runs += run
-                        run = mutableListOf()
-                    }
-                }
-                if (run.size > 1) runs += run
-                runs.map { Trail(bike, it) }
-            }
-        }.distinct().take(2500)
-    }
-
     private fun point(row: Map<String, Any?>): LatLng? {
         val lat = row["lat"].num() ?: return null
         val lon = row["lon"].num() ?: return null

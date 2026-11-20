@@ -1,11 +1,11 @@
 # Android walking and public transport guidance
 
-The next Android update should let the rider start the transit itinerary they selected. Keep that selection, including its ordered legs and Transitous trip and stop IDs, for the entire trip.
+Select an itinerary under Transit, then tap **Start transit navigation**. Kite retains the chosen itinerary as it switches between walking, boarding and riding.
 
-- Walk to the boarding stop with turn-by-turn walking guidance and the user's walking-router preference.
-- At the boarding stop, show the line, direction, platform, and next departures. Provide a boarding confirmation when proximity and the timetable are ambiguous.
-- On board, follow the chosen leg along its path and announce upcoming stops. Use the itinerary's stop order and timestamps alongside position fixes. Support missing GPS and distinguish a scheduled time from a live prediction.
-- At a transfer, resume walking guidance to the next platform, then return to vehicle tracking for the next ride. After the final vehicle, guide the last walk to the destination.
-- Keep the selected journey visible and allow the rider to recover from a missed connection or wrong vehicle.
+- The walk uses OpenStreetMap directions. Kite keeps Transitous walking steps along the booked transfer path when available, including elevators and stairs. It uses its OpenStreetMap foot router when it needs directions from a different position.
+- At a stop, check the planned vehicle, destination, departure and platform. Tap **I'm on board** to confirm the vehicle. The departure information refreshes while you wait when Transitous can match it to the selected trip.
+- During the ride, the map draws the booked path and stop sequence. Kite announces the next stop as you progress and prompts you to get off. Without an accurate position, it labels upcoming stops as scheduled and you can confirm when you leave the vehicle.
+- After a ride, Kite starts the next walking transfer or shows the next vehicle's boarding card. The last walk ends at the original destination.
+- Use **Trip** to review the booked legs and **Replan** to recover from a missed connection or wrong vehicle.
 
-The transit map and departure board share Transitous stop IDs. Transit legs retain their boarding stop, intermediate stops, alighting stop, and trip ID. Use these when building the guidance session.
+The session can continue in the background with Android's location service and a navigation notification. Transitous coverage and live information vary by agency.

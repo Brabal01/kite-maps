@@ -59,10 +59,12 @@ object AppSettings {
     var streetLamps by bool("streetLamps", true)
     var googleMapPlaces by bool("googleMapPlaces")
     var openMapPlaces by bool("openMapPlaces", true)
+    var openPlaceGroups: Set<OpenPlaceGroup> by Pref("openPlaceGroups",
+        { p -> p.getStringSet("openPlaceGroups", null)?.let { saved -> OpenPlaceGroup.entries.filter { it.name in saved }.toSet() }
+            ?: OpenPlaceGroup.entries.toSet() },
+        { e, v -> e.putStringSet("openPlaceGroups", v.map { it.name }.toSet()) })
     var hikingTrails by bool("hikingTrails")
     var bikeTrails by bool("bikeTrails")
-    var openWalking by bool("openWalking", true)
-    var organicWalking by bool("organicWalking")
     var arrivalParking by bool("arrivalParking", true)
     var aheadSignals by bool("aheadSignals", true)
     var aheadStops by bool("aheadStops", true)

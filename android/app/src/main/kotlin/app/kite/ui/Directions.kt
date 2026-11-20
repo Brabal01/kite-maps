@@ -4,7 +4,6 @@ package app.kite.ui
 
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
-import android.widget.Toast
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.background
@@ -148,7 +147,7 @@ fun closingWarning(d: DirectionsState): ClosingCheck.Warning? {
 /** How tall the sheet sits at rest, so everything above the fold (cards, Go, modes) is in view. */
 fun tripPeek(d: DirectionsState?): androidx.compose.ui.unit.Dp {
     if (d == null) return 300.dp
-    if (d.transit) return 200.dp
+    if (d.transit) return if (d.pickedTrip != null) 265.dp else 200.dp
     val n = routeCards(d).size
     val base = if (n == 0) 300 else 186 + n * 70
     return (base + if (closingWarning(d) != null) 36 else 0).dp
@@ -175,27 +174,10 @@ private fun RouteOptionsButton(model: AppModel) {
 @Composable
 private fun GoButton(model: AppModel) {
     val dark = LocalDark.current
-    val ctx = LocalContext.current
-    val destination = model.directions?.takeIf {
-        it.mode == TravelMode.WALK && AppSettings.organicWalking && it.stops.isEmpty()
-    }?.destination
-    fun start() {
-        if (destination == null) {
-            model.startNavigation()
-            return
-        }
-        val from = model.userLatLng ?: return
-        if (ctx.openOrganicWalk(from, destination)) return
-        val fallback = model.directions?.route != null
-        val message = if (fallback) "Organic Maps is unavailable. Starting the walk in Kite."
-            else "Install Organic Maps to open this walk."
-        Toast.makeText(ctx, message, Toast.LENGTH_LONG).show()
-        if (fallback) model.startNavigation()
-    }
-    Row(Modifier.fillMaxWidth().heightIn(min = 68.dp).clip(CircleShape).background(Vela.accent(dark)).tap(::start),
+    Row(Modifier.fillMaxWidth().heightIn(min = 68.dp).clip(CircleShape).background(Vela.accent(dark)).tap { model.startNavigation() },
         horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
         Icon(Icons.Filled.Navigation, null, tint = Vela.onAccent(dark), modifier = Modifier.size(28.dp))
-        Text(if (destination != null) "Open Organic Maps" else "Go", fontSize = if (destination != null) 19.sp else 26.sp, fontWeight = FontWeight.ExtraBold, color = Vela.onAccent(dark))
+        Text("Go", fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, color = Vela.onAccent(dark))
     }
 }
 
@@ -288,9 +270,9 @@ fun TripHeader(model: AppModel) {
         }
         ModeTabs(model, d)
         ClosingLine(d)
-        val canOpenOrganic = d.mode == TravelMode.WALK && AppSettings.organicWalking &&
-            d.stops.isEmpty() && model.userLatLng != null
-        if (!d.transit && !d.reversed && (d.route != null || canOpenOrganic)) GoButton(model)
+        if (d.transit && !d.reversed && d.pickedTrip != null)
+            Button(model::startTransitNavigation, Modifier.fillMaxWidth()) { Text("Start transit navigation") }
+        if (!d.transit && !d.reversed && d.route != null) GoButton(model)
     }
 }
 

@@ -125,16 +125,16 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
     LaunchedEffect(dark, driving, satellite, mapboxToken, standardReady) {
         kiteMap.applyBasemap(dark, driving, satellite && !standardReady, mapboxToken.takeUnless { standardReady })
     }
-    LaunchedEffect(s.googleMapPlaces, s.openMapPlaces, s.hikingTrails, s.bikeTrails, s.transitLines, s.noGoogle, model.tab, model.nav, model.directions, model.selected, model.results) {
+    LaunchedEffect(s.googleMapPlaces, s.openMapPlaces, s.openPlaceGroups, s.hikingTrails, s.bikeTrails, s.transitLines, s.noGoogle, model.tab, model.nav, model.transitGuidance, model.directions, model.selected?.id, model.results.isEmpty()) {
         kiteMap.refreshGooglePlaces()
-        scenery.showTransit(s.transitLines && model.nav == null)
+        scenery.showTransit(s.transitLines && model.nav == null && model.transitGuidance == null)
         LocationService.last?.let(scenery::updatePosition)
     }
 
     // Redraw the map's layers whenever anything they show changes.
     LaunchedEffect(Unit) {
         snapshotFlow {
-            listOf(model.mapTick, model.results, model.selected?.id, model.directions, model.nav, model.stopSearch, model.measurement, model.nav?.routeWaze, model.nav?.roadControls, model.nav?.roadTraffic, model.openNowOnly, model.rating4Only,
+            listOf(model.mapTick, model.results, model.selected?.id, model.directions, model.nav, model.nav?.following, model.transitGuidance?.legIndex, model.stopSearch, model.measurement, model.nav?.routeWaze, model.nav?.roadControls, model.nav?.roadTraffic, model.openNowOnly, model.rating4Only,
                 s.traffic, s.satellite, s.terrain, s.transitLines, s.speedCameras, s.plateCameras, s.wazeOnMap, s.wazeHeatmap,
                 s.home, s.work, s.parking, s.saved, LocationService.authorized, model.tab,
                 s.welcomed, s.noGoogle, s.surveillanceCameras, s.wazeOn, s.wazeKinds, s.wazeMaxAge,
@@ -143,7 +143,8 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
         }.collect { kiteMap.render() }
     }
     // Kept on while driving; once arrived the phone goes in a pocket, so the screen may sleep (like the iPhone).
-    val screenOn = model.nav?.let { !it.arrived } ?: false
+    val screenOn = model.transitGuidance?.let { it.phase != TransitGuidance.Phase.COMPLETE }
+        ?: model.nav?.let { !it.arrived } ?: false
     LaunchedEffect(screenOn) { activity.keepScreenOn(screenOn) }
     LaunchedEffect(s.wazeOn, s.wazeOnMap, s.wazeHeatmap) {
         if (!s.wazeOn) WazeWeb.shutDown()
@@ -182,6 +183,7 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
             when {
                 model.placingStop -> StopPinOverlay(model, showingMapbox) { scenery.centerPoint() ?: kiteMap.centerPoint() }
                 model.stopSearch != null -> StopMapOverlay(model, showingMapbox)
+                model.transitGuidance != null -> TransitNavigationOverlay(model, requireNotNull(model.transitGuidance), showingMapbox)
                 nav != null -> NavigationOverlay(model, nav, showingMapbox)
                 model.directions != null -> DirectionsOverlay(model, showingMapbox)
                 else -> when (model.tab) {

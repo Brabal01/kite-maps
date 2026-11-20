@@ -53,11 +53,12 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         const val OFF_ROUTE_OPACITY = 0.3
         /** Reports that always keep their own icon, never joining a numbered bubble. */
         val NEVER_GROUPED = setOf(WazeAlert.Kind.POLICE, WazeAlert.Kind.ACCIDENT)
-        private const val MAPBOX_POI = "kite-mapbox-poi"
-        const val OPEN_PLACES = "kite-open-places"
+        const val GOOGLE_UNREVIEWED = "kite-google-unreviewed"
         const val TRANSIT_STOPS = "kite-transit-stops"
-        const val OUTDOOR_TRAILS = "kite-outdoor-trails"
-        private val STOCK_POI = listOf(MAPBOX_POI, "poi_r1", "poi_r7", "poi_r20", "poi_transit", "airport")
+        const val RIDE_STOPS = "kite-ride-stops"
+        private val classicHitSources = setOf("vela-route-alt", "vela-route-bubbles", "vela-mine", "vela-selected",
+            "vela-results", "vela-waze", "vela-waze-group", "vela-cameras", "vela-livecams")
+        private val STOCK_POI = listOf("poi_r1", "poi_r7", "poi_r20", "poi_transit", "airport")
         private fun c(hex: Long, a: Float = 1f) = Color.argb((a * 255).toInt(), ((hex shr 16) and 0xFF).toInt(), ((hex shr 8) and 0xFF).toInt(), (hex and 0xFF).toInt())
         private fun hex(l: Long) = String.format("#%06X", l and 0xFFFFFF)
     }
@@ -75,7 +76,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         }
         native.syncFromKite(camera)
         val time = android.os.SystemClock.elapsedRealtime()
-        if (time - lastClassicCamera >= 300L) {
+        if (time - lastClassicCamera >= 950L) {
             lastClassicCamera = time
             syncFromScenery(camera)
             native.refreshLamps()
@@ -106,14 +107,15 @@ class KiteMap(private val model: AppModel, private val context: Context) {
     fun scenePress(point: LatLng) { map?.let { pressed(it, point.ml()) } }
 
     fun refreshScenery() {
+        routeContext = ""
+        transitStopsKey = ""
+        layerOptions = null
         lastResultsKey = ""; lastRouteKey = ""; lastMineKey = ""; lastCameraKey = ""
         lastWazeKey = ""; lastLiveKey = ""; lastSignalsKey = ""; lastHeadKey = ""; lastNextRoadKey = ""
         shownStopPins = null
         shownMeasurement = null
         shownGooglePlaces = null
-        shownOpenPlaces = null
         shownTransitStops = null
-        shownTrails = null
         map?.let(::loadGooglePlaces)
         map?.style?.let { setShape(it, "vela-rail", railFeatures) }
         render()
@@ -182,23 +184,16 @@ class KiteMap(private val model: AppModel, private val context: Context) {
     private var lastWazeKey = ""
     private var googlePlaces = emptyList<Place>()
     private var shownGooglePlaces: List<Place>? = null
-    private var shownOpenPlaces: List<Place>? = null
     private var shownTransitStops: List<Place>? = null
-    private var shownTrails: List<OutdoorData.Trail>? = null
-    private var dedupInput: Pair<List<Place>, List<Place>>? = null
-    private var deduplicated = emptyList<Place>()
-    private var stockVisible: Boolean? = null
+    private var layerOptions: List<Any>? = null
     private var railFeatures = emptyList<Feature>()
-    private var openPlaces = emptyList<Place>()
     private var transitStops = emptyList<Place>()
-    private var trails = emptyList<OutdoorData.Trail>()
-    private var openPlacesJob: Job? = null
     private var transitStopsJob: Job? = null
-    private var trailsJob: Job? = null
-    private data class ViewRequest(val center: LatLng, val at: Long, val modes: Int = 0)
-    private var placeRequest: ViewRequest? = null
+    private data class ViewRequest(val center: LatLng, val at: Long)
     private var stopRequest: ViewRequest? = null
-    private var trailRequest: ViewRequest? = null
+    private var junctionRequest: ViewRequest? = null
+    private var junctionJob: Job? = null
+    private var localJunctions = emptyList<Overpass.RoadsideNode>()
     private var shownStopPins: Pair<List<StopCandidate>, String?>? = null
     private var googlePlacesJob: Job? = null
     private var googlePlacesCenter: LatLng? = null
@@ -243,7 +238,10 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             else loadBasemap(m, checkNotNull(selectedStyle))
             m.addOnMapClickListener { tapped(m, it) }
             m.addOnMapLongClickListener { pressed(m, it); true }
-            fun stopFollowing() { model.nav?.following = false }
+            fun stopFollowing() {
+                model.nav?.following = false
+                model.transitGuidance?.following = false
+            }
             m.addOnCameraMoveStartedListener { reason ->
                 if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) stopFollowing()
             }
@@ -280,7 +278,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
                 // network scheduling should run at a much lower rate during those updates.
                 if (model.nav?.following == true) {
                     val at = android.os.SystemClock.elapsedRealtime()
-                    if (at - lastFollowingRefresh < 500L) return@addOnCameraIdleListener
+                    if (at - lastFollowingRefresh < 1_400L) return@addOnCameraIdleListener
                     lastFollowingRefresh = at
                 }
                 loadCameras(m); loadWazeCameras(m); loadSurveillance(m); loadWaze(m); loadLiveCams(m); render(); updateHeat(m); loadRail(m); noteHeading(m)
@@ -352,15 +350,16 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         heatTiles.styleReloaded()
         styledDriving = null
         repaint()
+        routeContext = ""
+        transitStopsKey = ""
+        layerOptions = null
         lastResultsKey = ""; lastRouteKey = ""; lastMineKey = ""; lastPuckKey = ""; lastHeadKey = ""; lastNextRoadKey = ""; lastCameraKey = ""; lastSignalsKey = ""; lastWazeKey = ""; lastLiveKey = ""
         enableLocation(style)
         shownStopPins = null
         shownMeasurement = null
         shownGooglePlaces = null
-        shownOpenPlaces = null
         shownTransitStops = null
-        shownTrails = null
-        stockVisible = null
+        layerOptions = null
         setShape(style, "vela-rail", railFeatures)
         render()
         loadCameras(m); loadWazeCameras(m); loadWaze(m); loadLiveCams(m); updateHeat(m)
@@ -426,11 +425,11 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         (style.getLayer("vela-rail-case") as? LineLayer)?.setProperties(lineColor(if (dark) c(0x000000, 0.9f) else c(0xFFFFFF, 0.9f)))
         val text = if (dark) c(0xE8EAED) else c(0x202124)
         val halo = if (dark) c(0x0B1526) else Color.WHITE
-        for (id in listOf(MAPBOX_POI, "kite-google-places", OPEN_PLACES, TRANSIT_STOPS)) {
+        for (id in listOf("kite-google-places", GOOGLE_UNREVIEWED, OpenMapStyle.POIS, TRANSIT_STOPS)) {
             (style.getLayer(id) as? SymbolLayer)?.setProperties(textColor(text), textHaloColor(halo),
                 textHaloWidth(0.85f), textHaloBlur(0.55f))
         }
-        for (id in listOf("vela-mine", "vela-results", "vela-selected", StopSearch.PINS)) {
+        for (id in listOf("vela-mine", "vela-results", "vela-selected")) {
             (style.getLayer(id) as? SymbolLayer)?.setProperties(textColor(text), textHaloColor(halo), textHaloWidth(1.5f))
         }
         lastResultsKey = ""
@@ -484,7 +483,6 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             if (labels == null) style.addLayer(extrusion) else style.addLayerBelow(extrusion, labels)
         }
 
-        addMapboxPlaces(style)
 
         if (mapboxTrafficLayers(style).isEmpty()) {
             val id = "kite-mapbox-traffic"
@@ -504,60 +502,23 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         }
     }
 
-    private fun addMapboxPlaces(style: Style) {
-        val stock = style.layers.filterIsInstance<SymbolLayer>().filter { it.sourceLayer == "poi_label" }
-        val sourceId = stock.firstOrNull()?.sourceId
-            ?: style.layers.filterIsInstance<LineLayer>().firstOrNull { it.sourceLayer == "road" }?.sourceId
-            ?: return
-        // Navigation styles suppress many places. Draw Streets POIs using the category map markers.
-        MapIcons.registerMapPlaces(style, AppSettings.satellite)
-        stock.forEach { it.setProperties(visibility(Property.NONE)) }
-        val maki = get("maki")
-        val category = match(get("class"), literal("poi-default"),
-            stop("food_and_drink", "poi-food"), stop("food_and_drink_stores", "poi-shop"),
-            stop("store_like", "poi-shop"), stop("medical", "poi-health"), stop("lodging", "poi-hotel"),
-            stop("park_like", "poi-park"), stop("education", "poi-edu"), stop("public_facilities", "poi-civic"),
-            stop("arts_and_entertainment", "poi-culture"), stop("sport_and_leisure", "poi-sport"))
-        val icon = match(maki, category,
-            stop("cafe", "poi-coffee"), stop("bakery", "poi-coffee"), stop("fuel", "poi-gas"),
-            stop("charging-station", "poi-gas"), stop("parking", "poi-parking"), stop("bank", "poi-money"),
-            stop("rail", "poi-transit"), stop("bus", "poi-transit"), stop("pharmacy", "poi-health"))
-        val rank = coalesce(get("filterrank"), literal(5))
-        val poi = SymbolLayer(MAPBOX_POI, sourceId).withSourceLayer("poi_label")
-            .withFilter(has("name"))
-            .withProperties(
-                symbolSortKey(toNumber(rank)),
-                iconImage(icon), iconSize(interpolate(linear(), zoom(), stop(13, 0.66f), stop(17, 0.92f))),
-                iconPadding(5f), textOptional(true), textAnchor(Property.TEXT_ANCHOR_TOP),
-                textOffset(arrayOf(0f, 0.85f)), textPadding(3f), textMaxWidth(12f),
-                textField(step(zoom(), literal(""), stop(15, get("name")))),
-                textFont(overlayFont), textSize(11f),
-                textColor(c(if (dark) 0xE2EAF4 else 0x263A4F)),
-                textHaloColor(c(if (dark) 0x151F2A else 0xFFFFFF)), textHaloWidth(1.2f),
-            )
-        poi.minZoom = 13f
-        style.addLayer(poi)
-    }
-
     private fun googlePlacesEnabled() = AppSettings.googleMapPlaces && !AppSettings.noGoogle && AppSettings.welcomed
 
     private fun showGooglePlaces(style: Style) {
         val s = model.settings
         val browsing = model.results.isEmpty() && model.nav == null && model.selected == null && model.directions == null
         val google = if (browsing && googlePlacesEnabled()) googlePlaces else emptyList()
-        val open = if (browsing && s.openMapPlaces) openPlaces else emptyList()
-        val inputs = google to open
-        if (dedupInput != inputs) {
-            dedupInput = inputs
-            deduplicated = OutdoorData.combine(google, open)
-        }
-        val googleVisible = deduplicated.filter { it.source == "google" }
-        val openVisible = deduplicated.filter { it.source != "google" }
-        val stock = s.openMapPlaces && open.isEmpty()
-        if (stockVisible != stock) {
-            stockVisible = stock
-            for (id in STOCK_POI) visible(style, id, stock)
-            scenery?.showStockPlaces(stock)
+        val googleVisible = google
+        val native = scenery?.ready == true
+        val config = listOf(s.openMapPlaces, s.openPlaceGroups, s.hikingTrails, s.bikeTrails, model.nav != null, model.transitGuidance != null, native)
+        if (layerOptions != config) {
+            layerOptions = config
+            for (id in STOCK_POI) visible(style, id, false)
+            visible(style, OpenMapStyle.POIS, !native && s.openMapPlaces && model.nav == null && model.transitGuidance == null)
+            (style.getLayer(OpenMapStyle.POIS) as? SymbolLayer)?.setFilter(raw(OpenMapStyle.filter(s.openPlaceGroups)))
+            visible(style, OpenMapStyle.HIKING, !native && s.hikingTrails)
+            visible(style, OpenMapStyle.CYCLING, !native && s.bikeTrails)
+            scenery?.applyOutdoorLayers()
         }
         fun features(places: List<Place>) = places.map { place ->
             val icon = when {
@@ -567,27 +528,16 @@ class KiteMap(private val model: AppModel, private val context: Context) {
                 else -> MapIcons.ambientName(place)
             }
             point(place.location, mapOf("id" to place.id, "icon" to icon, "name" to place.name,
-                "category_en" to place.category))
+                "category_en" to place.category, "reviewed" to (place.rating != null || (place.reviewCount ?: 0) > 0)))
         }
         if (shownGooglePlaces != googleVisible) {
             shownGooglePlaces = googleVisible
             setShape(style, "kite-google-places", features(googleVisible))
         }
-        if (shownOpenPlaces != openVisible) {
-            shownOpenPlaces = openVisible
-            setShape(style, OPEN_PLACES, features(openVisible))
-        }
         val stops = if (model.nav == null && s.transitLines) transitStops else emptyList()
         if (shownTransitStops != stops) {
             shownTransitStops = stops
             setShape(style, TRANSIT_STOPS, features(stops))
-        }
-        val paths = trails.filter { if (it.bike) s.bikeTrails else s.hikingTrails }
-        if (shownTrails != paths) {
-            shownTrails = paths
-            setShape(style, OUTDOOR_TRAILS, paths.map {
-                polyline(it.points, mapOf("bike" to if (it.bike) 1 else 0))
-            })
         }
     }
 
@@ -600,48 +550,30 @@ class KiteMap(private val model: AppModel, private val context: Context) {
     }
 
     fun openOutdoorPlace(id: String?): Boolean {
-        val place = (transitStops + openPlaces).firstOrNull { it.id == id } ?: return false
+        val place = transitStops.firstOrNull { it.id == id } ?: return false
         model.select(place)
         return true
     }
 
     private fun loadOutdoor(m: MapLibreMap) {
         val s = model.settings
-        if (model.tab != AppTab.MAP || model.nav != null) return
+        if (model.tab != AppTab.MAP || model.nav != null || model.transitGuidance != null) return
         val camera = m.cameraPosition
         val center = camera.target?.kite() ?: return
         val time = now()
-        fun due(request: ViewRequest?, distance: Double, modes: Int = 0) =
+        fun due(request: ViewRequest?, distance: Double) =
             request == null || (time - request.at >= 1_200 &&
-                (request.modes != modes || request.center.distanceTo(center) > distance || time - request.at >= 240_000))
-        if (s.openMapPlaces && model.directions == null && model.selected == null && camera.zoom >= 14.0 &&
-            openPlacesJob?.isActive != true && due(placeRequest, 690.0)) {
+                (request.center.distanceTo(center) > distance || time - request.at >= 240_000))
+        if (camera.zoom >= 14.5 && (s.aheadSignals || s.aheadStops || s.aheadRail) && junctionJob?.isActive != true && due(junctionRequest, 750.0)) {
             val request = ViewRequest(center, time)
-            placeRequest = request
-            openPlacesJob = scope.launch {
-                delay(450)
-                val found = withContext(Dispatchers.Default) { OutdoorData.find(null, center, 1350.0) }
-                if (placeRequest != request) return@launch
-                if (found != null) openPlaces = found
-                m.style?.let(::showGooglePlaces)
-            }
-        }
-        val modes = (if (s.hikingTrails) 1 else 0) + (if (s.bikeTrails) 2 else 0)
-        val radius = if (camera.zoom >= 13.0) 3600.0 else 6500.0
-        val trailKey = modes + if (radius > 4000) 4 else 0
-        if (modes != 0 && camera.zoom >= 10.5 &&
-            (trailsJob?.isActive != true || trailRequest?.modes != trailKey) && due(trailRequest, radius * 0.55, trailKey)) {
-            val hike = s.hikingTrails
-            val bike = s.bikeTrails
-            val request = ViewRequest(center, time, trailKey)
-            trailRequest = request
-            trailsJob?.cancel()
-            trailsJob = scope.launch {
-                delay(500)
-                val found = withContext(Dispatchers.Default) { OutdoorData.trails(center, radius, hike, bike) }
-                if (trailRequest != request) return@launch
-                if (found != null) trails = found
-                m.style?.let(::showGooglePlaces)
+            junctionRequest = request
+            junctionJob = scope.launch {
+                delay(600)
+                val found = withContext(Dispatchers.Default) { Overpass.controlsInBox(OutdoorData.bounds(center, 950.0)) }
+                if (found != null && junctionRequest == request) {
+                    localJunctions = found
+                    render()
+                }
             }
         }
         if (s.transitLines && camera.zoom >= 11.5 && transitStopsJob?.isActive != true && due(stopRequest, 850.0)) {
@@ -723,27 +655,39 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             if (style.getSource(id) == null) style.addSource(GeoJsonSource(id, FeatureCollection.fromFeatures(emptyList()),
                 GeoJsonOptions().withLineMetrics(metrics)))
         }
-        if (!showingMapbox) MapIcons.registerMapPlaces(style, AppSettings.satellite)
+        MapIcons.registerMapPlaces(style, AppSettings.satellite)
         src("kite-google-places")
-        style.addLayer(SymbolLayer("kite-google-places", "kite-google-places").withProperties(
-            iconImage(get("icon")), iconSize(0.91f), textOptional(true), textField(get("name")), textFont(overlayFont),
+        fun googleMarkers(id: String, reviewed: Boolean) = SymbolLayer(id, "kite-google-places").withProperties(
+            iconImage(get("icon")), iconSize(1.0f), textOptional(true), textField(get("name")), textFont(overlayFont),
             textSize(12f), textColor(c(if (dark) 0xE8EAED else 0x202124)),
-            textHaloColor(c(if (dark) 0x101A29 else 0xFFFFFF)), textHaloWidth(0.85f), textHaloBlur(0.55f),
+            textHaloColor(if (dark) c(0x101A29) else Color.WHITE), textHaloWidth(0.85f), textHaloBlur(0.55f),
             textAnchor(Property.TEXT_ANCHOR_TOP), textOffset(arrayOf(0f, 1.0f)),
-        ).also { it.minZoom = 14.5f })
-        for (id in listOf(OPEN_PLACES, TRANSIT_STOPS)) {
-            src(id)
-            style.addLayer(SymbolLayer(id, id).withProperties(
-                iconImage(get("icon")), iconSize(if (id == TRANSIT_STOPS) 0.86f else 0.82f),
-                textField(get("name")), textFont(overlayFont), textSize(11f), textOptional(true),
-                textAnchor(Property.TEXT_ANCHOR_TOP), textOffset(arrayOf(0f, 1.0f))
-            ).also { it.minZoom = if (id == TRANSIT_STOPS) 11.5f else 14f })
+        ).also { it.minZoom = 14.5f; it.setFilter(eq(get("reviewed"), literal(reviewed))) }
+        style.addLayer(googleMarkers(GOOGLE_UNREVIEWED, false))
+        src(RIDE_STOPS)
+        style.addLayer(CircleLayer(RIDE_STOPS, RIDE_STOPS).withProperties(
+            circleRadius(5.5f), circleColor(c(0x3659B0)), circleStrokeColor(Color.WHITE), circleStrokeWidth(2f)))
+        src(TRANSIT_STOPS)
+        style.addLayer(SymbolLayer(TRANSIT_STOPS, TRANSIT_STOPS).withProperties(
+            iconImage(get("icon")), iconSize(0.86f), textField(get("name")), textFont(overlayFont),
+            textSize(11f), textOptional(true), textAnchor(Property.TEXT_ANCHOR_TOP), textOffset(arrayOf(0f, 1.0f))
+        ).also { it.minZoom = 11.5f })
+        val openSource = if (style.getSource("openmaptiles") != null) "openmaptiles" else OpenMapStyle.SOURCE.also {
+            style.addSource(VectorSource(it, OpenMapStyle.TILEJSON))
         }
-        src(OUTDOOR_TRAILS)
-        style.addLayer(line(OUTDOOR_TRAILS, OUTDOOR_TRAILS, c(0xB04C65), 3.5f).withProperties(
-            lineColor(switchCase(eq(get("bike"), literal(1)), rgb(31, 108, 209), rgb(190, 62, 100))),
-            lineDasharray(arrayOf(2f, 1.1f)), lineOpacity(0.85f)
-        ).also { it.minZoom = 10.5f })
+        style.addLayer(SymbolLayer(OpenMapStyle.POIS, openSource).withSourceLayer("poi").withProperties(
+            iconImage(raw(OpenMapStyle.icon)), iconSize(0.73f), iconPadding(4f), textOptional(true),
+            textField(step(zoom(), literal(""), stop(15, coalesce(get("name"), literal(""))))),
+            textFont(overlayFont), textSize(11f), textAnchor(Property.TEXT_ANCHOR_TOP), textOffset(arrayOf(0f, 1f))
+        ).also { it.minZoom = 13f })
+        style.addLayer(googleMarkers("kite-google-places", true))
+        for ((id, kind) in listOf(OpenMapStyle.HIKING to "hiking", OpenMapStyle.CYCLING to "cycling")) {
+            style.addSource(RasterSource(id, TileSet("tiles", OpenMapStyle.trailTile(kind)).apply {
+                minZoom = 6f; maxZoom = 18f; attribution = OpenMapStyle.ATTRIBUTION
+            }, 256))
+            val layer = RasterLayer(id, id).withProperties(rasterOpacity(0.9f), visibility(Property.NONE))
+            firstSymbolLayer(style)?.let { style.addLayerBelow(layer, it) } ?: style.addLayer(layer)
+        }
         // Satellite (Esri World Imagery) under the roads, off unless picked in Layers.
         style.addSource(RasterSource("vela-sat", TileSet("tiles", "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}")
             .apply { maxZoom = 19f; attribution = "Imagery © Esri" }, 256))
@@ -862,10 +806,13 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             textMaxWidth(8f), textJustify(Property.TEXT_JUSTIFY_LEFT), symbolSortKey(get("rank"))))
 
         src(StopSearch.PINS)
-        style.addLayer(SymbolLayer(StopSearch.PINS, StopSearch.PINS).withProperties(
-            iconImage(get("icon")), iconAllowOverlap(true), iconIgnorePlacement(true),
-            textField(get("label")), textFont(overlayFont), textSize(12f), textOptional(true),
-            textAnchor(Property.TEXT_ANCHOR_TOP), textOffset(arrayOf(0f, 1.3f))))
+        style.addLayer(CircleLayer(StopSearch.PINS, StopSearch.PINS).withProperties(
+            circleColor(switchCase(eq(get("selected"), literal(true)), rgb(185, 56, 74), rgb(17, 93, 101))),
+            circleStrokeColor(Color.WHITE), circleStrokeWidth(2f), circleRadius(12f),
+            circleSortKey(switchCase(eq(get("selected"), literal(true)), literal(1), literal(0)))))
+        style.addLayer(SymbolLayer("kite-stop-numbers", StopSearch.PINS).withProperties(
+            textField(toString(get("rank"))), textFont(overlayFont), textSize(12f), textColor(Color.WHITE),
+            textAllowOverlap(true), textIgnorePlacement(true)))
 
         src("vela-selected")
         style.addLayer(SymbolLayer("vela-selected", "vela-selected").withProperties(
@@ -930,8 +877,10 @@ class KiteMap(private val model: AppModel, private val context: Context) {
 
     private fun setShape(style: Style, id: String, features: List<Feature>) {
         val collection = FeatureCollection.fromFeatures(features)
-        (style.getSource(id) as? GeoJsonSource)?.setGeoJson(collection)
-        scenery?.updateOverlay(id) { collection.toJson() }
+        val native = scenery
+        if (native?.ready != true || !native.renders(id) || id in classicHitSources)
+            (style.getSource(id) as? GeoJsonSource)?.setGeoJson(collection)
+        native?.updateOverlay(id) { collection.toJson() }
     }
 
     private fun point(p: LatLng, props: Map<String, Any?> = emptyMap()) = Feature.fromGeometry(Point.fromLngLat(p.lng, p.lat)).also { f ->
@@ -951,12 +900,23 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         style.getLayer(id)?.setProperties(visibility(if (on) Property.VISIBLE else Property.NONE))
     }
 
+    private var renderPosted = false
     fun render() {
+        val target = view ?: return
+        if (renderPosted) return
+        renderPosted = true
+        target.postOnAnimation {
+            renderPosted = false
+            if (target === view) renderNow()
+        }
+    }
+
+    private fun renderNow() {
         val m = map ?: return
         val style = m.style ?: return
         if (!styleReady) return
         val s = model.settings
-        val navigating = model.nav != null
+        val navigating = model.nav != null || model.transitGuidance != null
         if (m.locationComponent.isLocationComponentActivated) {
             if (m.locationComponent.isLocationComponentEnabled == navigating) m.locationComponent.isLocationComponentEnabled = !navigating
         } else if (LocationService.authorized) enableLocation(style)
@@ -1050,19 +1010,24 @@ class KiteMap(private val model: AppModel, private val context: Context) {
     private fun renderSignals(style: Style) {
         val nav = model.nav
         val from = nav?.progress?.alongMeters ?: 0.0
-        val controls = nav?.roadControls.orEmpty().filter { model.settings.showsControl(it.kind) && it.along in (from - 80)..(from + 6000) }
-        val key = "${nav?.route?.id}|${controls.hashCode()}"
+        val controls = nav?.roadControls.orEmpty().filter {
+            model.settings.showsControl(it.kind) && it.along in (from - 100)..(from + 5000)
+        }
+        val nearby = if (nav == null && model.transitGuidance == null) localJunctions.filter { model.settings.showsControl(it.kind) }
+            else emptyList()
+        val key = "${nav?.route?.id}|${controls.hashCode()}|${nearby.hashCode()}"
         if (key == lastSignalsKey) return
         lastSignalsKey = key
         val line = nav?.route?.polyline.orEmpty()
         val cum = Geo.cumulative(line)
-        setShape(style, "vela-signals", controls.map {
-            val icon = when (it.kind) {
+        val points = controls.map { it.kind to (it.at ?: Geo.point(line, it.along, cum)) } + nearby.map { it.kind to it.at }
+        setShape(style, "vela-signals", points.map { (kind, at) ->
+            val icon = when (kind) {
                 Overpass.ControlKind.SIGNAL -> "traffic-light"
                 Overpass.ControlKind.STOP -> "road-stop"
                 Overpass.ControlKind.RAIL -> "road-crossing"
             }
-            point(Geo.point(line, it.along, cum), mapOf("icon" to icon))
+            point(at, mapOf("icon" to icon))
         })
     }
 
@@ -1160,14 +1125,15 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         val dLat = (b.latitudeNorth - b.latitudeSouth) * 0.5; val dLng = (b.longitudeEast - b.longitudeWest) * 0.5
         val box = RailBox(b.latitudeSouth - dLat, b.longitudeWest - dLng, b.latitudeNorth + dLat, b.longitudeEast + dLng, z)
         railFetch = scope.launch {
-            val lines = runCatching { Transitous.lines(box.s, box.w, box.n, box.e, min(z, 14)) }.getOrNull()
+            val lines = withContext(Dispatchers.Default) { Transitous.lines(box.s, box.w, box.n, box.e, min(z, 14)) }
             Log.i("KiteTrace", "transit lines: ${lines?.size ?: "failed"} at zoom $z (${Transitous.linesNote})")
             railFetch = null
             if (lines != null) {
                 railBox = box
-                railFeatures = lines.map { l -> polyline(l.points, mapOf("color" to hex(l.color))) }
+                railFeatures = withContext(Dispatchers.Default) {
+                    lines.take(360).map { l -> polyline(Overpass.thinTo(l.points, 260), mapOf("color" to hex(l.color))) }
+                }
                 m.style?.let { setShape(it, "vela-rail", railFeatures) }
-                loadRail(m)
             }
         }
     }
@@ -1241,12 +1207,11 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         val key = results to selected
         if (shownStopPins == key) return
         shownStopPins = key
-        val ordered = results.partition { it.place.id == selected }.let { it.second + it.first }
-        setShape(style, StopSearch.PINS, ordered.map { (place) ->
-            point(place.location, mapOf("id" to place.id,
-                "icon" to if (place.id == selected) "pin-selected" else MapIcons.iconName(place),
-                "label" to place.name))
-        })
+        val features = results.mapIndexed { index, (place) ->
+            point(place.location, mapOf("id" to place.id, "rank" to index + 1,
+                "selected" to (place.id == selected)))
+        }
+        setShape(style, StopSearch.PINS, features)
     }
 
     private fun renderResults(style: Style) {
@@ -1273,6 +1238,11 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         setShape(style, "vela-selected", sel)
     }
 
+    private var routeGeometry: List<LatLng>? = null
+    private var routeDistances = DoubleArray(0)
+    private var routeContext = ""
+    private var transitStopsKey = ""
+
     private fun renderRoutes(style: Style) {
         var alts = emptyList<Route>()
         var main: Route? = null
@@ -1281,30 +1251,47 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         val d = model.directions
         if (n != null) { main = n.route; from = n.progress?.alongMeters ?: 0.0 }
         else if (d != null) { main = d.route; alts = d.current.filter { it.id != main?.id } }
-        val trip = if (n == null) d?.pickedTrip else null
+        val session = model.transitGuidance
+        val trip = if (session != null) session.trip else if (n == null) d?.pickedTrip else null
+        val keyForStops = "${session?.trip?.id}|${session?.legIndex}|${session?.phase}"
+        if (transitStopsKey != keyForStops) {
+            transitStopsKey = keyForStops
+            setShape(style, RIDE_STOPS, session?.leg?.calls.orEmpty().map { point(it.at, mapOf("name" to it.name)) })
+        }
         val traffic = n?.roadTraffic ?: main?.trafficSpans.orEmpty().takeIf { AppSettings.traffic }.orEmpty()
-        val key = (if (n == null) "" else "nav") + (trip?.id ?: "") + (main?.id ?: "") + alts.joinToString("") { it.id } + "${(from / 5).toInt()}" +
-            (n?.nextManeuver?.alongMeters ?: "") + traffic.hashCode()
+        val context = "${trip?.id}|${session?.legIndex}|${main?.id}|${alts.joinToString { it.id }}"
+        val follows = n?.following == true
+        val key = "$context|${(from / if (n?.route?.mode == TravelMode.WALK) 6 else 24).toInt()}|$follows|" +
+            "${n?.nextManeuver?.alongMeters}|${traffic.hashCode()}"
         if (key == lastRouteKey) return
         lastRouteKey = key
-        setShape(style, "vela-route-alt", alts.map { polyline(it.polyline) })
-        setShape(style, "vela-transit", trip?.legs?.filter { it.path.size >= 2 }?.map { leg ->
-            polyline(leg.path, mapOf("walk" to if (leg.isWalk) 1 else 0, "color" to hex(leg.color ?: 0x1F6FEB)))
-        } ?: emptyList())
+        if (routeContext != context) {
+            routeContext = context
+            setShape(style, "vela-route-alt", alts.map { polyline(it.polyline) })
+            val legs = if (session != null) trip?.legs?.drop(session.legIndex).orEmpty() else trip?.legs.orEmpty()
+            setShape(style, "vela-transit", legs.filter { it.path.size >= 2 }.map { leg ->
+                polyline(leg.path, mapOf("walk" to if (leg.isWalk) 1 else 0, "color" to hex(leg.color ?: 0x1F6FEB)))
+            })
+        }
         val r = main
         if (r == null) {
             for (id in listOf("vela-route", "vela-route-traffic", "vela-route-bubbles", "vela-route-done", "vela-turn-arrow", "vela-turn-head", "vela-next-road")) setShape(style, id, emptyList())
             lastHeadKey = ""; lastNextRoadKey = ""
             return
         }
-        val cum = Geo.cumulative(r.polyline)
-        val total = cum.last()
-        val ahead = if (from > 1) Geo.slice(r.polyline, from, total, cum) else r.polyline
+        if (routeGeometry !== r.polyline) {
+            routeGeometry = r.polyline
+            routeDistances = Geo.cumulative(r.polyline)
+        }
+        val cum = routeDistances
+        val total = cum.lastOrNull() ?: return
+        val to = if (follows) min(total, from + 16_000.0) else total
+        val ahead = if (from > 1 || to < total) Geo.slice(r.polyline, from, to, cum) else r.polyline
         setShape(style, "vela-route", if (ahead.size >= 2) listOf(polyline(ahead)) else emptyList())
-        val driven = if (n != null && from > 1) Geo.slice(r.polyline, 0.0, from, cum) else emptyList()
+        val driven = if (n != null && from > 1) Geo.slice(r.polyline, if (follows) max(0.0, from - 3000.0) else 0.0, from, cum) else emptyList()
         setShape(style, "vela-route-done", if (driven.size >= 2) listOf(polyline(driven)) else emptyList())
         setShape(style, "vela-route-traffic", traffic.mapNotNull { s ->
-            val a = max(s.startMeters, from); val b = min(s.startMeters + s.lengthMeters, total)
+            val a = max(s.startMeters, from); val b = min(s.startMeters + s.lengthMeters, to)
             if (b <= a) return@mapNotNull null
             val piece = Geo.slice(r.polyline, a, b, cum)
             if (piece.size >= 2) polyline(piece, mapOf("level" to min(s.level, 3))) else null
@@ -1477,19 +1464,18 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             val id = str(f, "id")
             model.results.firstOrNull { it.id == id }?.let { model.select(it); return true }
         }
-        val outdoorHit = m.queryRenderedFeatures(box, TRANSIT_STOPS, OPEN_PLACES).firstOrNull()
-        if (outdoorHit != null && openOutdoorPlace(str(outdoorHit, "id"))) return true
-        val googleHit = m.queryRenderedFeatures(box, "kite-google-places").firstOrNull()
+        val transitHit = m.queryRenderedFeatures(box, TRANSIT_STOPS).firstOrNull()
+        if (transitHit != null && openOutdoorPlace(str(transitHit, "id"))) return true
+        val googleHit = m.queryRenderedFeatures(box, "kite-google-places", GOOGLE_UNREVIEWED).firstOrNull()
         if (googleHit != null && openGooglePlace(str(googleHit, "id"))) return true
-        val poiLayers = if (showingMapbox) arrayOf(MAPBOX_POI) else arrayOf("poi_r1", "poi_r7", "poi_r20", "poi_transit", "airport")
+        val poiLayers = arrayOf(OpenMapStyle.POIS)
         m.queryRenderedFeatures(box, *poiLayers).firstOrNull()?.let { poi ->
-            val name = str(poi, "name") ?: str(poi, "name:en")
+            val name = OpenMapStyle.title(str(poi, "name") ?: str(poi, "name:en"), str(poi, "subclass"), str(poi, "class"))
             val g = poi.geometry() as? Point
-            if (name != null) {
-                model.resolveTapped(name, g?.let { LatLng(it.latitude(), it.longitude()) } ?: at.kite(),
-                    str(poi, "category_en") ?: str(poi, "subclass"), if (showingMapbox) "mapbox" else "osm")
-                return true
-            }
+            model.select(Place("osm:${g?.latitude()},${g?.longitude()}:$name", name,
+                g?.let { LatLng(it.latitude(), it.longitude()) } ?: at.kite(), "osm",
+                category = str(poi, "subclass") ?: str(poi, "class")), focus = false)
+            return true
         }
         if (model.selected != null) model.closePlace()
         else if (model.results.isNotEmpty()) model.detent = SheetDetent.PEEK

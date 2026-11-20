@@ -77,7 +77,46 @@ object Overpass {
     data class SignalNode(val id: Long, val at: LatLng)
 
     enum class ControlKind { SIGNAL, STOP, RAIL }
-    data class RoadControl(val kind: ControlKind, val along: Double)
+    data class RoadControl(val kind: ControlKind, val along: Double, val at: LatLng? = null)
+    data class RoadsideNode(val kind: ControlKind, val at: LatLng)
+
+    suspend fun controlsInBox(box: Box): List<RoadsideNode>? {
+        val filter = "(${box.s.plain()},${box.w.plain()},${box.n.plain()},${box.e.plain()})"
+        return controlsQuery(filter, filter)?.let(::parseRoadControls)
+    }
+
+    suspend fun controlsOnRoute(line: List<LatLng>): List<RoadControl>? {
+        if (line.size < 2) return emptyList()
+        val path = coords(thinTo(line, 150))
+        val raw = controlsQuery("(around:42,$path)", "(around:28,$path)") ?: return null
+        return withContext(Dispatchers.Default) { projectControls(parseRoadControls(raw), line) }
+    }
+
+    private suspend fun controlsQuery(signals: String, others: String): ByteArray? = firstAnswer(
+        """[out:json][timeout:10];(node["highway"="traffic_signals"]$signals;node["highway"="stop"]$others;node["railway"="level_crossing"]$others;);out body 900;""",
+        stagger = 3.5
+    ) { Json.obj(it)?.get("elements").asList() != null }
+
+    fun projectControls(nodes: List<RoadsideNode>, line: List<LatLng>): List<RoadControl> {
+        if (line.size < 2) return emptyList()
+        val cum = Geo.cumulative(line)
+        val projected = nodes.mapNotNull { node ->
+            val hit = Geo.project(node.at, line, cum)
+            val radius = when (node.kind) {
+                ControlKind.SIGNAL -> 32.0
+                ControlKind.STOP -> 16.0
+                ControlKind.RAIL -> 25.0
+            }
+            RoadControl(node.kind, hit.along, node.at).takeIf { hit.offset <= radius }
+        }
+        return projected.groupBy { it.kind }.values.flatMap { group ->
+            buildList<RoadControl> {
+                for (control in group.sortedBy { it.along }) {
+                    if (lastOrNull()?.let { control.along - it.along < 35 } != true) add(control)
+                }
+            }
+        }.sortedBy { it.along }
+    }
 
     data class AlongRoute(val cameras: List<RoadCamera>, val ways: List<LimitWay>, val zones: List<AverageSpeedZone>,
                           val signals: List<LatLng>, val controls: List<RoadControl>)
@@ -92,13 +131,13 @@ object Overpass {
      * Cameras, posted speed limits and traffic lights along a route in one query. [limits] false leaves
      * the roads' limits out: the question is then far lighter. Null when every mirror failed.
      */
-    suspend fun alongRoute(line: List<LatLng>, speed: Boolean, plate: Boolean, limits: Boolean = true): AlongRoute? = coroutineScope {
-        // Waze's map is asked at the same time: it holds cameras OpenStreetMap doesn't.
-        val waze = async { if (speed) WazeCameras.along(line) else null }
-        val mapped = alongRouteMapped(line, speed, plate, limits)
-        val extra = waze.await() ?: emptyList()
-        mapped?.copy(cameras = WazeCameras.merge(mapped.cameras, extra))
-    }
+    suspend fun alongRoute(line: List<LatLng>, speed: Boolean, plate: Boolean, limits: Boolean = true): AlongRoute? =
+        withContext(Dispatchers.Default) {
+            val waze = async { if (speed) WazeCameras.along(line) else null }
+            val mapped = alongRouteMapped(line, speed, plate, limits)
+            val extra = waze.await() ?: emptyList()
+            mapped?.copy(cameras = WazeCameras.merge(mapped.cameras, extra))
+        }
 
     private suspend fun alongRouteMapped(line: List<LatLng>, speed: Boolean, plate: Boolean, limits: Boolean): AlongRoute? {
         if (line.size < 2) return AlongRoute(emptyList(), emptyList(), emptyList(), emptyList(), emptyList())
@@ -106,7 +145,7 @@ object Overpass {
         val ways = mutableListOf<LimitWay>()
         val zones = mutableListOf<AverageSpeedZone>()
         val signals = mutableListOf<LatLng>()
-        val roadside = mutableSetOf<Pair<ControlKind, LatLng>>()
+        val roadside = mutableSetOf<RoadsideNode>()
         var answered = false
         for (piece in pieces(line, 40_000.0)) {
             val data = alongQuery(piece, speed, plate, limits) ?: continue
@@ -118,7 +157,7 @@ object Overpass {
             ways += w
             zones += averageZones(data, line)
             signals += lights.map { it.at }
-            roadside += parseRoadside(data)
+            roadside += parseRoadControls(data)
             RoadCache.shared.add(w, found, lights)
             // This stretch's answer is the whole truth about its cameras: one the map has dropped goes.
             RoadCache.shared.forgetCameras(piece, found.map { it.id }.toSet(), speed, plate)
@@ -126,18 +165,7 @@ object Overpass {
         if (!answered) return null
         return withContext(Dispatchers.Default) {
             val onRoute = signalsOnRoute(signals, line)
-            val cum = Geo.cumulative(line)
-            val controls = (roadside + onRoute.map { ControlKind.SIGNAL to it }).mapNotNull { (kind, location) ->
-                val at = Geo.project(location, line, cum)
-                val tolerance = if (kind == ControlKind.STOP) 13.0 else 20.0
-                if (at.offset <= tolerance) RoadControl(kind, at.along) else null
-            }.groupBy { it.kind }.values.flatMap { group ->
-                buildList<RoadControl> {
-                    for (control in group.sortedBy { it.along }) {
-                        if (lastOrNull()?.let { control.along - it.along < 35 } != true) add(control)
-                    }
-                }
-            }.sortedBy { it.along }
+            val controls = projectControls(roadside.toList(), line)
             AlongRoute(cams.values.toList(), ways, CameraAlerts.merge(zones, emptyList()), onRoute, controls)
         }
     }
@@ -236,17 +264,18 @@ object Overpass {
         return out.sortedBy { it.startMeters }
     }
 
-    private fun parseRoadside(data: ByteArray): List<Pair<ControlKind, LatLng>> =
+    fun parseRoadControls(data: ByteArray): List<RoadsideNode> =
         Json.obj(data)?.get("elements").asMaps().orEmpty().mapNotNull { e ->
             val tags = e.tags()
             val kind = when {
+                tags["highway"] == "traffic_signals" -> ControlKind.SIGNAL
                 tags["highway"] == "stop" -> ControlKind.STOP
                 tags["railway"] == "level_crossing" -> ControlKind.RAIL
                 else -> return@mapNotNull null
             }
             val lat = e["lat"].num() ?: return@mapNotNull null
             val lng = e["lon"].num() ?: return@mapNotNull null
-            kind to LatLng(lat, lng)
+            RoadsideNode(kind, LatLng(lat, lng))
         }
 
     fun parseSignalNodes(data: ByteArray): List<SignalNode> {

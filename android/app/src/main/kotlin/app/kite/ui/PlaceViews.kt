@@ -80,12 +80,7 @@ fun PlaceHeader(model: AppModel, place: Place) {
                 Text("Directions", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = Vela.onAccent(dark))
             }
             Row(Modifier.heightIn(min = 56.dp).clip(CircleShape).background(Vela.tonal(dark))
-                .clickable {
-                    val organic = AppSettings.defaultMode == TravelMode.WALK && AppSettings.organicWalking
-                    if (organic && model.userLatLng?.let { ctx.openOrganicWalk(it, place) } == true) return@clickable
-                    model.openDirections(place)
-                    model.autoStart = !organic
-                }.padding(horizontal = 24.dp),
+                .clickable { model.openDirections(place); model.autoStart = true }.padding(horizontal = 24.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Filled.Navigation, null, tint = Vela.onTonal(dark), modifier = Modifier.size(22.dp))
                 Text("Go", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = Vela.onTonal(dark))

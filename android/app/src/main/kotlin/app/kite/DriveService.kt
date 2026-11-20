@@ -82,11 +82,11 @@ class DriveService : Service() {
             runCatching { c.getSystemService(NotificationManager::class.java).notify(1, build(c, title, text)) }
         }
 
-        fun start(c: Context) {
+        fun start(c: Context, initialTitle: String = "Driving with Kite") {
             // Without location access Android refuses a location service, and that refusal ends the app.
             if (ContextCompat.checkSelfPermission(c, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
                 ContextCompat.checkSelfPermission(c, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) return
-            title = "Driving with Kite"; text = "Tap to go back to the map"
+            title = initialTitle; text = "Tap to go back to the map"
             running = runCatching { c.startForegroundService(Intent(c, DriveService::class.java)) }.isSuccess
         }
 

@@ -74,7 +74,16 @@ object Geo {
         if (line.size < 2 || to <= from) return emptyList()
         val c = cum ?: cumulative(line)
         val out = mutableListOf(point(line, from, c))
-        for (i in line.indices) if (c[i] > from && c[i] < to) out.add(line[i])
+        var low = 0
+        var high = c.size
+        while (low < high) {
+            val mid = (low + high) ushr 1
+            if (c[mid] <= from) low = mid + 1 else high = mid
+        }
+        for (i in low until c.size) {
+            if (c[i] >= to) break
+            out.add(line[i])
+        }
         out.add(point(line, to, c))
         return out
     }

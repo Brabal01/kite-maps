@@ -6,7 +6,7 @@ import java.util.UUID
 import kotlin.math.pow
 import kotlin.math.roundToInt
 
-data class TransitCall(val stopId: String?, val name: String, val at: LatLng, val arrival: Long?, val departure: Long?)
+data class TransitCall(val stopId: String?, val name: String, val at: LatLng, val arrival: Long?, val departure: Long?, val platform: String? = null)
 
 /** One part of a transit trip: a walk, or a ride on one line between two stops. Times are epoch millis. */
 data class TransitLeg(
@@ -27,6 +27,7 @@ data class TransitLeg(
     var path: List<LatLng> = emptyList(),
     var calls: List<TransitCall> = emptyList(),
     var tripId: String? = null,
+    var walkSteps: List<Maneuver> = emptyList(),
 ) {
     val vehicle: Vehicle get() = Vehicle.of(mode)
 
@@ -84,7 +85,7 @@ object Transitous {
 
     data class Departure(
         val line: String, val mode: String, val color: Long?, val textColor: Long?, val headsign: String,
-        val time: Long, val delayMinutes: Int?,
+        val time: Long, val delayMinutes: Int?, val tripId: String? = null, val platform: String? = null,
     ) {
         val vehicle get() = TransitLeg.Vehicle.of(mode)
     }
@@ -139,7 +140,8 @@ object Transitous {
             if (end != null && stopName.isNotEmpty() && end == stopName) return@mapNotNull null
             var headsign = st["headsign"] as? String ?: ""
             if (!end.isNullOrEmpty() && (headsign.isEmpty() || headsign == stopName)) headsign = end
-            Departure(line, st["mode"] as? String ?: "", hex(st["routeColor"]), hex(st["routeTextColor"]), headsign, time, delay)
+            Departure(line, st["mode"] as? String ?: "", hex(st["routeColor"]), hex(st["routeTextColor"]), headsign, time, delay,
+                st["tripId"] as? String, (place["track"] ?: place["scheduledTrack"]) as? String)
         }
     }
 
@@ -217,7 +219,10 @@ object Transitous {
             if (a != null && b != null) out.path = listOf(a, b)
         }
         if (out.distanceMeters == 0.0) out.distanceMeters = Geo.length(out.path)
-        if (out.isWalk) return out
+        if (out.isWalk) {
+            out.walkSteps = walkSteps(l["steps"].asMaps().orEmpty(), out.path)
+            return out
+        }
         out.line = listOf(l["routeShortName"], l["displayName"], l["routeLongName"]).mapNotNull { (it as? String)?.trim() }.firstOrNull { it.isNotEmpty() } ?: ""
         out.color = hex(l["routeColor"])
         out.textColor = hex(l["routeTextColor"])
@@ -228,10 +233,46 @@ object Transitous {
         out.calls = (listOf(from) + intermediate + listOf(to)).mapNotNull { stop ->
             val at = point(stop) ?: return@mapNotNull null
             TransitCall(stop["stopId"] as? String, (stop["name"] as? String).orEmpty(), at,
-                date(stop["arrival"]), date(stop["departure"]))
+                date(stop["arrival"]), date(stop["departure"]),
+                (stop["track"] ?: stop["scheduledTrack"]) as? String)
         }
         if (l["realTime"] == true && start != null) date(l["scheduledStartTime"])?.let { out.delayMinutes = ((start - it) / 60_000.0).roundToInt() }
         return out
+    }
+
+    private fun walkSteps(rows: List<Map<String, Any?>>, line: List<LatLng>): List<Maneuver> {
+        if (rows.isEmpty() || line.size < 2) return emptyList()
+        val cum = Geo.cumulative(line)
+        val end = cum.last()
+        val distance = rows.sumOf { it["distance"].num()?.coerceAtLeast(0.0) ?: 0.0 }
+        if (end <= 0 || distance <= 0) return emptyList()
+        var along = 0.0
+        val steps = rows.mapIndexed { i, row ->
+            val step = ((row["distance"].num() ?: 0.0) * end / distance).coerceAtLeast(0.0)
+            val dir = (row["relativeDirection"] as? String).orEmpty().uppercase().replace('-', '_')
+            val road = (row["streetName"] as? String)?.takeUnless { it.isBlank() || it == "unnamed" }
+            val type = when (dir) {
+                "LEFT", "TURN_LEFT" -> ManeuverType.TURN_LEFT
+                "RIGHT", "TURN_RIGHT" -> ManeuverType.TURN_RIGHT
+                "SLIGHTLY_LEFT", "SLIGHT_LEFT" -> ManeuverType.SLIGHT_LEFT
+                "SLIGHTLY_RIGHT", "SLIGHT_RIGHT" -> ManeuverType.SLIGHT_RIGHT
+                "HARD_LEFT", "SHARP_LEFT" -> ManeuverType.SHARP_LEFT
+                "HARD_RIGHT", "SHARP_RIGHT" -> ManeuverType.SHARP_RIGHT
+                else -> if (i == 0) ManeuverType.DEPART else ManeuverType.STRAIGHT
+            }
+            val instruction = when {
+                dir.contains("ELEVATOR") -> "Take the elevator"
+                dir.contains("STAIR") -> "Take the stairs"
+                dir.contains("ESCALATOR") -> "Take the escalator"
+                type in setOf(ManeuverType.TURN_LEFT, ManeuverType.SLIGHT_LEFT, ManeuverType.SHARP_LEFT) -> "Turn left"
+                type in setOf(ManeuverType.TURN_RIGHT, ManeuverType.SLIGHT_RIGHT, ManeuverType.SHARP_RIGHT) -> "Turn right"
+                else -> "Continue"
+            } + (road?.let { " on $it" } ?: "")
+            Maneuver(type, instruction, Geo.point(line, along, cum), along, step, road,
+                silent = i > 0 && type == ManeuverType.STRAIGHT && !dir.contains("STAIR") &&
+                    !dir.contains("ELEVATOR") && !dir.contains("ESCALATOR")).also { along += step }
+        }
+        return steps + Maneuver(ManeuverType.ARRIVE, "You have arrived", line.last(), end, 0.0)
     }
 
     private fun path(l: Map<String, Any?>): List<LatLng> {

@@ -103,6 +103,7 @@ object MapIcons {
         add("road-stop", dot(Icons.Filled.StopCircle, c(0xC32E43)))
         add("road-crossing", dot(Icons.Filled.Train, c(0x91602C)))
         add("osm-drinking_water", dot(Icons.Filled.WaterDrop, c(0x227FA8)))
+        add("osm-toilets", dot(Icons.Filled.Wc, c(0x546294)))
         add("osm-transit", dot(Icons.Filled.Tram, c(0x4D66BB)))
         add("osm-bicycle_parking", dot(Icons.Filled.PedalBike, c(0x227D6B)))
         // Live camera photos: sky blue for road cameras, violet for Windy's scenic webcams.

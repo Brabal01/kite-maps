@@ -371,6 +371,7 @@ private fun MapSettings() {
     val s = AppSettings
     var editColors by remember { mutableStateOf(false) }
     var editRoadReports by remember { mutableStateOf(false) }
+    var editOpenPlaces by remember { mutableStateOf(false) }
     SettingsGroup {
         PickRow("Theme", Icons.Filled.Contrast, 0x334155, s.theme, ThemeMode.entries.toList(), { it.label }) { s.theme = it }
         RowDivider()
@@ -401,17 +402,20 @@ private fun MapSettings() {
         ToggleRow("Google Maps places", Icons.Filled.Place, 0x1D4ED8, s.googleMapPlaces, enabled = !s.noGoogle) { s.googleMapPlaces = it }
         RowDivider()
         ToggleRow("OpenStreetMap places", Icons.Outlined.Map, 0x0F766E, s.openMapPlaces) { s.openMapPlaces = it }
+        RowDivider()
+        Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).tap { editOpenPlaces = true }.padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            SettingLabel("OpenStreetMap icon categories", Icons.Filled.Tune, 0x0F766E, Modifier.weight(1f))
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = secondaryText)
+        }
     }
-    SettingsGroup(header = "Walking routes") {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            val chosen = if (s.organicWalking) "Organic Maps" else if (s.openWalking || s.noGoogle) "OpenStreetMap" else "Google Maps"
-            val providers = listOf("OpenStreetMap", "Organic Maps") + listOfNotNull("Google Maps".takeUnless { s.noGoogle })
-            Segmented(providers, chosen, { it }) {
-                s.organicWalking = it == "Organic Maps"
-                s.openWalking = it != "Google Maps"
+    if (editOpenPlaces) TripSheet("OpenStreetMap icons", "Done", { editOpenPlaces = false }) {
+        Column(Modifier.verticalScroll(rememberScrollState())) {
+            for (group in OpenPlaceGroup.entries) {
+                ToggleRow(group.label, Icons.Filled.Place, 0x0F766E, group in s.openPlaceGroups) { show ->
+                    s.openPlaceGroups = if (show) s.openPlaceGroups + group else s.openPlaceGroups - group
+                }
             }
-            Text(if (s.organicWalking) "Direct walks open in the Organic Maps app. Walks with stops stay in Kite." else "Walking navigation stays in Kite.",
-                color = secondaryText)
         }
     }
     SettingsGroup(header = "While driving",

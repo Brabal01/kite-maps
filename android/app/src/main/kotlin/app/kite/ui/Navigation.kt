@@ -250,6 +250,16 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
                         val look = AppSettings.driveLook
                         buttonNote = look.title to look.detail
                     }
+                    val icon = when (nav.voiceMode) {
+                        VoiceMode.ALL -> Icons.AutoMirrored.Filled.VolumeUp
+                        VoiceMode.ALERTS -> Icons.Filled.Notifications
+                        VoiceMode.OFF -> Icons.AutoMirrored.Filled.VolumeOff
+                    }
+                    MapFab(icon, tint = if (nav.voiceMode == VoiceMode.ALERTS) Vela.accentText(dark) else null, size = 52.dp,
+                        modifier = Modifier.semantics { contentDescription = "Voice: ${nav.voiceMode.title}" }) {
+                        nav.voiceMode = nav.voiceMode.next
+                        buttonNote = nav.voiceMode.title to nav.voiceMode.detail
+                    }
                 }
                 Spacer(Modifier.weight(1f))
                 Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -262,16 +272,7 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
                         }
                     }
                     SpeedBadge(nav.speedMps, nav.speedLimitKmh, nav.limitDropAhead)
-                    val icon = when (nav.voiceMode) {
-                        VoiceMode.ALL -> Icons.AutoMirrored.Filled.VolumeUp
-                        VoiceMode.ALERTS -> Icons.Filled.Notifications
-                        VoiceMode.OFF -> Icons.AutoMirrored.Filled.VolumeOff
-                    }
-                    MapFab(icon, tint = if (nav.voiceMode == VoiceMode.ALERTS) Vela.accentText(dark) else null, size = 52.dp,
-                        modifier = Modifier.semantics { contentDescription = "Voice: ${nav.voiceMode.title}" }) {
-                        nav.voiceMode = nav.voiceMode.next
-                        buttonNote = nav.voiceMode.title to nav.voiceMode.detail
-                    }
+
                 }
             }
             if (!nav.following) {

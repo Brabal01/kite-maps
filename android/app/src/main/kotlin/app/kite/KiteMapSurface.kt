@@ -52,7 +52,9 @@ class KiteMapSurface(
                 }
             }
         }
-        useStandard = ready && standard != null
+        val showStandard = ready && standard != null
+        if (useStandard != showStandard) classic.setMaximumFps(if (showStandard) 12 else 60)
+        useStandard = showStandard
         standard?.alpha = if (useStandard) 1f else 0f
         classic.alpha = if (useStandard) 0f else 1f
     }
