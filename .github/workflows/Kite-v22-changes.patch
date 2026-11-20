@@ -157,7 +157,7 @@ index e116a3f..39d6ea2 100644
          guard link == nil else { return }
          let l = CADisplayLink(target: self, selector: #selector(frame(_:)))
 diff --git a/App/Sources/Navigator.swift b/App/Sources/Navigator.swift
-index aeb81cd..5c78a9a 100644
+index aeb81cd..c2a2cd8 100644
 --- a/App/Sources/Navigator.swift
 +++ b/App/Sources/Navigator.swift
 @@ -165,6 +165,7 @@ final class Navigator: ObservableObject {
@@ -211,18 +211,7 @@ index aeb81cd..5c78a9a 100644
              reroute(from: loc)
              return
          }
-@@ -1048,7 +1055,9 @@ final class Navigator: ObservableObject {
-         let from = LatLng(loc.coordinate.latitude, loc.coordinate.longitude)
-         let course = heading(loc), id = route.id, planned = p.remainingSeconds / trafficScale
-         let to = destination.location, hw = avoidHighways, tolls = avoidTolls, via = stops.map(\.location)
--        Task {
-+        rerouteTask?.cancel()
-+        let requestedAt = ProcessInfo.processInfo.systemUptime
-+        rerouteTask = Task {
-             let r = await Directions.routes(from: from, to: to, mode: .drive, avoidHighways: hw, avoidTolls: tolls, via: via, heading: course)
-             self.trafficLoading = false
-             // Arrived (or ended) while asking: no new route, and no "Found a faster route" in the car park.
-@@ -1178,7 +1187,8 @@ final class Navigator: ObservableObject {
+@@ -1178,7 +1185,8 @@ final class Navigator: ObservableObject {
          let from = latLng(fix), to = destination.location
          let stops = self.stops.map(\.location)
          let heading = heading(fix)
@@ -232,8 +221,14 @@ index aeb81cd..5c78a9a 100644
              let result = await Directions.routes(from: from, to: to, mode: .drive, avoidHighways: avoidHighways,
                                                   avoidTolls: avoidTolls, useGoogle: !AppSettings.shared.noGoogle,
                                                   via: stops, heading: heading, alternatives: true)
-@@ -1228,12 +1238,13 @@ final class Navigator: ObservableObject {
-         Task {
+@@ -1225,15 +1233,18 @@ final class Navigator: ObservableObject {
+         let proposedStops = adding.map { [$0] + stops } ?? stops
+         rerouteRequest += 1
+         let req = rerouteRequest
+-        Task {
++        rerouteTask?.cancel()
++        let requestedAt = ProcessInfo.processInfo.systemUptime
++        rerouteTask = Task {
              let r = await Directions.routes(from: from, to: to, mode: mode, avoidHighways: hw, avoidTolls: tolls,
                                              useGoogle: !AppSettings.shared.noGoogle, via: proposedStops.map(\.location),
 -                                            heading: course, alternatives: self.exclusion != nil)
