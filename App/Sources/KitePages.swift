@@ -172,7 +172,7 @@ struct RoutesPage: View {
                     .frame(width: 42, height: 42)
                     .background(Circle().fill(KiteColor.accentSoft))
                 Text(L10n.text(title)).font(KiteText.headline(16)).foregroundColor(KiteColor.ink)
-                Text(place?.name ?? L10n.text("Tap to set"))
+                Text(place.map { subtitle($0, title: title) } ?? L10n.text("Tap to set"))
                     .font(KiteText.caption()).foregroundColor(KiteColor.inkSecondary)
                     .lineLimit(1)
             }
@@ -182,6 +182,15 @@ struct RoutesPage: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(place == nil ? "Set \(L10n.text(title))" : "\(L10n.text(title)), \(place?.name ?? "")")
+    }
+
+    /** Never repeat "Home / Home": show the street or category instead. */
+    private func subtitle(_ place: Place, title: String) -> String {
+        let same = { (value: String) in value.caseInsensitiveCompare(title) == .orderedSame }
+        if !same(place.name) { return place.name }
+        if let address = place.address, !same(address) { return address }
+        if let category = place.category, !same(category) { return category }
+        return L10n.text("Tap to go")
     }
 
     private var recent: some View {

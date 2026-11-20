@@ -121,7 +121,7 @@ struct SettingsView: View {
                     }
                     menuRow("Live cameras", detail: "Road camera photos and scenic webcams", value: settings.liveCams ? "On" : "Off",
                             icon: "web.camera.fill", color: 0x0284C7) { liveCamsPage }
-                    menuRow("Map & display", detail: "Theme, units, map zoom, parking button", icon: "circle.lefthalf.filled", color: 0x334155) { mapPage }
+                    menuRow("Map & display", detail: "Theme, units, map zoom, shortcuts", icon: "circle.lefthalf.filled", color: 0x334155) { mapPage }
                     menuRow("My places", detail: "Home and work", icon: "house.fill", color: 0x16A34A) { placesPage }
                     menuRow("Privacy", detail: "Use Kite without Google", value: settings.noGoogle ? "On" : nil,
                             icon: "lock.fill", color: 0x475569) { privacyPage }
