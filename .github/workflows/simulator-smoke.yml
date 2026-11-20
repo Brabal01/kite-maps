@@ -123,6 +123,9 @@ jobs:
             simulator-build.log
             launch-*.txt
             kite-*.log
+            demo-*.txt
+            demo-*.png
+            crash-*.log
             launchctl.txt
             simulator.png
           if-no-files-found: warn
