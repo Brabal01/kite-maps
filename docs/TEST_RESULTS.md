@@ -1,5 +1,42 @@
 # Test results
 
+## v29 redesign (branch `iphone-custom-v29-redesign`)
+
+### Unit tests (VelaCore, macOS CI)
+
+- **220 tests, 0 failures** in run `44808484156`.
+- New: `RouteAlternativesTests` (6) — fastest kept, near-identical alternatives
+  dropped, clearly different roads kept even when slower, shorter route with a
+  similar time kept, tolerance scales with trip length, empty/single input.
+- All v28 navigation, reroute, roundabout, lane, sign, transit and GTFS-RT tests
+  remain green.
+
+### Release IPA (custom workflow)
+
+- Run [`44808484156`](https://github.com/Brabal01/kite-maps/actions/runs/44808484156):
+  **success**, 3m57s, build **1078**.
+- Both variants passed `.github/scripts/verify-ipa.sh`:
+  - Full: app + `app.vela.ios.navigation` extension, both 0.8.0 (1078),
+    both iOS ≥ 16.2, MapLibre arm64, signatures valid, Live Activities on.
+  - SideStore: no extension, Live Activities off, same app binary, arm64.
+- Independent download check on this machine: arm64 Mach-O app (14 MB), arm64
+  MapLibre, clean zip, no provisioning profile, matching versions.
+
+### Simulator
+
+- iOS simulator smoke, run
+  [`44809398556`](https://github.com/Brabal01/kite-maps/actions/runs/44809398556):
+  **success**. Three normal launches, one launch with location denied, and one
+  `--safe-mode` launch all stayed alive; MapLibre initialised in the normal
+  launches and not in safe mode; no crash/fatal/uncaught-exception lines in the
+  collected logs. The same commit also passed in the push-triggered run
+  `44808481771`.
+- Screenshots: see the v29 screenshot workflow artifact
+  `Kite-v29-Simulator-Screenshots`. The workflow checks that every expected
+  frame exists and is not black/uniform; it does **not** claim a human review of
+  the layout.
+
+
 ## v28 stability
 
 - Safe mode, launch trace and MetricKit crash collector compile in the iOS target.

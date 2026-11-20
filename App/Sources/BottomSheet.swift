@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 /** The spring the sheet settles with. */
-private let sheetSnap = Animation.spring(response: 0.27, dampingFraction: 0.89)
+private let sheetSnap = KiteMotion.sheet
 
 /**
  * Vela's draggable bottom sheet: peek, half and full heights. Drag it from anywhere: below full
@@ -54,11 +54,7 @@ struct BottomSheet<Header: View, Content: View>: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(spacing: 0) {
-                Capsule()
-                    .fill(Color.secondary.opacity(0.45))
-                    .frame(width: 36, height: 4)
-                    .padding(.top, 8)
-                    .padding(.bottom, 6)
+                KiteGrabber()
                 if allowsCollapse && detent == .collapsed {
                     Label(L10n.text("Show route details"), systemImage: "chevron.up").font(.subheadline.bold())
                         .frame(maxWidth: .infinity, minHeight: 40)
@@ -144,7 +140,7 @@ struct BottomSheet<Header: View, Content: View>: View {
     private var floating: Bool { detent != .full }
 
     private var shape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: floating ? 34 : 28, style: .continuous)
+        RoundedRectangle(cornerRadius: floating ? KiteRadius.floatingSheet : KiteRadius.sheet, style: .continuous)
     }
 }
 

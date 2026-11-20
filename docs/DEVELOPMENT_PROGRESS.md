@@ -2,6 +2,83 @@
 
 Updated: 2026-11-20
 
+## v29 redesign (branch `iphone-custom-v29-redesign`, base v28 `462b575`)
+
+Two things were done in parallel and are deliberately documented separately:
+the packaging fix that decides whether the IPA installs, and the visual/product
+redesign.
+
+### Packaging and SideStore (P0)
+
+- **Root cause found for a class of install failures:** the app target was built
+  for iOS 16.0 while `NavigationWidget` required 16.2. iOS rejects a package
+  whose extension needs a newer system. Both now use 16.2, the real Live
+  Activities floor (`ActivityContent`).
+- **Second cause:** `Build iPhone app` signed frameworks and the app but never
+  the widget, then verified `--deep --strict`. It therefore failed on v28 while
+  the custom workflow passed. Both workflows now call `.github/scripts/sign-app.sh`.
+- One packaging script and one verifier (`pack-ipa.sh`, `verify-ipa.sh`) produce
+  and check two variants from one build:
+  - **Kite Full** — app + NavigationWidget + Live Activities;
+  - **Kite SideStore** — same source and navigation core, no extension, Live
+    Activities not advertised.
+- The verifier fails on: wrong bundle id, missing arm64, emulator slice,
+  unsigned extension/framework, extension/app version, build or minimum-OS
+  mismatch, foreign provisioning profile, a SideStore build that still contains
+  an extension, or a Full build without `NSSupportsLiveActivities`.
+- Build numbers use `1000 + git commit count` in both workflows (full history
+  fetched), so they grow and do not reset per workflow.
+- See `docs/KITE_2_PACKAGING.md`.
+
+### Design and product (P1)
+
+- **Kite Design System 2.0** (`App/Sources/KiteDesignSystem.swift`): adaptive
+  light/dark palette, type ramp, spacing, radius, elevation, motion, cards,
+  buttons, chips, empty states. Legacy `Vela` colours resolve to the new tokens,
+  so old and new screens share one identity.
+- **Map home:** new 58 pt search surface with voice action; contextual quick
+  actions (Home, Work, Parking, Transit, Fuel, Food, Recent, Just drive) edited
+  in Settings; duplicate Just drive and parking map FABs removed.
+- **Camera start:** last browsed area → current fix → neutral world view. No
+  London flash. A restored area is kept when the first fix is nearby.
+- **Dock:** Map / Routes / Saved / Settings, one floating surface, soft teal
+  selection. New **Routes** page: plan, resume a remembered trip, favourites,
+  recent destinations, empty state.
+- **Navigation HUD 2.0:** one banner hierarchy (maneuver tile, distance,
+  instruction, signed exit panel with exit number and destinations, recommended
+  lanes, then-row). A close follow-up turn is highlighted amber. Trip bar now
+  carries arrival, remaining time/distance, destination, add stop, steps and end.
+- **Place sheet:** one action row (Save, Share, Reviews, Photos) and a clear
+  Directions / Go pair.
+- **Route planning:** tokenised mode tabs, cards and Go; near-identical route
+  alternatives are collapsed by a pure `RouteAlternatives` filter (6 new tests).
+- **Accessibility:** combined banner sentence + repeat action, labelled lanes,
+  dock selection traits, Reduce Motion respected by new transitions.
+
+### v29 verification (build 1078)
+
+- Custom IPA workflow run
+  [44808484156](https://github.com/Brabal01/kite-maps/actions/runs/44808484156):
+  **success, 3m57s** on commit `07f…` (branch head at the time). A second,
+  push-triggered run for the same commit (`44808481720`) also succeeded.
+- VelaCore: **220 tests, 0 failures**, including the six new
+  `RouteAlternativesTests`.
+- Artifacts downloaded and checked independently of CI:
+  - `Kite-v29-Full.ipa` — `Payload/Kite.app/Kite` is Mach-O arm64, 14 MB;
+    `MapLibre.framework` arm64; app `app.vela.ios` 0.8.0 (1078), iOS ≥ 16.2,
+    `NSSupportsLiveActivities = true`; extension `app.vela.ios.navigation`
+    0.8.0 (1078), iOS ≥ 16.2, `com.apple.widgetkit-extension`, signed.
+  - `Kite-v29-SideStore.ipa` — same app binary and MapLibre, **no PlugIns**,
+    `NSSupportsLiveActivities = false`.
+  - Both: `unzip -tq` clean, no `embedded.mobileprovision`.
+- `verify-ipa.sh` passed both variants in CI (`OK: full variant passed structure
+  checks`, `OK: sidestore variant passed structure checks`).
+
+Simulator smoke and screenshot results are recorded in
+`docs/TEST_RESULTS.md`; physical SideStore installation remains unverified.
+
+## v28 stability
+
 ## v28 stability (in progress)
 
 Branch: `iphone-custom-v28-stability`, based on verified v27.

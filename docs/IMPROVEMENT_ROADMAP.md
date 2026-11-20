@@ -3,6 +3,24 @@
 This is a living backlog, not a claim that everything below exists. Items already shipped are
 marked **done**; everything else needs code and tests.
 
+## v29 status
+
+- **Done (v29)**: one packaging/signing/verification path, two IPA variants from
+  the same build, matching app/extension minimum OS, monotonic build numbers.
+- **Done (v29)**: Kite Design System 2.0 tokens; map home, search, quick actions,
+  four-tab dock, Routes page, camera restoration, Navigation HUD 2.0, place
+  header, planning surfaces, tested route-alternative filtering.
+- **Done (v29)**: screenshot workflow for SE/standard/Max, light/dark, large
+  text, long names, with a mechanical blank-frame check.
+- Next (P2): extract alert prioritisation into a tested `AlertCoordinator`; no
+  second implementation may exist during that change.
+- Next (P2): dedicated motorway junction diagram from mapped exits/lanes.
+- Next (P2): adaptive map style presets (Classic / Navigation / Minimal) as one
+  setting rather than several independent toggles.
+- Next (P2): extract `NavigationSession` state from `AppModel` without moving UI.
+- Next (P3): saved journeys, shortcut reordering, MHD card polish, richer Live
+  Activity states, offline areas.
+
 ## Navigation core
 
 - **Done (v27)**: departure evidence separated from match confidence; weak-but-usable GPS can

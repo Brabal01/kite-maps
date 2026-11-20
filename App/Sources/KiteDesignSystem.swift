@@ -285,7 +285,7 @@ struct KiteGrabber: View {
             .fill(KiteColor.inkSecondary.opacity(0.4))
             .frame(width: 38, height: 5)
             .padding(.top, 8)
-            .padding(.bottom, KiteSpace.xs)
+            .padding(.bottom, 6)
             .accessibilityHidden(true)
     }
 }

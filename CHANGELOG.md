@@ -3,6 +3,32 @@
 Every version of Kite Maps, newest first. The small number goes up for fixes and polish, and
 the middle number for big milestones.
 
+## 0.8.0 (iPhone custom, v29)
+
+Kite Maps 2.0: a redesign that also fixes the packaging.
+
+- **A package that installs:** the app and the Live Activity widget now declare
+  the same minimum iOS version, both workflows sign the widget before the app,
+  and a structural verifier blocks a broken IPA. Two packages are built from the
+  same commit: **Full** (with the widget) and **SideStore** (app only, no
+  extension, no Live Activities claim).
+- **New map home:** one search surface, contextual shortcuts you can edit
+  (Home, Work, Parking, Transit, Fuel, Food, Recent, Just drive), and no
+  duplicate buttons on the map.
+- **New bottom bar:** Map, Routes, Saved, Settings. The new Routes page plans a
+  journey, resumes the one Kite remembers and repeats recent destinations.
+- **No London flash:** the map opens on your last area, then your location, then
+  a neutral world view.
+- **Navigation HUD 2.0:** one clear banner with the maneuver, distance, signed
+  destinations and exit number, recommended lanes, and the next turn (amber when
+  it is close). The bottom panel carries ETA, remaining time and distance,
+  add stop, steps and end trip.
+- **Cleaner place and route planning:** one action row in the place sheet,
+  calmer route cards, and route alternatives that differ only by noise are no
+  longer shown as separate choices.
+- **Design system:** one adaptive light/dark palette, type scale, spacing and
+  motion for every screen.
+
 ## 0.7.16 (iPhone and Android)
 
 Four ideas from a Kite user on GitHub, picked by Matteo:
