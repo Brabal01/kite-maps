@@ -52,7 +52,7 @@ final class Navigator: ObservableObject {
     /** A clearly faster way found on the way, offered on a card before it's taken. */
     @Published private(set) var fasterOffer: FasterOffer?
     private var fasterRoute: Route?
-    /** How long the faster route card waits before taking the route by itself. */
+    /** How long the faster route card stays up before it goes away and keeps the current route. */
     static let fasterWait: TimeInterval = 30
     /** A camera coming up within about twelve seconds, for the warning card. */
     @Published private(set) var cameraAhead: CameraAlert?
@@ -1089,6 +1089,8 @@ final class Navigator: ObservableObject {
         fasterRoute = fresh
         fasterOffer = offer
         speakTemplate("Found a faster route. It saves %@ minutes.", String(minutes))
+        // Never change the route under the driver's hands. If the card is left alone it disappears
+        // and the current route stays; taking the faster way is always an explicit tap.
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.fasterWait) { [weak self] in
             guard let self, self.fasterOffer == offer else { return }
             self.keepRoute()
@@ -1395,7 +1397,7 @@ enum VoiceMode: Equatable {
 struct FasterOffer: Equatable {
     var minutes: Int
     var via: String?
-    /** When it's taken by itself if nothing is tapped. */
+    /** When the card expires; the current route then stays unless the driver took the offer. */
     var until: Date
     /** How much further the new way is than what's left of yours (less than 0 when it's shorter). */
     var extraMeters: Double = 0

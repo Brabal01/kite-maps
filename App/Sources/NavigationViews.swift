@@ -950,7 +950,7 @@ struct TripBar: View {
     }
 }
 
-/** A faster route found on the way, in place of the trip bar: keep yours or take it. Left alone, it's taken. */
+/** A faster route found on the way, in place of the trip bar: keep yours or take it. Left alone, it expires. */
 struct FasterRouteCard: View {
     /** The chips under the title: further or shorter, and any charge it adds. */
     struct Fact: Hashable {
