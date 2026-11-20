@@ -3,9 +3,9 @@ name: iOS simulator smoke test
 on:
   workflow_dispatch:
   push:
-    branches: [iphone-custom-v28-stability]
+    branches: [iphone-custom-v29-redesign]
   pull_request:
-    branches: [iphone-custom-v27]
+    branches: [iphone-custom-v29-redesign]
 
 permissions:
   contents: read

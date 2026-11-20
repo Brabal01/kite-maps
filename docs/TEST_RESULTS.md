@@ -3,8 +3,11 @@
 ## v28 stability
 
 - Safe mode, launch trace and MetricKit crash collector compile in the iOS target.
-- Simulator smoke workflow added; its result is recorded in the PR/CI run, not claimed here
-  until the run succeeds.
+- Custom IPA build 1051: GitHub Actions run `44794880719`, success; artifact verified arm64,
+  widget, bundle IDs and `_CodeSignature`.
+- Simulator smoke: run `44794890053`, success; 3 normal launches, 1 denied-location launch and
+  1 safe-mode launch survived. MapLibre initialised in normal launches only; no crash lines in the
+  collected logs.
 - The v27 physical-device crash cannot be reproduced without the phone or an `.ips` report.
 
 ## v27 local (Linux, Swift 6.0)

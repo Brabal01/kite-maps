@@ -165,28 +165,17 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             build | tail -n 200
-      - name: Stamp the build number
-        # AltStore and SideStore spot updates by this number, so each build gets its own.
-        run: |
-          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ github.run_number }}" \
-            build/Build/Products/Release-iphoneos/Kite.app/Info.plist
       - name: Ad-hoc sign
-        # An app with no signature at all is read as broken by some sideloaders. An ad-hoc
-        # signature fixes that; the sideloader still re-signs with your Apple ID.
+        # Shared with the custom iPhone workflow. It signs the widget and its
+        # frameworks before the app; skipping the widget is exactly what made
+        # this workflow fail on v28 while the custom one succeeded.
         run: |
           APP=build/Build/Products/Release-iphoneos/Kite.app
-          for f in "$APP"/Frameworks/*.framework; do
-            codesign --force --sign - --timestamp=none "$f"
-          done
-          codesign --force --sign - --timestamp=none "$APP"
-          codesign --verify --deep --strict --verbose=2 "$APP"
+          bash .github/scripts/sign-app.sh "$APP" "$(bash .github/scripts/build-number.sh)"
       - name: Package .ipa
         run: |
-          mkdir -p Payload
-          ditto build/Build/Products/Release-iphoneos/Kite.app Payload/Kite.app
-          zip -qr -X Kite.ipa Payload
-          unzip -l Kite.ipa | tail -n 3
-          unzip -tq Kite.ipa
+          bash .github/scripts/pack-ipa.sh build/Build/Products/Release-iphoneos/Kite.app full Kite.ipa
+          bash .github/scripts/verify-ipa.sh Kite.ipa full
       - name: Upload .ipa
         uses: actions/upload-artifact@v4
         with:

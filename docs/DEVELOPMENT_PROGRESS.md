@@ -20,6 +20,17 @@ Branch: `iphone-custom-v28-stability`, based on verified v27.
   safe-mode launch, with logs and screenshot artifacts.
 - See `docs/CRASH_RECOVERY.md` for the audit, suspects and exact phone steps.
 
+### v28 verification (build 1051)
+
+- Custom IPA run `44794880719` succeeded in 5m02s on commit `462b575`.
+- Artifact `Kite-custom-ipa` checked: clean `unzip -t`, arm64 app and widget, bundle IDs
+  `app.vela.ios` / `app.vela.ios.navigation`, `CFBundleVersion` 1051, `_CodeSignature` on both.
+- iOS simulator smoke run `44794890053` succeeded in 13m22s. It launched the normal app three
+  times, once with location denied, and once in safe mode. MapLibre initialised in the four normal
+  launches and not in safe mode; no crash/fatal/exception lines were found in the collected logs.
+- The smoke test is a simulator launch check, not a physical-device crash reproduction. The v27
+  physical crash remains unconfirmed without the phone's `.ips`/MetricKit diagnostic.
+
 ## v27 (verified build 1043)
 
 Base: `iphone-custom-v26` (verified build 1036/1037).
