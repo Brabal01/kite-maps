@@ -266,10 +266,11 @@ struct SettingsView: View {
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .keyboardType(.URL)
+                Toggle("Discover public live feeds", isOn: $settings.autoTransitFeeds)
             } header: {
                 Text("Live transit")
             } footer: {
-                Text("Optional. Any public GTFS-Realtime feed can add delays, service alerts and vehicle positions to the Transitous timetable. Leave empty to use the planner's own live data. No API key is required.")
+                Text("Optional. Any public GTFS-Realtime feed can add delays, service alerts and vehicle positions to the Transitous timetable. Leave empty to use the planner's own live data. With discovery on, Kite checks the keyless Mobility Database catalog for an active feed covering the journey area. Feeds that need an API key are never used, and a failed feed falls back to the timetable.")
             }
             Section("Map background") {
                 Toggle("Apple Maps", isOn: $settings.useAppleMaps)

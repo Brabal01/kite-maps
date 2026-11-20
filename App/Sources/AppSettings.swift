@@ -109,6 +109,14 @@ final class AppSettings: ObservableObject {
     @Published var liveCams: Bool { didSet { d.set(liveCams, forKey: "liveCams") } }
     /** An optional GTFS-Realtime feed for the transit planner: delays, alerts and vehicle positions. */
     @Published var gtfsRealtimeURL: String { didSet { d.set(gtfsRealtimeURL, forKey: "gtfsRealtimeURL") } }
+    /**
+     * Discover a public GTFS-Realtime feed from the Mobility Database catalog when no manual URL
+     * is set. Only keyless, active feeds inside the journey's area are tried; failure falls back to
+     * the scheduled timetable.
+     */
+    @Published var autoTransitFeeds: Bool {
+        didSet { d.set(autoTransitFeeds, forKey: "autoTransitFeeds") }
+    }
     /** UK road traffic cameras (National Highways, TfL, Traffic Scotland, Traffic Wales, TrafficWatch NI). */
     @Published var liveRoadCams: Bool { didSet { d.set(liveRoadCams, forKey: "liveRoadCams") } }
     /** Windy's scenic webcams, worldwide. */
@@ -163,6 +171,7 @@ final class AppSettings: ObservableObject {
         liveCams = d.object(forKey: "liveCams") as? Bool ?? true
         liveRoadCams = d.object(forKey: "liveRoadCams") as? Bool ?? true
         gtfsRealtimeURL = d.string(forKey: "gtfsRealtimeURL") ?? ""
+        autoTransitFeeds = d.object(forKey: "autoTransitFeeds") as? Bool ?? true
         liveWebcams = d.object(forKey: "liveWebcams") as? Bool ?? true
         liveCamsOnRoute = d.object(forKey: "liveCamsOnRoute") as? Bool ?? true
         // Off until the person says yes on the Waze screen.

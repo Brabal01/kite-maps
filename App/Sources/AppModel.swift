@@ -856,6 +856,7 @@ final class AppModel: ObservableObject {
         let destId = d.destination.id
         let time = d.transitTime, arriveBy = d.arriveBy
         let liveURL = settings.gtfsRealtimeURL
+        let discover = settings.autoTransitFeeds
         let req = transitRequest
         directions?.trips = nil
         directions?.tripsError = nil
@@ -864,15 +865,21 @@ final class AppModel: ObservableObject {
         transitTask?.cancel()
         transitTask = Task {
             do {
-                var trips = try await Transitous.plan(from: from, to: to, time: time, arriveBy: arriveBy)
-                // Transitous already carries live times from its own GTFS-Realtime sources. An
-                // optional extra feed can add another region's delays, alerts and vehicle positions.
-                if !liveURL.isEmpty, !trips.isEmpty, let feed = await TransitRealtime.fetch(liveURL) {
-                    trips = TransitRealtime.apply(feed, to: trips)
-                }
+                async let planned = Transitous.plan(from: from, to: to, time: time, arriveBy: arriveBy)
+                async let live = Self.liveFeed(near: from, manual: liveURL, discover: discover)
+                let trips = try await planned
                 guard directions?.destination.id == destId, transitRequest == req else { return }
+                // Show the timetable immediately; a slow live feed is applied when it arrives.
                 directions?.trips = trips.sorted { $0.durationSeconds < $1.durationSeconds }
                 if trips.isEmpty { directions?.tripsError = "No transit trips found here." }
+                // Transitous already carries live times from its own GTFS-Realtime sources. An
+                // optional extra feed can add another region's delays, alerts and vehicle positions.
+                if let feed = await live, !trips.isEmpty {
+                    guard directions?.destination.id == destId, transitRequest == req else { return }
+                    directions?.trips = TransitRealtime.apply(feed, to: trips)
+                        .sorted { $0.durationSeconds < $1.durationSeconds }
+                    if directions?.transit == true { frameRoute() }
+                }
             } catch {
                 guard directions?.destination.id == destId, transitRequest == req else { return }
                 directions?.trips = []
@@ -880,6 +887,22 @@ final class AppModel: ObservableObject {
             }
             if directions?.transit == true { frameRoute() }
         }
+    }
+
+    /**
+     * A manual feed always wins. Otherwise, when discovery is on, the keyless Mobility Database
+     * catalog is asked for a public feed covering the journey. Only one feed is tried; a failure
+     * leaves the scheduled timetable untouched.
+     */
+    private static func liveFeed(near origin: LatLng, manual: String, discover: Bool) async -> TransitRealtime.Feed? {
+        if !manual.isEmpty { return await TransitRealtime.fetch(manual, timeout: 15) }
+        guard discover else { return nil }
+        let candidates = await TransitCatalog.shared.candidates(near: origin, radiusMeters: 40_000, limit: 2)
+        for candidate in candidates {
+            if Task.isCancelled { return nil }
+            if let feed = await TransitRealtime.fetch(candidate.url, timeout: 15) { return feed }
+        }
+        return nil
     }
 
     func frameRoute() {
@@ -1058,7 +1081,8 @@ final class AppModel: ObservableObject {
         guard let journey = transitJourney else { return }
         let leg = journey.leg
         UIApplication.shared.isIdleTimerDisabled = true
-        location.setNavigating(true, mode: leg.isWalk ? TravelMode.walk.rawValue : TravelMode.drive.rawValue)
+        location.setNavigating(true, mode: leg.isWalk ? TravelMode.walk.rawValue : TravelMode.drive.rawValue,
+                               transit: true)
         map?.showsUserLocation = true
         if leg.path.count >= 2 { frame(leg.path, bottomFraction: 0.25, top: 200) }
         mapTick += 1
@@ -1085,7 +1109,7 @@ final class AppModel: ObservableObject {
         browseLook = .tilted
         browseFollowing = true
         UIApplication.shared.isIdleTimerDisabled = true
-        location.setNavigating(true, mode: TravelMode.drive.rawValue)
+        location.setNavigating(true, mode: TravelMode.drive.rawValue, justDrive: true)
         if let loc = location.last {
             if !location.reducedAccuracy, abs(loc.timestamp.timeIntervalSinceNow) < 45 {
                 refreshNearbyControls(loc)
@@ -1359,7 +1383,7 @@ final class AppModel: ObservableObject {
 
     func suspendNavigationDisplay() {
         if nav != nil { glide.suspend() }
-        location.stopHeading()
+        location.setForeground(false)
     }
 
     /**
@@ -1391,7 +1415,7 @@ final class AppModel: ObservableObject {
 
     func resumeNavigationDisplay() {
         defer { refreshActivity() }
-        location.startHeading()
+        location.setForeground(true)
         guard let n = nav, !n.arrived else { return }
         if let fix = location.navigationFix(maximumError: navigationAccuracy(for: n.route.mode)) {
             followCamera(n, fix, animated: false)

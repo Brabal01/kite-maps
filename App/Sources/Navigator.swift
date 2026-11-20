@@ -440,7 +440,8 @@ final class Navigator: ObservableObject {
         let offRoad = p.offsetMeters > 20 || p.remainingMeters < 40 || (toPin < 60 && nearPin)
         // Parked by the pin with the route still going round (a way in the map doesn't have): three minutes.
         let parked = stoppedNearEnd.map { loc.timestamp.timeIntervalSince($0) > (p.remainingMeters >= 150 && !nearPin ? 180 : offRoad ? 20 : 90) } ?? false
-        if p.arrived || parked || (route.mode == .drive && toPin < 40 && nearPin) {
+        if !estimated, !p.isEstimated,
+           p.arrived || parked || (route.mode == .drive && toPin < 40 && nearPin) {
             arrived = true
             fasterOffer = nil
             fasterRoute = nil
@@ -475,7 +476,7 @@ final class Navigator: ObservableObject {
                                        joinedRoute: joinedRoute,
                                        nearDestination: toPin <= 150 && nearPin,
                                        secondsSinceLast: Date().timeIntervalSince(lastReroute),
-                                       confidence: p.confidence) {
+                                       departureEvidence: p.departureEvidence) {
             reroute(from: loc)
             return
         }

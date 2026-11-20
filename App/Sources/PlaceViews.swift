@@ -385,6 +385,26 @@ struct DepartureBoard: View {
                             }
                         }
                     }
+                    if let platform = d.track, !platform.isEmpty {
+                        HStack(spacing: 8) {
+                            if let scheduled = d.scheduledTrack, scheduled != platform {
+                                Label(L10n.format("Platform change: %@ → %@", scheduled, platform),
+                                      systemImage: "arrow.left.arrow.right")
+                                    .foregroundColor(Vela.closed)
+                            } else {
+                                Label(L10n.format("Platform %@", platform), systemImage: "signpost.right")
+                            }
+                            if let code = d.stopCode, code != platform {
+                                Text(L10n.format("Stop code %@", code))
+                            }
+                            Spacer()
+                            Text(d.isRealtime ? "Live" : "Scheduled")
+                                .foregroundColor(d.isRealtime ? Vela.open : .secondary)
+                        }
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .padding(.leading, 44)
+                    }
                 }
                 Text("Live times in green · from Transitous").font(.caption).foregroundColor(.secondary)
             } else if loaded {

@@ -1,5 +1,13 @@
 # Test results
 
+## v27 local (Linux, Swift 6.0)
+
+- VelaCore: **208 tests, 0 failures, 1 skipped**.
+- New v27 tests: departure evidence vs confidence, weak-accuracy confirmation, dead-reckoned
+  arrival guard, GTFS-Realtime operating-day/overnight matching, stale feed/vehicle handling,
+  direction mismatch, Mobility Database CSV parsing and quoted fields.
+- The v26 tests remain green.
+
 ## v26 local (Linux, Swift 6.0)
 
 - VelaCore: **194 tests, 0 failures, 1 skipped**.

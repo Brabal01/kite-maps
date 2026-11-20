@@ -3,6 +3,15 @@ import Foundation
 import FoundationNetworking
 #endif
 
+/** How fresh a leg's live data is. */
+public enum TransitLiveFreshness: String, Hashable, Sendable {
+    case live
+    case recent
+    case stale
+    case scheduled
+    case unavailable
+}
+
 /** A vehicle position from GTFS-Realtime, when the feed sends one. */
 public struct TransitVehicle: Hashable, Sendable {
     public var location: LatLng
@@ -51,6 +60,18 @@ public struct TransitLeg: Hashable, Sendable {
     public var tripId: String?
     /** The planner's route identifier, for route-wide live alerts. */
     public var routeId: String?
+    /** The scheduled departure from the first stop, used to match GTFS-Realtime identities. */
+    public var scheduledDepart: Date?
+    /** GTFS direction id (0/1), when the planner or live feed provides it. */
+    public var directionId: Int?
+    /** Agency id used by the live feed, when available. */
+    public var agencyId: String?
+    /** Freshness of the live data attached to this leg. */
+    public var liveFreshness: TransitLiveFreshness = .scheduled
+    /** Age of the live data in seconds, when known. */
+    public var liveAgeSeconds: Int?
+    /** The feed URL/provider that supplied the live data. */
+    public var liveProvider: String?
     /** True when departure/arrival come from a live feed rather than the timetable. */
     public var isRealtime = false
     /** The vehicle's last reported position, when the live feed provides one. */
@@ -101,6 +122,24 @@ public struct TransitTrip: Identifiable, Hashable, Sendable {
 
     public var hasMetroAccessNodes: Bool { !TransitStationAccess.segments(in: self).isEmpty }
     public var rides: [TransitLeg] { legs.filter { !$0.isWalk } }
+    public var walk: [TransitLeg] { legs.filter(\.isWalk) }
+    /**
+     * A transfer that the live delay is likely to break: the delay on the arriving ride is longer
+     * than the walk to the next stop leaves room for. Only a hint — the timetable is still shown.
+     */
+    public var tightTransfer: Bool {
+        for index in legs.indices.dropLast() {
+            let ride = legs[index]
+            let next = legs[index + 1]
+            guard !ride.isWalk, next.isWalk else { continue }
+            let delay = max(0, ride.arrivalDelayMinutes ?? ride.delayMinutes ?? 0)
+            guard delay > 0 else { continue }
+            if next.durationSeconds < Double(delay * 60 + 120) { return true }
+        }
+        return false
+    }
+    /** The whole trip is a walk. */
+    public var isWalkOnly: Bool { legs.allSatisfy(\.isWalk) }
     public var walkSeconds: Double { legs.filter(\.isWalk).map(\.durationSeconds).reduce(0, +) }
     /** The whole trip's shape, for framing the map. */
     public var path: [LatLng] { legs.flatMap(\.path) }
@@ -157,6 +196,10 @@ public enum Transitous {
         public var time: Date
         /** Minutes late, when the agency sends live times. */
         public var delayMinutes: Int?
+        public var track: String?
+        public var scheduledTrack: String?
+        public var stopCode: String?
+        public var isRealtime: Bool = false
         public var vehicle: TransitLeg.Vehicle { TransitLeg.Vehicle(mode) }
     }
 
@@ -212,7 +255,11 @@ public enum Transitous {
             if let end, !end.isEmpty, headsign.isEmpty || headsign == stopName { headsign = end }
             return Departure(line: line, mode: st["mode"] as? String ?? "", color: hex(st["routeColor"]),
                              textColor: hex(st["routeTextColor"]), headsign: headsign,
-                             time: time, delayMinutes: delay)
+                             time: time, delayMinutes: delay,
+                             track: st["track"] as? String ?? place["track"] as? String,
+                             scheduledTrack: st["scheduledTrack"] as? String ?? place["scheduledTrack"] as? String,
+                             stopCode: st["stopCode"] as? String ?? place["stopCode"] as? String,
+                             isRealtime: st["realTime"] as? Bool == true)
         }
     }
 
@@ -319,6 +366,10 @@ public enum Transitous {
         out.serviceNumber = string(l["tripShortName"])
         out.tripId = string(l["tripId"])
         out.routeId = string(l["routeId"])
+        out.scheduledDepart = date(l["scheduledStartTime"])
+        out.directionId = (l["directionId"] as? NSNumber)?.intValue
+            ?? (l["tripDirection"] as? NSNumber)?.intValue
+        out.agencyId = string(l["agencyId"])
         out.isRealtime = l["realTime"] as? Bool == true
         out.serviceAlerts = alerts([l, from, to])
         let intermediate = l["intermediateStops"] as? [[String: Any]] ?? []
