@@ -22,11 +22,6 @@ enum SafeMode {
         return false
     }()
 
-    /** Called after the first screen has stayed up long enough to count as a healthy launch. */
-    static func markReady() {
-        UserDefaults.standard.removeObject(forKey: "launchMarker")
-    }
-
     static func leave() {
         let defaults = UserDefaults.standard
         defaults.set(false, forKey: "safeMode")
@@ -52,6 +47,11 @@ enum LaunchTrace {
 
     static var lines: [String] {
         UserDefaults.standard.stringArray(forKey: key) ?? []
+    }
+
+    /** Called after the first screen has stayed up long enough to count as a healthy launch. */
+    static func markReady() {
+        UserDefaults.standard.removeObject(forKey: "launchMarker")
     }
 }
 

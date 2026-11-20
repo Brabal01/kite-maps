@@ -18,6 +18,66 @@ struct ContentView: View {
     private var dark: Bool { settings.colorScheme.map { $0 == .dark } ?? (systemScheme == .dark) }
 
     var body: some View {
+        mapScreen
+        .confirmationDialog("Avoid this road segment?", isPresented: $model.askingRouteExclusion, titleVisibility: .visible) {
+            Button("Avoid this segment") { model.applyRouteExclusion() }
+            Button("Cancel", role: .cancel) {}
+        }
+        .alert("Route avoidance", isPresented: Binding(get: { model.routeExclusionNotice != nil },
+                                                        set: { if !$0 { model.routeExclusionNotice = nil } })) {
+            Button("OK") { model.routeExclusionNotice = nil }
+        } message: { Text(L10n.text(model.routeExclusionNotice ?? "")) }
+        .overlay(alignment: .topTrailing) {
+            if model.hasRouteExclusion && (model.nav?.showingOverview ?? (model.directions != nil)) {
+                Button { model.undoRouteExclusion() } label: {
+                    Label("Undo avoidance", systemImage: "arrow.uturn.backward")
+                        .font(.caption.weight(.semibold)).padding(8).glass(Capsule())
+                }
+                .padding(.top, 198).padding(.trailing, 16)
+            }
+        }
+        .sheet(item: $model.editingEndpoint) { endpoint in
+            RouteEndpointPicker(model: model, endpoint: endpoint).kiteType()
+        }
+        .sheet(isPresented: Binding(get: { model.hasActiveJourney && model.selected != nil },
+                                   set: { if !$0 { model.closePlace() } })) {
+            JourneyPlaceSheet(model: model)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .kiteType()
+        }
+        .alert("Couldn’t add the stop", isPresented: $model.journeyStopError) {
+            Button("OK") {}
+        } message: {
+            Text("Keep following the current journey and try again when your location and a route are available.")
+        }
+        .overlay(alignment: .center) {
+            if model.addingJourneyStop {
+                ProgressView("Adding a stop…")
+                    .padding(14).glass(Capsule())
+                    .allowsHitTesting(false)
+            }
+        }
+        .sheet(isPresented: $model.addingStop) {
+            StopPicker(model: model).kiteType()
+        }
+        .sheet(item: $model.picking) { kind in
+            PlacePicker(model: model, kind: kind).kiteType()
+        }
+        .onChange(of: settings.welcomed && !settings.needsWazeChoice) { ready in
+            if ready { model.location.start() }
+        }
+    }
+
+
+    private var demoStreetView: some View {
+        // Screenshot run only: the viewer on a test pattern, turned right by the step's number.
+        GoogleStreetViewScreen(name: "Test pattern",
+                               pano: StreetView.Panorama(id: PanoramaViewer.testID, location: LatLng(0, 0)),
+                               heading: Double(DemoScript.step?.dropFirst(6) ?? "") ?? 0)
+    }
+
+    private var mapCanvas: some View {
         ZStack {
             Group {
                 if settings.useAppleMaps {
@@ -91,6 +151,10 @@ struct ContentView: View {
                 }
             }
         }
+    }
+
+    private var mapScreen: some View {
+        mapCanvas
         .background(GeometryReader { g in
             Color.clear
                 .onAppear { screen = g.size }
@@ -131,9 +195,7 @@ struct ContentView: View {
             LayersSheet(settings: settings, liveCount: model.wazeLiveCount).kiteType()
         }
         .fullScreenCover(isPresented: .constant(DemoScript.step?.hasPrefix("svtest") == true)) {
-            // Screenshot run only: the viewer on a test pattern, turned right by the step's number.
-            GoogleStreetViewScreen(name: "Test pattern", pano: StreetView.Panorama(id: PanoramaViewer.testID, location: LatLng(0, 0)),
-                                   heading: Double(DemoScript.step?.dropFirst(6) ?? "") ?? 0)
+            demoStreetView
         }
         .fullScreenCover(isPresented: Binding(get: {
             (!settings.welcomed || settings.needsWazeChoice)
@@ -145,56 +207,7 @@ struct ContentView: View {
             }
             .kiteType()
         }
-        .confirmationDialog("Avoid this road segment?", isPresented: $model.askingRouteExclusion, titleVisibility: .visible) {
-            Button("Avoid this segment") { model.applyRouteExclusion() }
-            Button("Cancel", role: .cancel) {}
-        }
-        .alert("Route avoidance", isPresented: Binding(get: { model.routeExclusionNotice != nil },
-                                                        set: { if !$0 { model.routeExclusionNotice = nil } })) {
-            Button("OK") { model.routeExclusionNotice = nil }
-        } message: { Text(L10n.text(model.routeExclusionNotice ?? "")) }
-        .overlay(alignment: .topTrailing) {
-            if model.hasRouteExclusion && (model.nav?.showingOverview ?? (model.directions != nil)) {
-                Button { model.undoRouteExclusion() } label: {
-                    Label("Undo avoidance", systemImage: "arrow.uturn.backward")
-                        .font(.caption.weight(.semibold)).padding(8).glass(Capsule())
-                }
-                .padding(.top, 198).padding(.trailing, 16)
-            }
-        }
-        .sheet(item: $model.editingEndpoint) { endpoint in
-            RouteEndpointPicker(model: model, endpoint: endpoint).kiteType()
-        }
-        .sheet(isPresented: Binding(get: { model.hasActiveJourney && model.selected != nil },
-                                   set: { if !$0 { model.closePlace() } })) {
-            JourneyPlaceSheet(model: model)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
-                .kiteType()
-        }
-        .alert("Couldn’t add the stop", isPresented: $model.journeyStopError) {
-            Button("OK") {}
-        } message: {
-            Text("Keep following the current journey and try again when your location and a route are available.")
-        }
-        .overlay(alignment: .center) {
-            if model.addingJourneyStop {
-                ProgressView("Adding a stop…")
-                    .padding(14).glass(Capsule())
-                    .allowsHitTesting(false)
-            }
-        }
-        .sheet(isPresented: $model.addingStop) {
-            StopPicker(model: model).kiteType()
-        }
-        .sheet(item: $model.picking) { kind in
-            PlacePicker(model: model, kind: kind).kiteType()
-        }
-        .onChange(of: settings.welcomed && !settings.needsWazeChoice) { ready in
-            if ready { model.location.start() }
-        }
     }
-
 
     private func didAppear() {
         LaunchTrace.mark("ContentView appeared")
