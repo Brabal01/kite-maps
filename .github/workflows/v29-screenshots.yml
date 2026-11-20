@@ -70,6 +70,7 @@ jobs:
 
           DEV=$(boot_existing)
           echo "DEV=$DEV"
+          echo "SIM_DEVICE=$DEV" >> "$GITHUB_ENV"
 
           # Dark, standard size.
           sim ui "$DEV" appearance dark
@@ -129,6 +130,24 @@ jobs:
           else
             echo "No Pro Max device type on this runner"
           fi
+      - name: Collect crash diagnostics
+        if: failure()
+        run: |
+          mkdir -p diagnostics
+          cp ~/Library/Logs/DiagnosticReports/*Kite* diagnostics/ 2>/dev/null || true
+          cp ~/Library/Logs/DiagnosticReports/*kite* diagnostics/ 2>/dev/null || true
+          ls ~/Library/Logs/DiagnosticReports > diagnostics/reports.txt 2>/dev/null || true
+          if [ -n "${SIM_DEVICE:-}" ]; then
+            xcrun simctl spawn "$SIM_DEVICE" log show --style compact --last 15m               --predicate 'process == "Kite" OR process == "SpringBoard"' > diagnostics/simulator.log 2>&1 || true
+          fi
+          ls -la diagnostics
+      - name: Upload crash diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kite-v29-Screenshot-Diagnostics
+          path: diagnostics
+          if-no-files-found: warn
       - name: Check the screenshots are not blank
         run: |
           pip3 install --quiet --break-system-packages pillow || pip3 install --quiet pillow

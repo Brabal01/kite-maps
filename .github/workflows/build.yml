@@ -225,7 +225,10 @@ jobs:
   duo:
     name: Screenshots (iPhone Duo)
     runs-on: xcode-27
-    # Only a look at the foldable; never holds up the build.
+    # Only a look at the foldable; never holds up the build. It is a manual
+    # check now: the v29 screenshot workflow owns routine captures, so a pull
+    # request does not spend an hour duplicating them.
+    if: github.event_name == 'workflow_dispatch'
     continue-on-error: true
     timeout-minutes: 60
     env:
@@ -286,6 +289,10 @@ jobs:
   screens:
     name: Screenshots (simulator)
     runs-on: macos-15
+    # The v29 screenshot workflow captures the redesigned screens on three
+    # devices. Keep this older job for main releases and manual runs only, so
+    # a pull request gets one authoritative set of images.
+    if: github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@v4
       - name: Install XcodeGen
