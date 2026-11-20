@@ -100,11 +100,15 @@ struct ContentView: View {
                 .onChange(of: g.size) { screen = $0 }
         })
         .environment(\.sidePanel, panel)
-        .onAppear { model.sideInset = panel }
+        .onAppear {
+            LaunchTrace.mark("ContentView appeared")
+            model.sideInset = panel
+        }
         .onChange(of: panel) { model.sideInset = $0 }
         .animation(.easeOut(duration: 0.25), value: model.wazeInfo?.id)
         .animation(.easeOut(duration: 0.2), value: model.tab)
         .kiteType()
+        .environment(\.locale, settings.language.locale)
         .preferredColorScheme(settings.colorScheme)
         .task { await DemoScript.run(model) }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in

@@ -6,7 +6,7 @@ name: Build custom iPhone IPA
 on:
   workflow_dispatch:
   push:
-    branches: [iphone-custom-v23, iphone-custom-v24, iphone-custom-v25, iphone-custom-v26, iphone-custom-v27]
+    branches: [iphone-custom-v23, iphone-custom-v24, iphone-custom-v25, iphone-custom-v26, iphone-custom-v27, iphone-custom-v28-stability]
 
 permissions:
   contents: read

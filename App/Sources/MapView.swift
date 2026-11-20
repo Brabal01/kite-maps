@@ -16,6 +16,7 @@ struct VelaMapView: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(model: model) }
 
     func makeUIView(context: Context) -> MLNMapView {
+        LaunchTrace.mark("MapLibre makeUIView")
         let map = MLNMapView(frame: .zero, styleURL: Self.styleURL)
         let c = context.coordinator
         map.delegate = c

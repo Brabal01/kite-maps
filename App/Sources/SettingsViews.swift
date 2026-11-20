@@ -79,6 +79,7 @@ struct LayersSheet: View {
 
 struct SettingsView: View {
     @AppStorage("walkingSpeed") private var walkingSpeed = 5.0
+    @AppStorage("safeMode") private var safeModeNext = false
     @ObservedObject var settings: AppSettings
     /** For "Share diagnostics" in About. */
     var model: AppModel? = nil
@@ -389,6 +390,11 @@ struct SettingsView: View {
                 Link("Live Waze reports the way SABRE Plus gets them (MIT)", destination: URL(string: "https://github.com/nicglazkov/highway-radar-sabre-plus")!)
                 Text("Free software under the GPL-3.0. Map © OpenFreeMap, OpenMapTiles, OpenStreetMap contributors. Routing © FOSSGIS OSRM. Imagery © Esri.")
                     .font(.caption).foregroundColor(.secondary)
+            }
+            Section {
+                Toggle("Start in safe mode next time", isOn: $safeModeNext)
+            } footer: {
+                Text("Safe mode skips the map, navigation, location updates, live transit and background services. It is for diagnosing a launch crash; close Kite completely after changing this.")
             }
             if let model {
                 Section {

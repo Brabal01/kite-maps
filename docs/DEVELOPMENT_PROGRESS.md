@@ -2,6 +2,24 @@
 
 Updated: 2026-11-20
 
+## v28 stability (in progress)
+
+Branch: `iphone-custom-v28-stability`, based on verified v27.
+
+- **No physical crash log was available**, so the v27 launch crash is not claimed as fixed.
+- Added a real safe mode (launch argument, persisted switch and automatic entry after a launch
+  that did not survive 15 s). It avoids AppModel, MapLibre/MapKit, location, network, transit and
+  Live Activities, and never deletes user data.
+- Added privacy-safe launch breadcrumbs and a MetricKit crash-diagnostic collector shown in safe
+  mode.
+- Hardened `LocationService`: background location updates are only enabled when the generated
+  Info.plist has the `location` background mode, and never from the background. Modes remain
+  browse / Just drive / drive / walk-bike / transit.
+- Removed a possible `TransitCatalog` trap on duplicate/renamed CSV columns.
+- Added `.github/workflows/simulator-smoke.yml`: simulator build, install, three launches and a
+  safe-mode launch, with logs and screenshot artifacts.
+- See `docs/CRASH_RECOVERY.md` for the audit, suspects and exact phone steps.
+
 ## v27 (verified build 1043)
 
 Base: `iphone-custom-v26` (verified build 1036/1037).
