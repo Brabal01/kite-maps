@@ -1,9 +1,12 @@
 name: Build custom iPhone IPA
 
+# From iphone-custom-v24 the customizations live in the versioned source tree.
+# Kite-0.7.16-custom.patch and Kite-v16..v23-changes.patch stay for history but
+# must not be applied again: doing so would duplicate every custom change.
 on:
   workflow_dispatch:
   push:
-    branches: [iphone-custom-v23]
+    branches: [iphone-custom-v23, iphone-custom-v24]
 
 permissions:
   contents: read
@@ -19,26 +22,11 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
-      - name: Apply the Kite Maps customizations
+      - name: Verify the versioned customization sources
         run: |
-          git apply --check .github/workflows/Kite-0.7.16-custom.patch
-          git apply .github/workflows/Kite-0.7.16-custom.patch
-          git apply --check .github/workflows/Kite-v16-changes.patch
-          git apply .github/workflows/Kite-v16-changes.patch
-          git apply --check .github/workflows/Kite-v17-changes.patch
-          git apply .github/workflows/Kite-v17-changes.patch
-          git apply --check .github/workflows/Kite-v18-changes.patch
-          git apply .github/workflows/Kite-v18-changes.patch
-          git apply --check .github/workflows/Kite-v19-changes.patch
-          git apply .github/workflows/Kite-v19-changes.patch
-          git apply --check .github/workflows/Kite-v20-changes.patch
-          git apply .github/workflows/Kite-v20-changes.patch
-          git apply --check .github/workflows/Kite-v21-changes.patch
-          git apply .github/workflows/Kite-v21-changes.patch
-          git apply --check .github/workflows/Kite-v22-changes.patch
-          git apply .github/workflows/Kite-v22-changes.patch
-          git apply --check .github/workflows/Kite-v23-changes.patch
-          git apply .github/workflows/Kite-v23-changes.patch
+          test -f App/Sources/GoogleMapsPage.swift
+          test -f NavigationWidget/NavigationWidget.swift
+          test -f Shared/TripActivity.swift
           git diff --check
       - name: Test VelaCore
         working-directory: VelaCore
