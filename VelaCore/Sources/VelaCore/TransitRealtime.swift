@@ -173,7 +173,7 @@ public enum TransitRealtime {
             guard let trip = leg.tripId, let live = update.tripId, trip == live else { return false }
             if let route = update.routeId, let own = leg.routeId, route != own { return false }
             if let direction = update.directionId, let own = leg.directionId, direction != own { return false }
-            return true
+            return startCompatible(date: update.startDate, time: update.startTime, starts: starts)
         }
         if exact.count == 1 { return exact[0] }
         if exact.count > 1 {
@@ -208,7 +208,7 @@ public enum TransitRealtime {
             guard let trip = leg.tripId, let live = vehicle.tripId, trip == live else { return false }
             if let route = vehicle.routeId, let own = leg.routeId, route != own { return false }
             if let direction = vehicle.directionId, let own = leg.directionId, direction != own { return false }
-            return true
+            return startCompatible(date: vehicle.startDate, time: vehicle.startTime, starts: starts)
         }
         if exact.count == 1 { return exact[0] }
         if exact.count > 1 {
@@ -228,6 +228,13 @@ public enum TransitRealtime {
             return starts.contains { $0.date == date && $0.time == time }
         }
         return fallback.count == 1 ? fallback[0] : nil
+    }
+
+    private static func startCompatible(date: String?, time: String?, starts: [StartIdentity]) -> Bool {
+        guard !starts.isEmpty else { return true }
+        if let date, !date.isEmpty, !starts.contains(where: { $0.date == date }) { return false }
+        if let time, !time.isEmpty, !starts.contains(where: { $0.time == time }) { return false }
+        return true
     }
 
     private static func sameIdentity(_ a: TripUpdate, _ b: TripUpdate) -> Bool {

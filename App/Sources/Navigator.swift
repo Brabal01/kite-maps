@@ -482,7 +482,7 @@ final class Navigator: ObservableObject {
         }
         if Date().timeIntervalSince(tracedAt) >= 3 {
             tracedAt = Date()
-            Self.trace.info("at \(String(format: "%.5f,%.5f", loc.coordinate.latitude, loc.coordinate.longitude), privacy: .public) along \(Int(p.alongMeters)) off \(Int(p.offsetMeters)) next \(p.nextIndex ?? -1) in \(Int(p.distanceToNext)) offRoute \(p.offRoute) speed \(Int(self.speedMps))")
+            Self.trace.info("at \(String(format: "%.5f,%.5f", loc.coordinate.latitude, loc.coordinate.longitude), privacy: .public) along \(Int(p.alongMeters)) off \(Int(p.offsetMeters)) next \(p.nextIndex ?? -1) in \(Int(p.distanceToNext)) offRoute \(p.offRoute) evidence \(String(format: "%.2f", p.departureEvidence)) confidence \(String(format: "%.2f", p.confidence)) speed \(Int(self.speedMps))")
         }
         loadLaneApproach()
         announce(p)
