@@ -608,3 +608,6 @@
 
 "One-way street (vehicles)" = "Jednosměrná ulice pro vozidla";
 "Search places with Google Maps" = "Vyhledávat místa v Mapách Google";
+"Open all reviews on the Google Maps website" = "Otevřít všechny recenze na webu Google Maps";
+"Open photos on the Google Maps website" = "Otevřít fotky na webu Google Maps";
+"Google only provides a sample without an API key. The full list opens on the Google Maps website." = "Google bez klíče poskytuje jen ukázku. Úplný seznam se otevře na webu Google Maps.";

@@ -115,34 +115,44 @@ struct PlaceMediaSheet: View {
     @State private var retry = 0
     @State private var showGooglePage = false
 
+    /// Google serves at most five reviews through the Places API. Deduplicate by Google's review
+    /// resource name, then by author and text, so a refreshed page cannot repeat a card.
+    private var reviews: [GooglePlaceMedia.Review] {
+        var seen = Set<String>()
+        return (details?.reviews ?? []).filter { review in
+            let key = !review.name.isEmpty
+                ? review.name
+                : "\(review.authorAttribution?.displayName ?? "")|\(review.text?.text ?? "")"
+            return seen.insert(key).inserted
+        }
+    }
+
+    /// The few reviews that arrive without a Places API key, from the search card itself.
+    private var excerpts: [String] {
+        place.reviewExcerpts ?? place.featuredReview.map { [$0] } ?? []
+    }
+
     var body: some View {
         NavigationView {
             List {
-                if !AppSettings.shared.noGoogle, place.googlePlacePage != nil {
-                    Button {
-                        showGooglePage = true
-                    } label: {
-                        Label(L10n.isCzech ? (photos ? "Fotky v Google Maps" : "Všechny recenze v Google Maps")
-                              : (photos ? "Photos in Google Maps" : "All reviews in Google Maps"),
-                              systemImage: photos ? "photo.on.rectangle" : "text.bubble")
-                    }
-                }
+                // Native content comes first. The Google web page is an explicit fallback for the
+                // full review list, never presented as if Kite had fetched all of it natively.
                 if photos {
                     if !place.photoUrls.isEmpty { PhotoStrip(urls: place.photoUrls, height: 150, opensViewer: true) }
                     ForEach(details?.photos ?? []) { NativePlacePhoto(photo: $0) }
                 } else {
                     PlaceMetaLine(place: place)
-                    let reviews = details?.reviews ?? []
-                    if reviews.isEmpty {
-                        ForEach(place.reviewExcerpts ?? place.featuredReview.map { [$0] } ?? [], id: \.self) { Text($0) }
-                    }
-                    ForEach(reviews) { review in
-                        VStack(alignment: .leading, spacing: 5) {
-                            if let author = review.authorAttribution { AuthorCredit(author: author) }
-                            if let rating = review.rating { Label("\(rating)/5", systemImage: "star.fill").foregroundStyle(.orange) }
-                            if let date = review.relativePublishTimeDescription { Text(date).font(.caption).foregroundStyle(.secondary) }
-                            if let text = review.text?.text, !text.isEmpty { Text(text) }
+                    if !reviews.isEmpty {
+                        ForEach(reviews) { review in
+                            VStack(alignment: .leading, spacing: 5) {
+                                if let author = review.authorAttribution { AuthorCredit(author: author) }
+                                if let rating = review.rating { Label("\(rating)/5", systemImage: "star.fill").foregroundStyle(.orange) }
+                                if let date = review.relativePublishTimeDescription { Text(date).font(.caption).foregroundStyle(.secondary) }
+                                if let text = review.text?.text, !text.isEmpty { Text(text) }
+                            }
                         }
+                    } else {
+                        ForEach(excerpts, id: \.self) { Text($0) }
                     }
                 }
                 if place.source == "google", !AppSettings.shared.noGoogle, !PlacesCredential.key.isEmpty {
@@ -153,12 +163,25 @@ struct PlaceMediaSheet: View {
                         Button(L10n.text("Reload")) { retry += 1 }
                         PlacesKeySettings()
                     } else if let details {
-                        if photos ? (details.photos ?? []).isEmpty : (details.reviews ?? []).isEmpty {
+                        if photos ? (details.photos ?? []).isEmpty : reviews.isEmpty {
                             Text(L10n.text(photos ? "No additional photos available." : "No review text available here."))
                                 .foregroundStyle(.secondary)
                         }
                     } else {
                         ProgressView()
+                    }
+                }
+                if !AppSettings.shared.noGoogle, place.googlePlacePage != nil {
+                    Section {
+                        Button {
+                            showGooglePage = true
+                        } label: {
+                            Label(L10n.text(photos ? "Open photos on the Google Maps website"
+                                                   : "Open all reviews on the Google Maps website"),
+                                  systemImage: "safari")
+                        }
+                        Text(L10n.text("Google only provides a sample without an API key. The full list opens on the Google Maps website."))
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -171,13 +194,22 @@ struct PlaceMediaSheet: View {
                     GoogleMapsPage(url: url, title: place.name, section: photos ? .photos : .reviews)
                 }
             }
-            .task(id: retry) {
+            .task(id: "\(place.id)-\(retry)") {
                 let key = PlacesCredential.key
                 guard place.source == "google", !AppSettings.shared.noGoogle, let id = place.placeId, !key.isEmpty else { return }
+                let requestedID = place.id
                 failed = false
                 details = nil
-                do { details = try await GooglePlaceMedia.details(placeId: id, key: key, photos: photos) }
-                catch { if !Task.isCancelled { failed = true } }
+                do {
+                    let result = try await GooglePlaceMedia.details(placeId: id, key: key, photos: photos)
+                    // The sheet can be reused when the selected place changes; an older answer must
+                    // not replace the reviews or photos of the place now on screen.
+                    guard !Task.isCancelled, place.id == requestedID else { return }
+                    details = result
+                } catch {
+                    guard !Task.isCancelled, place.id == requestedID else { return }
+                    failed = true
+                }
             }
         }.navigationViewStyle(.stack)
     }
