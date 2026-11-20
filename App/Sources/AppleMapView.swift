@@ -66,6 +66,7 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
     private static let start = CLLocationCoordinate2D(latitude: 51.5074, longitude: -0.1278)
 
     init(coordinator: VelaMapView.Coordinator) {
+        LaunchTrace.mark("MapKit makeUIView")
         self.coordinator = coordinator
         super.init(frame: .zero)
         addSubview(native)

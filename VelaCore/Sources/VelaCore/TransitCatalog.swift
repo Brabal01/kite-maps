@@ -101,7 +101,8 @@ public actor TransitCatalog {
     public static func parse(_ text: String) -> [TransitFeed] {
         let rows = csv(text)
         guard let header = rows.first else { return [] }
-        let index = Dictionary(uniqueKeysWithValues: header.enumerated().map { ($0.element, $0.offset) })
+        var index: [String: Int] = [:]
+        for (offset, name) in header.enumerated() where index[name] == nil { index[name] = offset }
         func value(_ row: [String], _ key: String) -> String {
             guard let i = index[key], i < row.count else { return "" }
             return row[i].trimmingCharacters(in: .whitespacesAndNewlines)

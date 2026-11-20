@@ -18,6 +18,66 @@ struct ContentView: View {
     private var dark: Bool { settings.colorScheme.map { $0 == .dark } ?? (systemScheme == .dark) }
 
     var body: some View {
+        mapScreen
+        .confirmationDialog("Avoid this road segment?", isPresented: $model.askingRouteExclusion, titleVisibility: .visible) {
+            Button("Avoid this segment") { model.applyRouteExclusion() }
+            Button("Cancel", role: .cancel) {}
+        }
+        .alert("Route avoidance", isPresented: Binding(get: { model.routeExclusionNotice != nil },
+                                                        set: { if !$0 { model.routeExclusionNotice = nil } })) {
+            Button("OK") { model.routeExclusionNotice = nil }
+        } message: { Text(L10n.text(model.routeExclusionNotice ?? "")) }
+        .overlay(alignment: .topTrailing) {
+            if model.hasRouteExclusion && (model.nav?.showingOverview ?? (model.directions != nil)) {
+                Button { model.undoRouteExclusion() } label: {
+                    Label("Undo avoidance", systemImage: "arrow.uturn.backward")
+                        .font(.caption.weight(.semibold)).padding(8).glass(Capsule())
+                }
+                .padding(.top, 198).padding(.trailing, 16)
+            }
+        }
+        .sheet(item: $model.editingEndpoint) { endpoint in
+            RouteEndpointPicker(model: model, endpoint: endpoint).kiteType()
+        }
+        .sheet(isPresented: Binding(get: { model.hasActiveJourney && model.selected != nil },
+                                   set: { if !$0 { model.closePlace() } })) {
+            JourneyPlaceSheet(model: model)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .kiteType()
+        }
+        .alert("Couldn’t add the stop", isPresented: $model.journeyStopError) {
+            Button("OK") {}
+        } message: {
+            Text("Keep following the current journey and try again when your location and a route are available.")
+        }
+        .overlay(alignment: .center) {
+            if model.addingJourneyStop {
+                ProgressView("Adding a stop…")
+                    .padding(14).glass(Capsule())
+                    .allowsHitTesting(false)
+            }
+        }
+        .sheet(isPresented: $model.addingStop) {
+            StopPicker(model: model).kiteType()
+        }
+        .sheet(item: $model.picking) { kind in
+            PlacePicker(model: model, kind: kind).kiteType()
+        }
+        .onChange(of: settings.welcomed && !settings.needsWazeChoice) { ready in
+            if ready { model.location.start() }
+        }
+    }
+
+
+    private var demoStreetView: some View {
+        // Screenshot run only: the viewer on a test pattern, turned right by the step's number.
+        GoogleStreetViewScreen(name: "Test pattern",
+                               pano: StreetView.Panorama(id: PanoramaViewer.testID, location: LatLng(0, 0)),
+                               heading: Double(DemoScript.step?.dropFirst(6) ?? "") ?? 0)
+    }
+
+    private var mapCanvas: some View {
         ZStack {
             Group {
                 if settings.useAppleMaps {
@@ -77,30 +137,31 @@ struct ContentView: View {
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: model.liveCam?.id)
         .alert(item: $model.surveillanceInfo) { camera in
-            let details = [camera.operatorName.map { "Operator: \($0)" }, camera.manufacturer.map { "Manufacturer: \($0)" },
-                           camera.surveillance.map { "Watches: \($0)" }, camera.mount.map { "Mount: \($0)" },
-                           camera.direction.map { "Direction: \($0)" }].compactMap { $0 }.joined(separator: "\n")
-            return Alert(title: Text(camera.isALPR ? "Plate reader" : "Surveillance camera"),
-                         message: Text(details.isEmpty ? "Details not mapped in OpenStreetMap." : details), dismissButton: .default(Text("OK")))
+            Alert(title: Text(camera.isALPR ? "Plate reader" : "Surveillance camera"),
+                  message: Text(surveillanceDetails(camera)),
+                  dismissButton: .default(Text("OK")))
         }
         .overlay(alignment: .bottom) {
             if DemoScript.step == "wazemap" || DemoScript.step == "wazeuk" || DemoScript.step == "wazesizes" {
                 // Screenshot run only: what Waze answered, since the build's computers can't be trusted to get through.
                 TimelineView(.periodic(from: .now, by: 2)) { _ in
-                    Text((Waze.lastStatus.map { "Waze: HTTP \($0.code), \($0.count) reports\($0.viaPage ? " via page" : ""): \($0.summary)" } ?? "Waze: not asked yet")
-                         + "\n" + WazeWeb.shared.note + (DemoScript.wazeProbe.isEmpty ? "" : "\n" + DemoScript.wazeProbe))
+                    Text(wazeProbeText())
                         .font(.caption.monospaced()).padding(6).background(Color.red).foregroundColor(.white)
                         .padding(.bottom, 120)
                 }
             }
         }
+    }
+
+    private var mapScreen: some View {
+        mapCanvas
         .background(GeometryReader { g in
             Color.clear
                 .onAppear { screen = g.size }
                 .onChange(of: g.size) { screen = $0 }
         })
         .environment(\.sidePanel, panel)
-        .onAppear { model.sideInset = panel }
+        .onAppear(perform: didAppear)
         .onChange(of: panel) { model.sideInset = $0 }
         .animation(.easeOut(duration: 0.25), value: model.wazeInfo?.id)
         .animation(.easeOut(duration: 0.2), value: model.tab)
@@ -108,6 +169,7 @@ struct ContentView: View {
         .preferredColorScheme(settings.colorScheme)
         .task { await DemoScript.run(model) }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
+            LaunchTrace.markReady()
             model.suspendNavigationDisplay()
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
@@ -133,9 +195,7 @@ struct ContentView: View {
             LayersSheet(settings: settings, liveCount: model.wazeLiveCount).kiteType()
         }
         .fullScreenCover(isPresented: .constant(DemoScript.step?.hasPrefix("svtest") == true)) {
-            // Screenshot run only: the viewer on a test pattern, turned right by the step's number.
-            GoogleStreetViewScreen(name: "Test pattern", pano: StreetView.Panorama(id: PanoramaViewer.testID, location: LatLng(0, 0)),
-                                   heading: Double(DemoScript.step?.dropFirst(6) ?? "") ?? 0)
+            demoStreetView
         }
         .fullScreenCover(isPresented: Binding(get: {
             (!settings.welcomed || settings.needsWazeChoice)
@@ -147,55 +207,36 @@ struct ContentView: View {
             }
             .kiteType()
         }
-        .confirmationDialog("Avoid this road segment?", isPresented: $model.askingRouteExclusion, titleVisibility: .visible) {
-            Button("Avoid this segment") { model.applyRouteExclusion() }
-            Button("Cancel", role: .cancel) {}
-        }
-        .alert("Route avoidance", isPresented: Binding(get: { model.routeExclusionNotice != nil },
-                                                        set: { if !$0 { model.routeExclusionNotice = nil } })) {
-            Button("OK") { model.routeExclusionNotice = nil }
-        } message: { Text(L10n.text(model.routeExclusionNotice ?? "")) }
-        .overlay(alignment: .topTrailing) {
-            if model.hasRouteExclusion && (model.nav?.showingOverview ?? (model.directions != nil)) {
-                Button { model.undoRouteExclusion() } label: {
-                    Label("Undo avoidance", systemImage: "arrow.uturn.backward")
-                        .font(.caption.weight(.semibold)).padding(8).glass(Capsule())
-                }
-                .padding(.top, 198).padding(.trailing, 16)
-            }
-        }
-        .sheet(item: $model.editingEndpoint) { endpoint in
-            RouteEndpointPicker(model: model, endpoint: endpoint).kiteType()
-        }
-        .sheet(isPresented: Binding(get: { model.hasActiveJourney && model.selected != nil },
-                                   set: { if !$0 { model.closePlace() } })) {
-            JourneyPlaceSheet(model: model)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
-                .kiteType()
-        }
-        .alert("Couldn’t add the stop", isPresented: $model.journeyStopError) {
-            Button("OK") {}
-        } message: {
-            Text("Keep following the current journey and try again when your location and a route are available.")
-        }
-        .overlay(alignment: .center) {
-            if model.addingJourneyStop {
-                ProgressView("Adding a stop…")
-                    .padding(14).glass(Capsule())
-                    .allowsHitTesting(false)
-            }
-        }
-        .sheet(isPresented: $model.addingStop) {
-            StopPicker(model: model).kiteType()
-        }
-        .sheet(item: $model.picking) { kind in
-            PlacePicker(model: model, kind: kind).kiteType()
-        }
-        .onChange(of: settings.welcomed && !settings.needsWazeChoice) { ready in
-            if ready { model.location.start() }
-        }
     }
+
+    private func didAppear() {
+        LaunchTrace.mark("ContentView appeared")
+        model.sideInset = panel
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { LaunchTrace.markReady() }
+    }
+
+    private func wazeProbeText() -> String {
+        let status: String
+        if let last = Waze.lastStatus {
+            status = "Waze: HTTP \(last.code), \(last.count) reports\(last.viaPage ? " via page" : ""): \(last.summary)"
+        } else {
+            status = "Waze: not asked yet"
+        }
+        let probe = DemoScript.wazeProbe.isEmpty ? "" : "\n" + DemoScript.wazeProbe
+        return status + "\n" + WazeWeb.shared.note + probe
+    }
+
+    /** Kept out of the view body: the type checker struggles with a large inline array here. */
+    private func surveillanceDetails(_ camera: SurveillanceCamera) -> String {
+        var parts: [String] = []
+        if let value = camera.operatorName { parts.append("Operator: \(value)") }
+        if let value = camera.manufacturer { parts.append("Manufacturer: \(value)") }
+        if let value = camera.surveillance { parts.append("Watches: \(value)") }
+        if let value = camera.mount { parts.append("Mount: \(value)") }
+        if let value = camera.direction { parts.append("Direction: \(value)") }
+        return parts.isEmpty ? "Details not mapped in OpenStreetMap." : parts.joined(separator: "\n")
+    }
+
 }
 
 /** The map page: a big "Where to?" bar, Home and Work one tap away, and the results or place sheet. */

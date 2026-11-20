@@ -41,9 +41,24 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
 
     override init() {
         super.init()
+        LaunchTrace.mark("LocationService init")
         manager.delegate = self
         apply(.browse)
         reducedAccuracy = manager.accuracyAuthorization == .reducedAccuracy
+    }
+
+    /// The generated Info.plist must contain the location background mode. Setting
+    /// `allowsBackgroundLocationUpdates` without it raises an Objective-C exception on iOS.
+    private var backgroundLocationAllowed: Bool {
+        (Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String])?.contains("location") == true
+    }
+
+    private func setBackgroundLocation(_ on: Bool) {
+        guard backgroundLocationAllowed else { return }
+        // Activating background updates is only valid while the app is in the foreground.
+        if on, UIApplication.shared.applicationState == .background { return }
+        manager.allowsBackgroundLocationUpdates = on
+        manager.showsBackgroundLocationIndicator = on
     }
 
     private func apply(_ mode: Mode) {
@@ -53,40 +68,36 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
             manager.distanceFilter = 15
             manager.activityType = .other
             manager.pausesLocationUpdatesAutomatically = true
-            manager.allowsBackgroundLocationUpdates = false
-            manager.showsBackgroundLocationIndicator = false
+            setBackgroundLocation(false)
         case .justDrive:
             manager.desiredAccuracy = kCLLocationAccuracyBest
             manager.distanceFilter = 5
             manager.activityType = .automotiveNavigation
             manager.pausesLocationUpdatesAutomatically = false
-            manager.allowsBackgroundLocationUpdates = true
-            manager.showsBackgroundLocationIndicator = true
+            setBackgroundLocation(true)
         case .navigateDrive:
             manager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
             manager.distanceFilter = kCLDistanceFilterNone
             manager.activityType = .automotiveNavigation
             manager.pausesLocationUpdatesAutomatically = false
-            manager.allowsBackgroundLocationUpdates = true
-            manager.showsBackgroundLocationIndicator = true
+            setBackgroundLocation(true)
         case .navigateWalkOrBike:
             manager.desiredAccuracy = kCLLocationAccuracyBest
             manager.distanceFilter = 2
             manager.activityType = .fitness
             manager.pausesLocationUpdatesAutomatically = false
-            manager.allowsBackgroundLocationUpdates = true
-            manager.showsBackgroundLocationIndicator = true
+            setBackgroundLocation(true)
         case .transit:
             manager.desiredAccuracy = kCLLocationAccuracyBest
             manager.distanceFilter = 5
             manager.activityType = .fitness
             manager.pausesLocationUpdatesAutomatically = false
-            manager.allowsBackgroundLocationUpdates = true
-            manager.showsBackgroundLocationIndicator = true
+            setBackgroundLocation(true)
         }
     }
 
     func start() {
+        LaunchTrace.mark("LocationService start")
         if manager.authorizationStatus == .notDetermined { manager.requestWhenInUseAuthorization() }
         guard foreground else { return }
         manager.startUpdatingLocation()

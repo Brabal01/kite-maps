@@ -275,8 +275,12 @@ final class AppModel: ObservableObject {
     private var navSub: AnyCancellable?
 
     init() {
+        LaunchTrace.mark("AppModel init")
         location = LocationService()
-        location.onUpdate = { [weak self] loc in self?.locationChanged(loc) }
+        location.onUpdate = { [weak self] loc in
+            if self?.userLatLng == nil { LaunchTrace.mark("first location") }
+            self?.locationChanged(loc)
+        }
         // A trip still saved means Kite closed in the middle of it. Within two hours it's offered again.
         if let t = settings.trip, !DemoScript.active {
             if Date().timeIntervalSince(t.at) < 2 * 3600 { resumeOffer = t } else { settings.trip = nil }

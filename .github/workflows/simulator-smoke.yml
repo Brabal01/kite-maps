@@ -1,0 +1,111 @@
+name: iOS simulator smoke test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [iphone-custom-v28-stability]
+  pull_request:
+    branches: [iphone-custom-v27]
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Launch Kite in the simulator
+    runs-on: xcode-27
+    timeout-minutes: 35
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate the project
+        run: xcodegen generate
+      - name: Boot an iPhone simulator
+        id: simulator
+        run: |
+          set -euo pipefail
+          xcrun simctl list devices available
+          UDID=$(xcrun simctl list devices available | grep -m1 -E 'iPhone.*\([0-9A-F-]{36}\)' | sed -E 's/.*\(([0-9A-F-]{36})\).*/\1/')
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+      - name: Build for the simulator
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project Kite.xcodeproj \
+            -scheme Kite \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "id=${{ steps.simulator.outputs.udid }}" \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build | tee simulator-build.log | tail -n 150
+      - name: Install and launch repeatedly
+        run: |
+          set -euo pipefail
+          UDID="${{ steps.simulator.outputs.udid }}"
+          APP="build/Build/Products/Debug-iphonesimulator/Kite.app"
+          xcrun simctl install "$UDID" "$APP"
+          xcrun simctl privacy "$UDID" grant location app.vela.ios || true
+          for i in 1 2 3; do
+            echo "== normal launch $i =="
+            xcrun simctl terminate "$UDID" app.vela.ios || true
+            xcrun simctl launch "$UDID" app.vela.ios | tee "launch-$i.txt"
+            PID=$(sed -n 's/.*app.vela.ios: \([0-9][0-9]*\).*/\1/p' "launch-$i.txt")
+            sleep 20
+            xcrun simctl spawn "$UDID" log show --style compact --last 25s \
+              --predicate 'process == "Kite"' > "kite-$i.log" || true
+            if [ -z "$PID" ] || ! ps -p "$PID" >/dev/null; then
+              echo "Kite process $PID is not alive"; exit 1
+            fi
+          done
+          echo "== denied location launch =="
+          xcrun simctl privacy "$UDID" revoke location app.vela.ios || true
+          xcrun simctl terminate "$UDID" app.vela.ios || true
+          xcrun simctl launch "$UDID" app.vela.ios | tee launch-denied.txt
+          PID=$(sed -n 's/.*app.vela.ios: \([0-9][0-9]*\).*/\1/p' launch-denied.txt)
+          sleep 12
+          if [ -z "$PID" ] || ! ps -p "$PID" >/dev/null; then
+            echo "Kite process $PID is not alive without location permission"; exit 1
+          fi
+          xcrun simctl spawn "$UDID" log show --style compact --last 20s \
+            --predicate 'process == "Kite"' > kite-denied.log || true
+          echo "== safe mode launch =="
+          xcrun simctl terminate "$UDID" app.vela.ios || true
+          xcrun simctl launch "$UDID" app.vela.ios --safe-mode | tee launch-safe.txt
+          PID=$(sed -n 's/.*app.vela.ios: \([0-9][0-9]*\).*/\1/p' launch-safe.txt)
+          sleep 8
+          xcrun simctl spawn "$UDID" log show --style compact --last 20s \
+            --predicate 'process == "Kite"' > kite-safe.log || true
+          if [ -z "$PID" ] || ! ps -p "$PID" >/dev/null; then
+            echo "Kite safe mode process $PID is not alive"; exit 1
+          fi
+      - name: Check the launched process
+        if: always()
+        run: |
+          set -euo pipefail
+          UDID="${{ steps.simulator.outputs.udid }}"
+          xcrun simctl spawn "$UDID" launchctl print system > launchctl.txt || true
+          grep -E "app.vela.ios|Kite" launchctl.txt || true
+          xcrun simctl io "$UDID" screenshot simulator.png || true
+      - name: Upload smoke logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: simulator-smoke-logs
+          path: |
+            simulator-build.log
+            launch-*.txt
+            kite-*.log
+            launchctl.txt
+            simulator.png
+          if-no-files-found: warn
+      - name: Shut down the simulator
+        if: always()
+        run: xcrun simctl shutdown "${{ steps.simulator.outputs.udid }}" || true

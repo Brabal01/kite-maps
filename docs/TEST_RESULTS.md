@@ -1,5 +1,12 @@
 # Test results
 
+## v28 stability
+
+- Safe mode, launch trace and MetricKit crash collector compile in the iOS target.
+- Simulator smoke workflow added; its result is recorded in the PR/CI run, not claimed here
+  until the run succeeds.
+- The v27 physical-device crash cannot be reproduced without the phone or an `.ips` report.
+
 ## v27 local (Linux, Swift 6.0)
 
 - VelaCore: **208 tests, 0 failures, 1 skipped**.
