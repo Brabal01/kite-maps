@@ -371,6 +371,12 @@ public enum Transitous {
             ?? (l["tripDirection"] as? NSNumber)?.intValue
         out.agencyId = string(l["agencyId"])
         out.isRealtime = l["realTime"] as? Bool == true
+        if out.isRealtime {
+            // The planner's own real-time answer has no separate timestamp here; show it as live
+            // until an extra GTFS-Realtime feed refines the freshness.
+            out.liveFreshness = .live
+            out.liveProvider = out.liveProvider ?? "transitous.org"
+        }
         out.serviceAlerts = alerts([l, from, to])
         let intermediate = l["intermediateStops"] as? [[String: Any]] ?? []
         out.intermediateStops = intermediate.compactMap(call)
