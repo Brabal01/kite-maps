@@ -15,18 +15,17 @@ enum SafeMode {
            Date().timeIntervalSince(marker) < 120 {
             defaults.set(true, forKey: "safeMode")
             defaults.removeObject(forKey: "launchMarker")
-            LaunchTrace.mark("previous launch did not finish; safe mode enabled")
+            LaunchTrace.mark("previous launch did not reach ready; safe mode enabled")
             return true
         }
-        let marker = Date()
-        defaults.set(marker, forKey: "launchMarker")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
-            if let stored = defaults.object(forKey: "launchMarker") as? Date, stored == marker {
-                defaults.removeObject(forKey: "launchMarker")
-            }
-        }
+        defaults.set(Date(), forKey: "launchMarker")
         return false
     }()
+
+    /** Called after the first screen has stayed up long enough to count as a healthy launch. */
+    static func markReady() {
+        UserDefaults.standard.removeObject(forKey: "launchMarker")
+    }
 
     static func leave() {
         let defaults = UserDefaults.standard

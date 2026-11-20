@@ -7,8 +7,8 @@ Updated: 2026-11-20
 Branch: `iphone-custom-v28-stability`, based on verified v27.
 
 - **No physical crash log was available**, so the v27 launch crash is not claimed as fixed.
-- Added a real safe mode (launch argument, persisted switch and automatic entry after a launch
-  that did not survive 15 s). It avoids AppModel, MapLibre/MapKit, location, network, transit and
+- Added a real safe mode (launch argument, persisted switch and automatic entry when the previous launch
+  did not reach its first healthy screen (10 s). It avoids AppModel, MapLibre/MapKit, location, network, transit and
   Live Activities, and never deletes user data.
 - Added privacy-safe launch breadcrumbs and a MetricKit crash-diagnostic collector shown in safe
   mode.

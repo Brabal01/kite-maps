@@ -103,6 +103,7 @@ struct ContentView: View {
         .onAppear {
             LaunchTrace.mark("ContentView appeared")
             model.sideInset = panel
+            DispatchQueue.main.asyncAfter(deadline: .now() + 10) { LaunchTrace.markReady() }
         }
         .onChange(of: panel) { model.sideInset = $0 }
         .animation(.easeOut(duration: 0.25), value: model.wazeInfo?.id)
@@ -112,6 +113,7 @@ struct ContentView: View {
         .preferredColorScheme(settings.colorScheme)
         .task { await DemoScript.run(model) }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
+            LaunchTrace.markReady()
             model.suspendNavigationDisplay()
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in

@@ -52,18 +52,30 @@ jobs:
           UDID="${{ steps.simulator.outputs.udid }}"
           APP="build/Build/Products/Debug-iphonesimulator/Kite.app"
           xcrun simctl install "$UDID" "$APP"
+          xcrun simctl privacy "$UDID" grant location app.vela.ios || true
           for i in 1 2 3; do
             echo "== normal launch $i =="
             xcrun simctl terminate "$UDID" app.vela.ios || true
             xcrun simctl launch "$UDID" app.vela.ios | tee "launch-$i.txt"
             PID=$(sed -n 's/.*app.vela.ios: \([0-9][0-9]*\).*/\1/p' "launch-$i.txt")
-            sleep 12
-            xcrun simctl spawn "$UDID" log show --style compact --last 20s \
+            sleep 20
+            xcrun simctl spawn "$UDID" log show --style compact --last 25s \
               --predicate 'process == "Kite"' > "kite-$i.log" || true
             if [ -z "$PID" ] || ! ps -p "$PID" >/dev/null; then
               echo "Kite process $PID is not alive"; exit 1
             fi
           done
+          echo "== denied location launch =="
+          xcrun simctl privacy "$UDID" revoke location app.vela.ios || true
+          xcrun simctl terminate "$UDID" app.vela.ios || true
+          xcrun simctl launch "$UDID" app.vela.ios | tee launch-denied.txt
+          PID=$(sed -n 's/.*app.vela.ios: \([0-9][0-9]*\).*/\1/p' launch-denied.txt)
+          sleep 12
+          if [ -z "$PID" ] || ! ps -p "$PID" >/dev/null; then
+            echo "Kite process $PID is not alive without location permission"; exit 1
+          fi
+          xcrun simctl spawn "$UDID" log show --style compact --last 20s \
+            --predicate 'process == "Kite"' > kite-denied.log || true
           echo "== safe mode launch =="
           xcrun simctl terminate "$UDID" app.vela.ios || true
           xcrun simctl launch "$UDID" app.vela.ios --safe-mode | tee launch-safe.txt

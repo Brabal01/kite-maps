@@ -35,8 +35,8 @@ The v26→v27 diff was reviewed with particular attention to startup:
 
 - Launch argument: `--safe-mode`.
 - Persisted switch: *Settings → About → Start in safe mode next time*.
-- Automatic: if the previous launch did not survive its first 15 seconds, the next launch enters
-  safe mode. The marker is stored in `UserDefaults`; no user data is removed.
+- Automatic: if the previous launch did not reach its first healthy screen (10 seconds), the next
+  launch enters safe mode. The marker is stored in `UserDefaults`; no user data is removed.
 - Safe mode shows version/build, bundle id, the last MetricKit crash diagnostic, and a short
   launch trace. It does not start location, maps, network requests or Live Activities.
 - *Leave safe mode* turns the switch off; Kite must be closed and opened again for the normal path.
