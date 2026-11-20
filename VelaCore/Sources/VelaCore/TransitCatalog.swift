@@ -94,7 +94,7 @@ public actor TransitCatalog {
                 return a.0.provider < b.0.provider
             }
             .prefix(max(0, limit))
-            .map(\.0)
+            .map { $0.0 }
     }
 
     /// Exposed for tests: parse the public CSV without touching the network.
