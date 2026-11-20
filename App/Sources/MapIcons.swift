@@ -52,6 +52,8 @@ enum MapIcons {
         add(dot("stop.octagon.fill", UIColor(hex: 0xB91C1C)), "route-stop")
         add(dot("train.side.front.car", UIColor(hex: 0x6D28D9)), "route-crossing")
         add(dot("tram.fill", UIColor(hex: 0x6D28D9)), "tram-crossing")
+        // A live vehicle from a GTFS-Realtime feed, when that feed sends positions.
+        add(dot("tram.fill", UIColor(hex: 0x6D28D9)), "transit-vehicle")
         // Live camera photos: sky blue for road cameras, violet for Windy's scenic webcams.
         add(dot("web.camera.fill", UIColor(hex: 0x0284C7)), "livecam-road")
         add(dot("sun.horizon.fill", UIColor(hex: 0x7C3AED)), "livecam-web")

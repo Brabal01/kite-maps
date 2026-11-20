@@ -2,7 +2,63 @@
 
 Updated: 2026-11-20
 
-## Branch and base
+## v25 (verified build 1034)
+
+Base: `iphone-custom-v24` (verified build 1033).
+
+### Map location and orientation
+
+- The browse map now hides MapLibre/MapKit's default blue dot and draws Kite's teal heading
+  arrow at the current position, the same visual used for Just drive and navigation.
+- The compass is read from `CLHeading` (`trueHeading` when valid, magnetic otherwise), filtered
+  for bad accuracy, and stopped while Kite is in the background.
+- GPS course is used while moving; the phone compass is used when stopped or when course is
+  unavailable. `HeadingFilter` smooths the shortest angle so north does not jump 359°→0°.
+- The first location fix turns the browse map to the phone's heading unless the user chose
+  north-up. Manual pan, rotate, pinch/zoom and the north button still work as before.
+
+### Police-risk chip
+
+- The bottom-left chip is hidden unless Waze, police alerts and police risk are all on.
+- A failed live Waze ask can no longer leave a stale high score on screen: the area risk is
+  cleared when its inputs are unavailable.
+- Historical reports can still raise the risk to *medium*, but only a live answer can produce
+  *high*. This prevents a false "High" when live data is missing.
+
+### Live transit
+
+- Transitous remains the planner and already carries real-time delays, skipped stops and alerts.
+- A new dependency-free GTFS-Realtime reader (`TransitRealtime`) reads `TripUpdate`,
+  `VehiclePosition` and `Alert` protobufs from any public feed URL configured in
+  *Map & display → Live transit*. It has no country, agency or city assumptions.
+- The feed is joined by trip id and route id. It adds delays, skipped stops, service alerts and
+  vehicle positions, and does not double-apply a delay Transitous already provided.
+- Trip rows show *Live* or *Scheduled*; vehicle positions are drawn on the transit map when the
+  feed provides them. If there is no feed, a failed feed or no live data, the timetable remains.
+
+### Traffic-sign destinations
+
+- OSRM `destinations`, `destination:ref` (inside `destinations`), `exits` and `ref` are used
+  before street names. A turn now says "Turn right toward Prostějov" rather than only the road.
+- The same instruction string feeds the banner and the spoken voice; the map's next-road pill
+  prefers the signed destination too. Missing sign data keeps the normal street instruction.
+
+### Verification
+
+- VelaCore tests pass locally on Linux: 186 tests, 0 failures, 1 skipped.
+- GitHub Actions run
+  [44751600117](https://github.com/Brabal01/kite-maps/actions/runs/44751600117) — success,
+  4m41s, on commit `134c1ab7810c3b77288c8e6829da3ac31e9eb37f`.
+- Artifact `Kite-custom-ipa` was downloaded and inspected: `Payload/Kite.app/Kite` and
+  `NavigationWidget.appex/NavigationWidget` are arm64; app identifier `app.vela.ios`, widget
+  `app.vela.ios.navigation`; `CFBundleVersion` 1034; `unzip -t` clean; ad-hoc `_CodeSignature`
+  present; MapLibre framework arm64. The new GTFS-Realtime strings are in the binary.
+- No physical iPhone is available for locked-screen, background-GPS, compass or Dynamic Island
+  checks.
+- SIRI XML feeds are not implemented; GTFS-Realtime is the supported extra live format. A SIRI
+  endpoint is region-specific and no public keyless default is assumed.
+
+## Branch and base (v24)
 
 - Working branch: `iphone-custom-v24`
 - Base: `iphone-custom-v23` at `ed88cb5abc726b6ba64937ef564b24f3b8c9397c`

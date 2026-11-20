@@ -113,6 +113,17 @@ struct ActiveTransitView: View {
                 Text(L10n.format("Leg %@ of %@", String(journey.index + 1), String(journey.trip.legs.count)))
                     .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 if let direction = journey.leg.headsign { Text(L10n.format("Direction: %@", direction)).font(.headline) }
+                if !journey.leg.isWalk {
+                    HStack(spacing: 6) {
+                        Text(journey.leg.isRealtime ? "Live data" : "Scheduled timetable")
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(journey.leg.isRealtime ? Vela.open : .secondary)
+                        if let vehicle = journey.leg.liveVehicle, let updated = vehicle.updated {
+                            Text(L10n.format("Vehicle updated %@", updated.formatted(date: .omitted, time: .shortened)))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
                 if journey.leg.isWalk {
                     Text(journey.leg.toName)
                     if journey.loadingWalk { ProgressView("Loading walking guidance…") }

@@ -120,6 +120,7 @@ struct VelaMapView: UIViewRepresentable {
         private var lastMineKey = ""
         private var appliedMapboxKey = ""
         private var lastPuckKey = ""
+        private var lastTransitVehicleKey = ""
         /** Whether the map is currently stripped down for driving; nil after a style load. */
         private var styledDriving: Bool?
         private var lastCameraKey = ""
@@ -176,7 +177,7 @@ struct VelaMapView: UIViewRepresentable {
             heatTiles.styleReloaded()
             styledDriving = nil
             repaint(mapView)
-            lastResultsKey = ""; lastRouteKey = ""; lastMineKey = ""; lastPuckKey = ""; lastCameraKey = ""; drawnControls = nil; drawnSignals = []; lastWazeKey = ""; lastLiveKey = ""
+            lastResultsKey = ""; lastRouteKey = ""; lastMineKey = ""; lastPuckKey = ""; lastTransitVehicleKey = ""; lastCameraKey = ""; drawnControls = nil; drawnSignals = []; lastWazeKey = ""; lastLiveKey = ""
             render(mapView)
         }
 
@@ -308,6 +309,21 @@ struct VelaMapView: UIViewRepresentable {
             ride.predicate = NSPredicate(format: "walk == 0")
             ride.lineColor = NSExpression(mglJSONObject: ["to-color", ["get", "color"]])
             [walk, rideEdge, ride].forEach(insert)
+            // Live vehicle positions from an optional GTFS-Realtime feed.
+            let vehicleSrc = MLNShapeSource(identifier: "vela-transit-vehicle", shape: nil, options: nil)
+            style.addSource(vehicleSrc)
+            let vehicle = MLNSymbolStyleLayer(identifier: "vela-transit-vehicle", source: vehicleSrc)
+            vehicle.iconImageName = NSExpression(forConstantValue: "transit-vehicle")
+            vehicle.iconAllowsOverlap = NSExpression(forConstantValue: true)
+            vehicle.text = NSExpression(forKeyPath: "label")
+            vehicle.textFontNames = NSExpression(forConstantValue: ["Noto Sans Bold"])
+            vehicle.textFontSize = NSExpression(forConstantValue: 12)
+            vehicle.textColor = NSExpression(forConstantValue: UIColor(hex: 0x4C1D95))
+            vehicle.textHaloColor = NSExpression(forConstantValue: UIColor.white)
+            vehicle.textHaloWidth = NSExpression(forConstantValue: 1.5)
+            vehicle.textOffset = NSExpression(forConstantValue: NSValue(cgVector: CGVector(dx: 0, dy: 1.4)))
+            vehicle.textAllowsOverlap = NSExpression(forConstantValue: true)
+            insert(vehicle)
             for (level, color) in [(1, 0xF59E0B), (2, 0xEF4444), (3, 0xB91C1C)] {
                 let l = line("vela-route-traffic-\(level)", spanSrc, UIColor(hex: UInt32(color)), width: 5)
                 l.predicate = NSPredicate(format: "level == %d", level)
@@ -534,6 +550,9 @@ struct VelaMapView: UIViewRepresentable {
 
         /** The road a turn goes onto, for the pill on the map: "Stoneham Way" from "Turn left onto Stoneham Way". */
         static func nextRoadName(_ m: Maneuver) -> String? {
+            // The sign's own destination is more useful than the street name on the tarmac.
+            if let signed = m.exitSign?.destinations.first, !signed.isEmpty { return signed }
+            if let reference = m.exitSign?.references.first, !reference.isEmpty { return reference }
             let text = SpokenText.forScreen(m.instruction)
             var name: String?
             if let r = text.range(of: " onto ", options: .backwards) {
@@ -561,8 +580,9 @@ struct VelaMapView: UIViewRepresentable {
             guard model.map === map else { return }
             let s = model.settings
             let navigating = model.nav != nil
-            let drawArrow = navigating || (model.justDrive && model.driveCoordinate != nil)
-            if map.showsUserLocation == drawArrow { map.showsUserLocation = !drawArrow }
+            // The native blue dot is hidden in the delegate; the teal arrow is drawn for browsing,
+            // Just drive and navigation alike. User-location updates stay on for the first fix.
+            if !map.showsUserLocation { map.showsUserLocation = true }
             if let libre = map as? MLNMapView {
                 guard styleReady, let style = libre.style else { return }
                 renderBase(style, navigating: navigating)
@@ -573,6 +593,7 @@ struct VelaMapView: UIViewRepresentable {
             }
             renderResults()
             renderRoutes()
+            renderTransitVehicles()
             renderPuck(map)
             loadJustDriveCameras(map)
             renderCameras()
@@ -837,7 +858,7 @@ struct VelaMapView: UIViewRepresentable {
                 self.wazeAt = Date()
                 WazeHistory.shared.record(found)
                 self.model.wazeLiveCount = found.filter { self.model.settings.shows($0) }.count
-                self.model.updateAreaRisk(live: found)
+                self.model.updateAreaRisk(live: found, liveAvailable: live != nil)
                 if let map { self.render(map) }
             }
         }
@@ -1178,7 +1199,26 @@ struct VelaMapView: UIViewRepresentable {
             else { style.addLayer(layer) }
         }
 
+        /** Vehicles reported live by an optional GTFS-Realtime feed, on the active transit trip. */
+        private func renderTransitVehicles() {
+            let trip = model.transitJourney?.trip ?? model.directions?.pickedTrip
+            let features: [MLNPointFeature] = (trip?.rides ?? []).compactMap { leg in
+                guard let vehicle = leg.liveVehicle else { return nil }
+                let f = MLNPointFeature()
+                f.coordinate = CLLocationCoordinate2D(latitude: vehicle.location.lat, longitude: vehicle.location.lng)
+                f.attributes = ["icon": "transit-vehicle", "label": leg.line]
+                return f
+            }
+            let key = features.map {
+                "\($0.coordinate.latitude),\($0.coordinate.longitude),\(($0.attributes["label"] as? String) ?? "")"
+            }.joined()
+            guard key != lastTransitVehicleKey else { return }
+            lastTransitVehicleKey = key
+            publish(features.isEmpty ? nil : MLNShapeCollectionFeature(shapes: features), to: "vela-transit-vehicle")
+        }
+
         private func renderPuck(_ map: any KiteMapSurface) {
+            // Navigation and Just drive move the arrow every frame from NavGlide/DriveRoad.
             if model.nav != nil { lastPuckKey = "nav"; return }
             if model.justDrive, let coordinate = model.driveCoordinate {
                 let key = "\(coordinate.latitude),\(coordinate.longitude),\(model.driveBearing)"
@@ -1187,9 +1227,18 @@ struct VelaMapView: UIViewRepresentable {
                 lastPuckKey = key
                 return
             }
-            guard lastPuckKey != "" else { return }
-            map.drawPuck(at: nil, bearing: 0)
-            lastPuckKey = ""
+            // Browsing: the same arrow, pointing the way the phone/car is facing, replacing the dot.
+            guard let loc = model.location.last else {
+                guard lastPuckKey != "" else { return }
+                map.drawPuck(at: nil, bearing: 0)
+                lastPuckKey = ""
+                return
+            }
+            let bearing = model.mapBearing(for: loc)
+            let key = String(format: "%.5f,%.5f,%.0f", loc.coordinate.latitude, loc.coordinate.longitude, bearing)
+            guard key != lastPuckKey else { return }
+            map.drawPuck(at: loc.coordinate, bearing: bearing)
+            lastPuckKey = key
         }
 
         // MARK: Gestures
@@ -1381,6 +1430,17 @@ struct VelaMapView: UIViewRepresentable {
             }
         }
 
+        nonisolated func mapView(_ mapView: MLNMapView, viewFor annotation: MLNAnnotation) -> MLNAnnotationView? {
+            // Keep MapLibre's blue dot out of the way: Kite draws its own heading arrow.
+            MainActor.assumeIsolated {
+                guard annotation is MLNUserLocation else { return nil }
+                let view = MLNUserLocationAnnotationView(annotation: annotation, reuseIdentifier: "kite-hidden-user")
+                view.isHidden = true
+                view.alpha = 0
+                return view
+            }
+        }
+
         nonisolated func mapView(_ mapView: MLNMapView, didUpdate userLocation: MLNUserLocation?) {
             guard let loc = userLocation?.location else { return }
             MainActor.assumeIsolated { firstUserLocation(loc, on: mapView) }
@@ -1395,6 +1455,8 @@ struct VelaMapView: UIViewRepresentable {
             map.setCenter(loc.coordinate, zoomLevel: 15, animated: false)
             let camera = map.camera
             camera.pitch = model.browsePitch
+            // Open facing the way the phone is held; north-up stays north.
+            if model.browseLook != .north { camera.heading = model.mapBearing(for: loc) }
             map.camera = camera
         }
     }

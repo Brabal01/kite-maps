@@ -21,10 +21,13 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     /** Location is off for Kite (or for the whole phone): only Settings can turn it back on. */
     @Published private(set) var denied = false
     @Published private(set) var reducedAccuracy = false
+    /** The phone's compass, true north when iOS has it, magnetic otherwise. Nil while the compass is off or unreliable. */
+    @Published private(set) var deviceHeading: Double?
     var onUpdate: (@MainActor (CLLocation) -> Void)?
     private let manager = CLLocationManager()
     private var navigating = false
     private var requestedPreciseLocation = false
+    private var headingOn = false
 
     override init() {
         super.init()
@@ -37,6 +40,20 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     func start() {
         if manager.authorizationStatus == .notDetermined { manager.requestWhenInUseAuthorization() }
         manager.startUpdatingLocation()
+        startHeading()
+    }
+
+    /** The map turns to the compass on open; stop the compass when Kite goes to the background. */
+    func startHeading() {
+        guard !headingOn else { return }
+        headingOn = true
+        manager.startUpdatingHeading()
+    }
+
+    func stopHeading() {
+        guard headingOn else { return }
+        headingOn = false
+        manager.stopUpdatingHeading()
     }
 
     func requestPreciseLocation() {
@@ -56,6 +73,18 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
         manager.showsBackgroundLocationIndicator = on
         start()
         if on { requestPreciseLocation() }
+    }
+
+    nonisolated func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
+        // A negative accuracy means the compass is calibrating; a huge error is a magnetic
+        // disturbance (a car roof, a phone case). Neither may swing the map.
+        guard newHeading.headingAccuracy >= 0, newHeading.headingAccuracy <= 45,
+              abs(newHeading.timestamp.timeIntervalSinceNow) < 5 else { return }
+        let value = newHeading.trueHeading >= 0 ? newHeading.trueHeading : newHeading.magneticHeading
+        guard (0..<360).contains(value) else { return }
+        Task { @MainActor in
+            self.deviceHeading = value
+        }
     }
 
     nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
@@ -88,9 +117,12 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
             self.reducedAccuracy = reduced
             if self.authorized {
                 self.manager.startUpdatingLocation()
+                self.startHeading()
                 if self.navigating { self.requestPreciseLocation() }
             } else {
                 self.fix = nil
+                self.deviceHeading = nil
+                self.stopHeading()
             }
         }
     }

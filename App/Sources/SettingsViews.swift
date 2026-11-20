@@ -261,6 +261,16 @@ struct SettingsView: View {
                     PlacesKeySettings()
                 }
             }
+            Section {
+                TextField("GTFS-Realtime feed URL", text: $settings.gtfsRealtimeURL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.URL)
+            } header: {
+                Text("Live transit")
+            } footer: {
+                Text("Optional. Any public GTFS-Realtime feed can add delays, service alerts and vehicle positions to the Transitous timetable. Leave empty to use the planner's own live data. No API key is required.")
+            }
             Section("Map background") {
                 Toggle("Apple Maps", isOn: $settings.useAppleMaps)
             }

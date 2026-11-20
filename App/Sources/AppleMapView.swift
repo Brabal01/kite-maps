@@ -399,6 +399,13 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
             view.image = pill(String(cluster.memberAnnotations.count), background: UIColor(hex: 0x0F172A), foreground: .white)
             return view
         }
+        // Kite draws the teal heading arrow itself; hide MapKit's default blue dot.
+        if annotation is MKUserLocation {
+            let view = MKAnnotationView(annotation: annotation, reuseIdentifier: "kite-hidden-user")
+            view.isHidden = true
+            view.alpha = 0
+            return view
+        }
         guard let pin = annotation as? FeaturePin else { return nil }
         let view = MKAnnotationView(annotation: pin, reuseIdentifier: nil)
         configure(view, for: pin)

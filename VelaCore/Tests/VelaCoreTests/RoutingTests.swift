@@ -508,6 +508,23 @@ final class RoutingTests: XCTestCase {
                        "Make a U-turn on Bridge Road")
     }
 
+    func testRoadSignDestinationBeatsStreetName() {
+        // OSM maps signs as "D35: Prostějov"; the driver should hear the place, not the street.
+        let sign = OSRM.Signs(destinations: "D35: Prostějov", exits: nil, from: "D46")
+        XCTAssertEqual(OSRM.instruction(type: "turn", modifier: "right", road: "D35", exit: nil,
+                                        mode: .drive, signs: sign),
+                       "Turn right toward Prostějov")
+        XCTAssertEqual(OSRM.instruction(type: "fork", modifier: "slight right", road: "D35", exit: nil,
+                                        mode: .drive, signs: sign),
+                       "Keep right at the fork toward Prostějov")
+        XCTAssertEqual(OSRM.instruction(type: "roundabout", modifier: nil, road: nil, exit: 2,
+                                        mode: .drive, signs: sign),
+                       "At the roundabout, take the 2nd exit toward Prostějov")
+        // No destination: the normal street instruction stays.
+        XCTAssertEqual(OSRM.instruction(type: "turn", modifier: "right", road: "D35", exit: nil, mode: .drive),
+                       "Turn right onto D35")
+    }
+
     func testNamedRoundaboutWording() {
         XCTAssertEqual(OSRM.instruction(type: "roundabout", modifier: nil, road: "Millbrook Roundabout", exit: nil, mode: .drive),
                        "Exit Millbrook Roundabout")

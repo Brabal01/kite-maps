@@ -474,6 +474,12 @@ public enum OSRM {
 
     static func instruction(type: String, modifier: String?, road: String?, exit: Int?, mode: TravelMode,
                             signs: Signs = Signs()) -> String {
+        /// The sign's destination wins over a street name: "turn right toward Prostějov" is what
+        /// the driver will see on the board. Without a destination, keep the road name.
+        func direction(_ road: String?) -> String {
+            if let t = signs.toward { return " toward \(t)" }
+            return road.map { " onto \($0)" } ?? ""
+        }
         let onto = road.map { " onto \($0)" } ?? ""
         let toward = signs.toward.map { " toward \($0)" }
         let dir = modifier ?? "straight"
@@ -491,31 +497,31 @@ public enum OSRM {
         case "roundabout", "rotary", "roundabout turn":
             // A named roundabout ("Millbrook Roundabout") is where you are, not a road to go onto.
             if let r = road, r.lowercased().contains("roundabout") {
-                return exit.map { "At \(r), take the \(ordinal($0)) exit" } ?? "Exit \(r)"
+                let base = exit.map { "At \(r), take the \(ordinal($0)) exit" } ?? "Exit \(r)"
+                return base + (toward ?? "")
             }
             let n = exit.map { "take the \(ordinal($0)) exit" } ?? "take the exit"
-            return "At the roundabout, \(n)" + onto
-        case "exit roundabout", "exit rotary": return "Exit the roundabout" + onto
-        case "merge": return "Merge" + onto
+            return "At the roundabout, \(n)" + direction(newRoad)
+        case "exit roundabout", "exit rotary": return "Exit the roundabout" + direction(road)
+        case "merge": return "Merge" + direction(newRoad)
         case "on ramp":
-            if let r = newRoad { return "Take the slip road onto \(r)" }
-            return "Take the slip road" + (signs.toward.map { " toward \($0)" } ?? "")
+            return "Take the slip road" + direction(newRoad)
         case "off ramp":
             let base = signs.number.map { "Take exit \($0)" } ?? "Take the exit"
-            if let t = signs.toward { return base + " toward \(t)" }
-            return base + (newRoad.map { " onto \($0)" } ?? "")
+            return base + direction(newRoad)
         case "fork":
             // Leaving the M27 by a slip road that still carries its name isn't "onto M27".
-            let toward = signs.toward.map { " toward \($0)" } ?? ""
-            return "Keep \(dir.contains("left") ? "left" : "right") at the fork" + (newRoad.map { " onto \($0)" } ?? toward)
-        case "end of road": return "At the end of the road, turn \(dir.replacingOccurrences(of: "slight ", with: ""))" + onto
+            return "Keep \(dir.contains("left") ? "left" : "right") at the fork" + direction(newRoad)
+        case "end of road":
+            return "At the end of the road, turn \(dir.replacingOccurrences(of: "slight ", with: ""))" + direction(newRoad)
         case "continue", "new name":
             let stay = road.map { " to stay on \($0)" } ?? ""
             if dir == "uturn" { return "Make a U-turn" + (road.map { " on \($0)" } ?? "") }
-            if dir.contains("slight") { return "Keep \(dir.contains("left") ? "left" : "right")" + (type == "continue" ? stay : onto) }
+            if dir.contains("slight") {
+                return "Keep \(dir.contains("left") ? "left" : "right")" + (toward ?? (type == "continue" ? stay : onto))
+            }
             if dir.contains("left") || dir.contains("right") {
-                let turn = "Turn \(dir)"
-                return turn + (type == "continue" ? stay : onto)
+                return "Turn \(dir)" + (toward ?? (type == "continue" ? stay : onto))
             }
             if let toward { return "Continue straight" + toward }
             return "Continue" + (road.map { " on \($0)" } ?? "")
@@ -523,7 +529,7 @@ public enum OSRM {
             switch dir {
             case "uturn": return "Make a U-turn" + onto
             case "straight": return "Continue straight" + (toward ?? onto)
-            default: return "Turn \(dir)" + onto
+            default: return "Turn \(dir)" + direction(newRoad)
             }
         }
     }

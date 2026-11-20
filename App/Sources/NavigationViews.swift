@@ -70,7 +70,8 @@ struct NavigationOverlay: View {
 
     /** The police risk chip, only worth a look while driving when it isn't low. */
     private var showRiskChip: Bool {
-        guard let risk = nav.policeRisk, !nav.arrived else { return false }
+        guard settings.wazeOn, settings.policeRisk, settings.wazePolice,
+              let risk = nav.policeRisk, !nav.arrived else { return false }
         return PoliceRisk.level(risk) != .low
     }
 

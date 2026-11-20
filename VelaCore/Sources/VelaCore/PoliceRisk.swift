@@ -25,8 +25,12 @@ public enum PoliceRisk {
      * phone, [live] police reported right now on that stretch.
      */
     public static func score(ahead: [LatLng], past: [Report], live: Int, now: Date = Date(),
-                             radius: Double = 400, calendar: Calendar = .current) -> Int {
-        guard ahead.count >= 2 else { return live > 0 ? 70 : 0 }
+                             radius: Double = 400, calendar: Calendar = .current,
+                             liveAvailable: Bool = true) -> Int {
+        // A long history of reports is a reason to watch the road, not proof that police are there
+        // now. Without a live answer, never claim the highest level.
+        func capped(_ value: Int) -> Int { liveAvailable ? value : min(value, 59) }
+        guard ahead.count >= 2 else { return capped(live > 0 ? 70 : 0) }
         let cum = Geo.cumulative(ahead)
         let lats = ahead.map(\.lat), lngs = ahead.map(\.lng)
         let pad = radius / 111_000 * 1.5
@@ -51,6 +55,6 @@ public enum PoliceRisk {
         let fromPast = 1 - exp(-weight / 4)
         let fromLive = 1 - pow(0.3, Double(live))
         let combined = 1 - (1 - fromPast * 0.8) * (1 - fromLive * 0.95)
-        return Int((combined * 100).rounded())
+        return capped(Int((combined * 100).rounded()))
     }
 }

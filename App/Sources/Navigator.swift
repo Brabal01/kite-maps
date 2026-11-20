@@ -192,6 +192,8 @@ final class Navigator: ObservableObject {
     /** Drivers' reports (police, crashes, hazards...) from Waze's app servers, asked every 90 seconds. */
     @Published private(set) var liveAlerts: [WazeAlert] = []
     private var liveAt = Date.distantPast
+    /** Whether the last Waze live ask actually answered; history alone may not claim "high". */
+    private var liveAvailable = false
     /** Closures from the live map, kept for when it doesn't answer. */
     private var closureAlerts: [WazeAlert] = []
     private var riskAt = Date.distantPast
@@ -755,9 +757,13 @@ final class Navigator: ObservableObject {
                 WazeHistory.shared.record(live)
                 self.liveAlerts = live
                 self.liveAt = Date()
-            } else if !self.liveAlerts.isEmpty, Date().timeIntervalSince(self.liveAt) > 300 {
-                // Waze hasn't answered for 5 minutes: don't keep warning about reports that may be long gone.
-                self.liveAlerts = []
+                self.liveAvailable = true
+            } else {
+                self.liveAvailable = false
+                if !self.liveAlerts.isEmpty, Date().timeIntervalSince(self.liveAt) > 300 {
+                    // Waze hasn't answered for 5 minutes: don't keep warning about reports that may be long gone.
+                    self.liveAlerts = []
+                }
             }
             var merged: [String: WazeAlert] = [:]
             for a in self.closureAlerts + self.liveAlerts { merged[a.id] = a }
@@ -820,7 +826,7 @@ final class Navigator: ObservableObject {
         let to = p.alongMeters + 3000
         let ahead = Geo.slice(route.polyline, from: p.alongMeters, to: to)
         let live = routeWaze.filter { $0.alert.kind == .police && s.shows($0.alert) && $0.along > p.alongMeters && $0.along < to }.count
-        let score = PoliceRisk.score(ahead: ahead, past: riskPast ?? [], live: live)
+        let score = PoliceRisk.score(ahead: ahead, past: riskPast ?? [], live: live, liveAvailable: liveAvailable)
         let was = policeRisk.map(PoliceRisk.level) ?? .low
         policeRisk = score
         // Like Highway Radar's hot zone sound: once when it turns high, at most every 10 minutes. Only
@@ -1157,6 +1163,8 @@ final class Navigator: ObservableObject {
     /** The way the phone is moving, once it's fast enough (about 9 mph) for that to be trusted. */
     /** The last few seconds of fixes, for the way the car is going when the phone gives no course. */
     private var recentFixes: [CLLocation] = []
+    /** The phone's compass, for a reroute while stopped or when GPS gives no course. */
+    var compassHeading: Double?
 
     private func heading(_ loc: CLLocation) -> Double? {
         if loc.course >= 0 && loc.speed >= 4 && loc.courseAccuracy >= 0 && loc.courseAccuracy < 45 { return loc.course }
@@ -1166,7 +1174,7 @@ final class Navigator: ObservableObject {
         // the way it came (a simulated wrong turn in Winchester got "turn left" behind it).
         guard loc.horizontalAccuracy >= 0, loc.horizontalAccuracy < 20,
               let from = recentFixes.last(where: { loc.distance(from: $0) >= 20 && loc.timestamp.timeIntervalSince($0.timestamp) < 8 })
-        else { return nil }
+        else { return loc.speed < 4 ? compassHeading : nil }
         return Geo.bearing(LatLng(from.coordinate.latitude, from.coordinate.longitude),
                            LatLng(loc.coordinate.latitude, loc.coordinate.longitude))
     }
@@ -1292,6 +1300,7 @@ final class Navigator: ObservableObject {
         wazeAt = .distantPast
         routeWaze = []
         wazeAhead = nil
+        liveAvailable = false
         loadWaze()
         if let fix = lastFix { handle(fix, estimated: estimating) }
     }

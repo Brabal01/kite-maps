@@ -134,6 +134,20 @@ final class PoliceRiskTests: XCTestCase {
         XCTAssertEqual(PoliceRisk.score(ahead: [], past: near, live: 0, now: now), 0)
         XCTAssertGreaterThan(PoliceRisk.score(ahead: [], past: [], live: 1, now: now), 60)
     }
+
+    func testNoLiveAnswerNeverClaimsHigh() {
+        let road = [LatLng(51.5, -0.2), LatLng(51.5, -0.16)]
+        let now = Date()
+        // Plenty of recent history on this road is medium at most while live Waze is unreachable.
+        let many = (0..<30).map { _ in PoliceRisk.Report(LatLng(51.5002, -0.18), now.addingTimeInterval(-3_600)) }
+        let historyOnly = PoliceRisk.score(ahead: road, past: many, live: 0, now: now, liveAvailable: false)
+        XCTAssertEqual(PoliceRisk.level(historyOnly), .medium)
+        // Even a live count that arrived in the same failed answer cannot produce "high".
+        XCTAssertEqual(PoliceRisk.level(PoliceRisk.score(ahead: road, past: many, live: 3, now: now,
+                                                        liveAvailable: false)), .medium)
+        // With live data available the same inputs may reach high.
+        XCTAssertEqual(PoliceRisk.level(PoliceRisk.score(ahead: road, past: many, live: 3, now: now)), .high)
+    }
 }
 
 final class AircraftTests: XCTestCase {

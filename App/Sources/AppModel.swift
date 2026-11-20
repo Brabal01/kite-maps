@@ -224,6 +224,9 @@ final class AppModel: ObservableObject {
     @Published var mapTick = 0
     /** Which way the map faces, for the compass button. */
     @Published var mapHeading: Double = 0
+    /** The arrow's bearing, smoothed so compass noise cannot make it twitch. */
+    private var smoothedHeading: Double?
+    private var smoothedHeadingAt = Date.distantPast
     /**
      The browse map's 3D, 2D or north-up button. North up is the map as it always was; 3D and 2D
      follow you round like the driving map, without a route.
@@ -851,13 +854,19 @@ final class AppModel: ObservableObject {
         }
         let destId = d.destination.id
         let time = d.transitTime, arriveBy = d.arriveBy
+        let liveURL = settings.gtfsRealtimeURL
         let req = transitRequest
         directions?.trips = nil
         directions?.tripsError = nil
         directions?.trip = 0
         Task {
             do {
-                let trips = try await Transitous.plan(from: from, to: to, time: time, arriveBy: arriveBy)
+                var trips = try await Transitous.plan(from: from, to: to, time: time, arriveBy: arriveBy)
+                // Transitous already carries live times from its own GTFS-Realtime sources. An
+                // optional extra feed can add another region's delays, alerts and vehicle positions.
+                if !liveURL.isEmpty, !trips.isEmpty, let feed = await TransitRealtime.fetch(liveURL) {
+                    trips = TransitRealtime.apply(feed, to: trips)
+                }
                 guard directions?.destination.id == destId, transitRequest == req else { return }
                 directions?.trips = trips.sorted { $0.durationSeconds < $1.durationSeconds }
                 if trips.isEmpty { directions?.tripsError = "No transit trips found here." }
@@ -883,7 +892,7 @@ final class AppModel: ObservableObject {
     }
 
     /** Police risk within about a kilometre of you, from remembered and live Waze police reports. */
-    func updateAreaRisk(live: [WazeAlert]) {
+    func updateAreaRisk(live: [WazeAlert], liveAvailable: Bool = true) {
         guard settings.wazeOn, settings.policeRisk, settings.wazePolice,
               !location.reducedAccuracy, let fix = location.last,
               fix.horizontalAccuracy >= 0, fix.horizontalAccuracy <= 200,
@@ -892,7 +901,8 @@ final class AppModel: ObservableObject {
         let d = 0.0096 / max(cos(here.lat * .pi / 180), 0.2) * 0.62
         let line = [LatLng(here.lat, here.lng - d), LatLng(here.lat, here.lng + d)]
         let near = live.filter { $0.kind == .police && $0.location.distance(to: here) < 1_500 }.count
-        areaRisk = PoliceRisk.score(ahead: line, past: WazeHistory.shared.reports, live: near, radius: 900)
+        areaRisk = PoliceRisk.score(ahead: line, past: WazeHistory.shared.reports, live: near,
+                                    radius: 900, liveAvailable: liveAvailable)
     }
 
     // MARK: Navigation
@@ -906,6 +916,7 @@ final class AppModel: ObservableObject {
                                  exclusion: RouteExclusion? = nil, resumeFreeDrive: Bool = false) {
         selected = nil
         let n = Navigator(route: route, destination: destination, stops: stops, settings: settings, coverage: previewCoverage)
+        n.compassHeading = location.deviceHeading
         n.exclusion = exclusion
         nav = n
         defer { refreshActivity() }
@@ -1173,6 +1184,7 @@ final class AppModel: ObservableObject {
     private func updateDriveRoad(_ loc: CLLocation) {
         guard loc.horizontalAccuracy >= 0, loc.horizontalAccuracy <= 60 else { return }
         if loc.course >= 0 && loc.speed > 0.8 { driveBearing = loc.course }
+        else if let heading = location.deviceHeading { driveBearing = heading }
         driveCoordinate = loc.coordinate
         driveSpeed = max(0, loc.speed)
         mapTick += 1
@@ -1244,7 +1256,9 @@ final class AppModel: ObservableObject {
     private func followBrowse(_ loc: CLLocation, entering: Bool) {
         guard browseFollowing, browseLook != .north, nav == nil, let map else { return }
         guard entering || (selected == nil && results.isEmpty && directions == nil) else { return }
-        let course = loc.course >= 0 && loc.speed > 2 ? loc.course : map.direction
+        // Course while moving, compass while stopped, both smoothed; the map keeps its own heading
+        // only when neither is trustworthy.
+        let course = mapBearing(for: loc)
         let cam: MLNMapCamera
         if entering {
             cam = MLNMapCamera(lookingAtCenter: loc.coordinate, acrossDistance: browseLook == .tilted ? 700 : 900,
@@ -1342,10 +1356,39 @@ final class AppModel: ObservableObject {
 
     func suspendNavigationDisplay() {
         if nav != nil { glide.suspend() }
+        location.stopHeading()
+    }
+
+    /**
+     * The way the arrow points: GPS course while moving (that is the direction the car is really
+     * travelling), the phone's compass when standing still or when course is unavailable. The
+     * shortest-angle filter removes compass jitter without making a real turn feel delayed.
+     */
+    func mapBearing(for loc: CLLocation) -> Double {
+        let courseUsable = loc.course >= 0 && loc.courseAccuracy >= 0 && loc.courseAccuracy < 60
+        let moving = loc.speed >= 1.5 && loc.courseAccuracy < 45
+        let raw: Double?
+        if moving, courseUsable {
+            raw = loc.course
+        } else if let heading = location.deviceHeading {
+            raw = heading
+        } else if courseUsable {
+            raw = loc.course
+        } else {
+            raw = nil
+        }
+        guard let raw else { return smoothedHeading ?? map?.direction ?? 0 }
+        let now = Date()
+        let dt = now.timeIntervalSince(smoothedHeadingAt)
+        smoothedHeadingAt = now
+        let next = HeadingFilter.smooth(previous: smoothedHeading, raw: raw, dt: dt)
+        smoothedHeading = next
+        return next
     }
 
     func resumeNavigationDisplay() {
         defer { refreshActivity() }
+        location.startHeading()
         guard let n = nav, !n.arrived else { return }
         if let fix = location.navigationFix(maximumError: navigationAccuracy(for: n.route.mode)) {
             followCamera(n, fix, animated: false)
@@ -1369,9 +1412,13 @@ final class AppModel: ObservableObject {
                 updateDriveRoad(loc)
             }
             followBrowse(loc, entering: false)
+            // Redraw the browse arrow even when the map isn't following: its bearing changes with
+            // the compass while the phone is stationary.
+            mapTick += 1
             return
         }
         guard !location.reducedAccuracy, loc.horizontalAccuracy <= navigationAccuracy(for: n.route.mode) else { return }
+        n.compassHeading = location.deviceHeading
         n.handle(loc)
         if nav === n, UIApplication.shared.applicationState == .active {
             followCamera(n, loc, animated: true)

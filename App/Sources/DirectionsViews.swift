@@ -830,6 +830,10 @@ struct TripRow: View {
                     Text(late > 0 ? "\(late) min late" : late < 0 ? "\(-late) min early" : "On time")
                         .foregroundColor(late > 1 ? Vela.closed : Vela.open)
                 }
+                if let first = trip.rides.first {
+                    Text(first.isRealtime ? "Live" : "Scheduled")
+                        .foregroundColor(first.isRealtime ? Vela.open : .secondary)
+                }
             }
             .font(.caption).foregroundColor(.secondary)
         }
