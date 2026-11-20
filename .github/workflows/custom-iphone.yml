@@ -3,7 +3,7 @@ name: Build custom iPhone IPA
 on:
   workflow_dispatch:
   push:
-    branches: [iphone-custom-v19]
+    branches: [iphone-custom-v20]
 
 permissions:
   contents: read
@@ -31,10 +31,12 @@ jobs:
           git apply .github/workflows/Kite-v18-changes.patch
           git apply --check .github/workflows/Kite-v19-changes.patch
           git apply .github/workflows/Kite-v19-changes.patch
+          git apply --check .github/workflows/Kite-v20-changes.patch
+          git apply .github/workflows/Kite-v20-changes.patch
           git diff --check
       - name: Test VelaCore
         working-directory: VelaCore
-        run: swift test
+        run: KITE_VERIFY_GOOGLE=1 swift test
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Make the Xcode project
