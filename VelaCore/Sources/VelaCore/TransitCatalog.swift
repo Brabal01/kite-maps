@@ -186,8 +186,8 @@ public actor TransitCatalog {
             row.append(field)
             rows.append(row)
         }
-        if let first = rows.first, let bom = first.first, bom.hasPrefix("\u{FEFF}") {
-            rows[0][0] = String(bom.dropFirst())
+        if let first = rows.first, let head = first.first, head == "\u{FEFF}" {
+            rows[0][0] = String(rows[0][0].dropFirst())
         }
         return rows
     }
