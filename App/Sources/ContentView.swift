@@ -77,11 +77,9 @@ struct ContentView: View {
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: model.liveCam?.id)
         .alert(item: $model.surveillanceInfo) { camera in
-            let details = [camera.operatorName.map { "Operator: \($0)" }, camera.manufacturer.map { "Manufacturer: \($0)" },
-                           camera.surveillance.map { "Watches: \($0)" }, camera.mount.map { "Mount: \($0)" },
-                           camera.direction.map { "Direction: \($0)" }].compactMap { $0 }.joined(separator: "\n")
-            return Alert(title: Text(camera.isALPR ? "Plate reader" : "Surveillance camera"),
-                         message: Text(details.isEmpty ? "Details not mapped in OpenStreetMap." : details), dismissButton: .default(Text("OK")))
+            Alert(title: Text(camera.isALPR ? "Plate reader" : "Surveillance camera"),
+                  message: Text(surveillanceDetails(camera)),
+                  dismissButton: .default(Text("OK")))
         }
         .overlay(alignment: .bottom) {
             if DemoScript.step == "wazemap" || DemoScript.step == "wazeuk" || DemoScript.step == "wazesizes" {
@@ -202,6 +200,18 @@ struct ContentView: View {
             if ready { model.location.start() }
         }
     }
+
+    /** Kept out of the view body: the type checker struggles with a large inline array here. */
+    private func surveillanceDetails(_ camera: SurveillanceCamera) -> String {
+        var parts: [String] = []
+        if let value = camera.operatorName { parts.append("Operator: \(value)") }
+        if let value = camera.manufacturer { parts.append("Manufacturer: \(value)") }
+        if let value = camera.surveillance { parts.append("Watches: \(value)") }
+        if let value = camera.mount { parts.append("Mount: \(value)") }
+        if let value = camera.direction { parts.append("Direction: \(value)") }
+        return parts.isEmpty ? "Details not mapped in OpenStreetMap." : parts.joined(separator: "\n")
+    }
+
 }
 
 /** The map page: a big "Where to?" bar, Home and Work one tap away, and the results or place sheet. */
