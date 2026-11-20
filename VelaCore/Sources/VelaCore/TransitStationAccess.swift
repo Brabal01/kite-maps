@@ -48,12 +48,20 @@ public enum TransitStationAccess {
         let nodeIDs = Set(segments.flatMap { $0.exitNodes + $0.entranceNodes }).sorted()
         guard !nodeIDs.isEmpty else { return [:] }
         let ids = nodeIDs.map(String.init).joined(separator: ",")
-        let query = """
-        [out:json][timeout:8];node(id:(ids))["railway"="subway_entrance"];out tags;
-        """
+        // The IDs must be interpolated. The previous literal "(ids)" asked
+        // Overpass for a node called "ids", so entrance enrichment silently
+        // found nothing on every journey.
+        let query = entranceQuery(ids)
         guard let data = await Overpass.firstAnswer(query, stagger: 3, valid: { elements($0) != nil }),
               !Task.isCancelled else { return [:] }
         return match(segments, data: data)
+    }
+
+    /// The Overpass query for the entrances of the given OSM node ids.
+    static func entranceQuery(_ ids: String) -> String {
+        """
+        [out:json][timeout:8];node(id:(\(ids)))["railway"="subway_entrance"];out tags;
+        """
     }
 
     static func segments(in trip: TransitTrip) -> [Segment] {

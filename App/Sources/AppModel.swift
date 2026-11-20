@@ -634,7 +634,7 @@ final class AppModel: ObservableObject {
         }
         guard let target else {
             if kind == .car {
-                if let nav { nav.say("No parking spot saved yet.") } else { notice = "No parking spot saved yet. Tap P on the map when you park." }
+                if let nav { nav.say("No parking spot saved yet.") } else { notice = "No parking spot saved yet. Tap Parking on the map when you park." }
             }
             // Mid-drive, keep the trip going: a picker on top of it, cancelled, would lose it.
             else if let nav { nav.say("No \(kind == .home ? "home" : "work") address saved yet. Set it in Saved after this drive.") }
@@ -675,7 +675,7 @@ final class AppModel: ObservableObject {
         f.dateStyle = .none
         p.category = L10n.format("Parked at %@", f.string(from: Date()))
         settings.parking = p
-        notice = "Parking spot saved. Tap the P button to find your car."
+        notice = "Parking spot saved. The Parking shortcut finds your car."
         let pid = p.id
         Task {
             guard let found = await Photon.reverse(me), settings.parking?.id == pid else { return }

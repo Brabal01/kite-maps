@@ -4,7 +4,8 @@
 
 ### Unit tests (VelaCore, macOS CI)
 
-- **220 tests, 0 failures** in run `44808484156`.
+- **220 tests, 0 failures** in run `44808484156`, plus two regression tests
+  added afterwards (entrance-query ID interpolation): **222 tests**.
 - New: `RouteAlternativesTests` (6) — fastest kept, near-identical alternatives
   dropped, clearly different roads kept even when slower, shorter route with a
   similar time kept, tolerance scales with trip length, empty/single input.

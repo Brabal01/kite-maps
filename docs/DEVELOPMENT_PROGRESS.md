@@ -59,10 +59,11 @@ redesign.
 
 - Custom IPA workflow run
   [44808484156](https://github.com/Brabal01/kite-maps/actions/runs/44808484156):
-  **success, 3m57s** on commit `07f…` (branch head at the time). A second,
-  push-triggered run for the same commit (`44808481720`) also succeeded.
-- VelaCore: **220 tests, 0 failures**, including the six new
-  `RouteAlternativesTests`.
+  **success, 3m57s** on commit `88f9080`. A second, push-triggered run for the
+  same commit (`44808481720`) also succeeded.
+- VelaCore: **220 tests, 0 failures** at build time, including six new
+  `RouteAlternativesTests`. Two regression tests for the transit entrance query
+  were added afterwards (222 total).
 - Artifacts downloaded and checked independently of CI:
   - `Kite-v29-Full.ipa` — `Payload/Kite.app/Kite` is Mach-O arm64, 14 MB;
     `MapLibre.framework` arm64; app `app.vela.ios` 0.8.0 (1078), iOS ≥ 16.2,

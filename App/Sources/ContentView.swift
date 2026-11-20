@@ -355,6 +355,13 @@ struct BrowseOverlay: View {
         .onChange(of: model.focusSearchRequest) { _ in
             withAnimation(KiteMotion.gentle) { searchFocused = true }
         }
+        .onAppear {
+            // Coming from the Routes page: the request was made while this view
+            // did not exist, so onChange has nothing to fire for. Consume it.
+            guard model.focusSearchRequest > 0 else { return }
+            model.focusSearchRequest = 0
+            DispatchQueue.main.async { searchFocused = true }
+        }
         .task {
             // Screenshot run only: the search box open, to check nothing sits on its panel.
             guard DemoScript.step == "searchfocus" else { return }

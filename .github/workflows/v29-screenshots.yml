@@ -38,7 +38,13 @@ jobs:
 
           # Every simulator command has a hard timeout: a stuck simulator must
           # fail the job with a marker, not keep it occupied for an hour.
-          sim() { timeout 120 xcrun simctl "$@"; }
+          # macOS runners have no GNU `timeout`, so use perl's alarm (it
+          # survives exec and terminates the process with SIGALRM).
+          run_with_timeout() {
+            local secs="$1"; shift
+            perl -e 'alarm shift; exec @ARGV' "$secs" "$@"
+          }
+          sim() { run_with_timeout 120 xcrun simctl "$@"; }
 
           capture() { # name, demo-step, seconds
             local name="$1" step="$2" wait="$3"
@@ -46,7 +52,7 @@ jobs:
             sim terminate "$DEV" app.vela.ios >/dev/null 2>&1 || true
             sim launch "$DEV" app.vela.ios -demo "$step" >/dev/null
             sleep "$wait"
-            timeout 60 xcrun simctl io "$DEV" screenshot "shots/$name.png" >/dev/null
+            run_with_timeout 60 xcrun simctl io "$DEV" screenshot "shots/$name.png" >/dev/null
             echo "DONE $name $(date -u +%H:%M:%S)"
           }
 
@@ -55,7 +61,7 @@ jobs:
             udid=$(xcrun simctl list devices available | grep -m1 -E 'iPhone.*\([0-9A-F-]{36}\)' | sed -E 's/.*\(([0-9A-F-]{36})\).*/\1/')
             [ -n "$udid" ] || { echo "No iPhone simulator available"; exit 1; }
             xcrun simctl boot "$udid" >/dev/null 2>&1 || true
-            timeout 180 xcrun simctl bootstatus "$udid" -b >/dev/null 2>&1
+            run_with_timeout 180 xcrun simctl bootstatus "$udid" -b >/dev/null 2>&1
             xcrun simctl install "$udid" "$APP"
             xcrun simctl privacy "$udid" grant location app.vela.ios >/dev/null 2>&1 || true
             xcrun simctl location "$udid" set 38.5449,-121.7405 >/dev/null 2>&1 || true
@@ -95,10 +101,10 @@ jobs:
 
           # Smaller and larger phones use the same already-created device type
           # only when the runner has it; the two captures are optional extras.
-          SE=$(timeout 90 xcrun simctl create KiteSE com.apple.CoreSimulator.SimDeviceType.iPhone-SE-3rd-generation 2>/dev/null || true)
+          SE=$(run_with_timeout 90 xcrun simctl create KiteSE com.apple.CoreSimulator.SimDeviceType.iPhone-SE-3rd-generation 2>/dev/null || true)
           if [ -n "$SE" ]; then
             xcrun simctl boot "$SE" >/dev/null 2>&1 || true
-            timeout 180 xcrun simctl bootstatus "$SE" -b >/dev/null 2>&1 || true
+            run_with_timeout 180 xcrun simctl bootstatus "$SE" -b >/dev/null 2>&1 || true
             xcrun simctl install "$SE" "$APP"
             xcrun simctl privacy "$SE" grant location app.vela.ios >/dev/null 2>&1 || true
             xcrun simctl location "$SE" set 38.5449,-121.7405 >/dev/null 2>&1 || true
@@ -110,10 +116,10 @@ jobs:
             echo "No SE device type on this runner"
           fi
 
-          MAX=$(timeout 90 xcrun simctl create KiteMax com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro-Max 2>/dev/null || true)
+          MAX=$(run_with_timeout 90 xcrun simctl create KiteMax com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro-Max 2>/dev/null || true)
           if [ -n "$MAX" ]; then
             xcrun simctl boot "$MAX" >/dev/null 2>&1 || true
-            timeout 180 xcrun simctl bootstatus "$MAX" -b >/dev/null 2>&1 || true
+            run_with_timeout 180 xcrun simctl bootstatus "$MAX" -b >/dev/null 2>&1 || true
             xcrun simctl install "$MAX" "$APP"
             xcrun simctl privacy "$MAX" grant location app.vela.ios >/dev/null 2>&1 || true
             xcrun simctl location "$MAX" set 38.5449,-121.7405 >/dev/null 2>&1 || true
