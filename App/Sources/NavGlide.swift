@@ -60,6 +60,10 @@ final class NavGlide: NSObject {
     private var shownBearing: Double = 0
     private var shownAcross: Double = 600
     private var shownPitch: Double = 50
+    /** Skip identical frames: a parked car must not redraw the map 60 times a second. */
+    private var lastDrawn: CLLocationCoordinate2D?
+    private var lastDrawnBearing: Double = .nan
+    private var lastCameraKey = ""
 
     /** Called on every GPS fix while navigating. */
     func fix(_ n: Navigator, _ loc: CLLocation, across: Double, pitch: Double = 50, jump: Bool) {
@@ -87,6 +91,9 @@ final class NavGlide: NSObject {
             shownAcross = across * zoomMultiplier
             shownPitch = pitch
             northBlend = look == .north ? 1 : 0
+            lastDrawn = nil
+            lastDrawnBearing = .nan
+            lastCameraKey = ""
         }
         start()
         if jump { step(dt: 0) }
@@ -107,6 +114,9 @@ final class NavGlide: NSObject {
         shownAlong = nil
         shownCoord = nil
         lastFrame = 0
+        lastDrawn = nil
+        lastDrawnBearing = .nan
+        lastCameraKey = ""
         map?.drawPuck(at: nil, bearing: 0)
     }
 
@@ -173,7 +183,16 @@ final class NavGlide: NSObject {
         shownAcross += (targetZoom - shownAcross) * (dt == 0 ? 1 : 1 - exp(-dt / zoomTime))
         shownPitch += (targetPitch - shownPitch) * (dt == 0 ? 1 : 1 - exp(-dt / zoomTime))
 
-        map.drawPuck(at: coordNow, bearing: shownBearing)
+        let moved = lastDrawn.map {
+            abs($0.latitude - coordNow.latitude) > 1e-7 || abs($0.longitude - coordNow.longitude) > 1e-7
+        } ?? true
+        let turned = lastDrawnBearing.isNaN ||
+            abs(HeadingFilter.shortestDelta(from: lastDrawnBearing, to: shownBearing)) > 0.15
+        if moved || turned {
+            map.drawPuck(at: coordNow, bearing: shownBearing)
+            lastDrawn = coordNow
+            lastDrawnBearing = shownBearing
+        }
         let northTarget: Double = look == .north ? 1 : 0
         northBlend += (northTarget - northBlend) * (dt == 0 ? 1 : 1 - exp(-dt / 0.3))
         if abs(northTarget - northBlend) < 0.001 { northBlend = northTarget }
@@ -183,6 +202,11 @@ final class NavGlide: NSObject {
             var toNorth = (-shownBearing).truncatingRemainder(dividingBy: 360)
             if toNorth > 180 { toNorth -= 360 } else if toNorth < -180 { toNorth += 360 }
             let heading = (shownBearing + toNorth * northBlend + 360).truncatingRemainder(dividingBy: 360)
+            let key = String(format: "%.6f|%.6f|%.1f|%.1f|%.1f|%.3f|%.1f",
+                             coordNow.latitude, coordNow.longitude, shownAcross, shownPitch, heading,
+                             northBlend, Double(map.bounds.height))
+            guard key != lastCameraKey || dt == 0 else { return }
+            lastCameraKey = key
             let cam = MLNMapCamera(lookingAtCenter: coordNow, acrossDistance: shownAcross, pitch: shownPitch, heading: heading)
             let top = Self.topInset(map.bounds.height) * (1 - northBlend)
             let pad = UIEdgeInsets(top: top, left: leftInset, bottom: Self.bottomInset, right: 0)

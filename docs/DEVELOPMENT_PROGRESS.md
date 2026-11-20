@@ -2,6 +2,38 @@
 
 Updated: 2026-11-20
 
+## v26 (in progress)
+
+Base: `iphone-custom-v25` (verified build 1035).
+
+### Navigation core
+
+- **Map matching v2** in `RouteTracker`: candidates are scored by distance, GPS accuracy,
+  vehicle heading against the segment bearing, the distance the vehicle could have travelled
+  since the last fix, and continuity with the previous match. This keeps the arrow on the correct
+  carriageway/flyover instead of jumping to a parallel road.
+- **Dead reckoning** covers short signal gaps and fixes beside bridges, tunnels or car parks:
+  the tracker keeps advancing along the last good match and reports low confidence instead of
+  teleporting. `Progress.isPrecise` is false for poor-accuracy fixes, so the UI cannot present
+  them as measured.
+- **Guarded rerouting**: `ReroutePolicy` requires a confirmed departure, a usable accuracy, a
+  cooldown and confidence; a noisy single fix cannot start a reroute loop. Precise fixes still
+  trigger promptly. Stops, toll/highway avoidance and exclusions remain unchanged.
+- **ETA from mapped segments**: `Route.remainingSeconds(from:)` sums remaining stretches using
+  mapped traffic spans, instead of always taking a flat share of the whole trip. Without traffic
+  spans it falls back to the previous proportional estimate.
+- **Stale traffic request cancellation**: a new traffic refresh cancels the previous one; older
+  answers cannot overwrite a newer route. Transit requests are cancelled the same way.
+- **Rendering**: `NavGlide` skips identical puck/camera frames, so a parked car does not redraw
+  the map at 60 Hz.
+
+### Not in this stage
+
+- A shared provider abstraction/cache for every external service is still roadmap work; existing
+  providers keep their own timeouts and fallbacks.
+- SIRI, offline maps/routing, CarPlay and new transit discovery remain roadmap items.
+- Physical iPhone checks for locked-screen, background GPS and compass are not possible here.
+
 ## v25 (verified build 1034)
 
 Base: `iphone-custom-v24` (verified build 1033).
