@@ -117,7 +117,7 @@ public enum TransitRealtime {
             for i in out.legs.indices where !out.legs[i].isWalk {
                 var leg = out.legs[i]
                 if let update = chooseUpdate(updates, for: leg) {
-                    let age = age(of: update.timestamp, feed: feed, now: now)
+                    let age = dataAge(of: update.timestamp, feed: feed, now: now)
                     if age <= 300 {
                         apply(update, to: &leg, freshness: age <= 120 ? .live : .recent,
                               age: age, provider: feed.provider)
@@ -129,7 +129,7 @@ public enum TransitRealtime {
                     }
                 }
                 if let vehicle = chooseVehicle(vehicles, for: leg), let location = vehicle.location {
-                    let age = age(of: vehicle.updated, feed: feed, now: now)
+                    let age = dataAge(of: vehicle.updated, feed: feed, now: now)
                     // A stale vehicle position is not "where the bus is now".
                     if age <= 120 {
                         leg.liveVehicle = TransitVehicle(location: location, bearing: vehicle.bearing,
@@ -162,7 +162,7 @@ public enum TransitRealtime {
         var time: String
     }
 
-    private static func age(of timestamp: Date?, feed: Feed, now: Date) -> Double {
+    private static func dataAge(of timestamp: Date?, feed: Feed, now: Date) -> Double {
         guard let stamp = timestamp ?? feed.fetchedAt else { return 0 }
         return max(0, now.timeIntervalSince(stamp))
     }
