@@ -3,7 +3,7 @@ name: Build custom iPhone IPA
 on:
   workflow_dispatch:
   push:
-    branches: [iphone-custom-v22]
+    branches: [iphone-custom-v23]
 
 permissions:
   contents: read
@@ -37,6 +37,8 @@ jobs:
           git apply .github/workflows/Kite-v21-changes.patch
           git apply --check .github/workflows/Kite-v22-changes.patch
           git apply .github/workflows/Kite-v22-changes.patch
+          git apply --check .github/workflows/Kite-v23-changes.patch
+          git apply .github/workflows/Kite-v23-changes.patch
           git diff --check
       - name: Test VelaCore
         working-directory: VelaCore
@@ -89,5 +91,6 @@ jobs:
         with:
           name: Kite-custom-ipa
           path: Kite.ipa
+
 
 
