@@ -55,23 +55,23 @@ redesign.
 - **Accessibility:** combined banner sentence + repeat action, labelled lanes,
   dock selection traits, Reduce Motion respected by new transitions.
 
-### v29 verification (build 1086)
+### v29 verification (build 1087)
 
 - Final IPA workflow run
-  [44830587696](https://github.com/Brabal01/kite-maps/actions/runs/44830587696):
-  **success** on commit `4de8f39`. Both variants passed the structure checks.
+  [44833796423](https://github.com/Brabal01/kite-maps/actions/runs/44833796423):
+  **success** on commit `19470ec`. Both variants passed the structure checks.
 - VelaCore: **222 tests, 0 failures**, including six `RouteAlternativesTests`
   and two regression tests for the transit entrance query.
 - Artifacts (from the same source commit):
-  - `Kite-v29-Full.ipa` — arm64 app and MapLibre, `app.vela.ios` 0.8.0 (1086),
+  - `Kite-v29-Full.ipa` — arm64 app and MapLibre, `app.vela.ios` 0.8.0 (1087),
     iOS ≥ 16.2, Live Activities on, `app.vela.ios.navigation` extension 0.8.0
-    (1086), signed.
+    (1087), signed.
   - `Kite-v29-SideStore.ipa` — the same app with no PlugIns and Live Activities
     switched off.
   - Both unpack cleanly, contain no provisioning profile, and have matching
     app/extension versions and minimum OS.
 - Simulator smoke with screenshots: run
-  [`44830594283`](https://github.com/Brabal01/kite-maps/actions/runs/44830594283)
+  [`44833801261`](https://github.com/Brabal01/kite-maps/actions/runs/44833801261)
   on the same commit. It launches the app three times, once without location,
   once in safe mode, then opens home, routes, place, directions, navigation and
   settings, plus home/navigation in dark mode, and uploads the frames.
