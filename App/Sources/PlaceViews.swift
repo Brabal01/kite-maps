@@ -5,7 +5,10 @@ import VelaCore
 struct PlaceHeader: View {
     @ObservedObject var model: AppModel
     let place: Place
+    var journey = false
     @ObservedObject private var settings = AppSettings.shared
+    @State private var showReviews = false
+    @State private var showGallery = false
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
@@ -32,38 +35,63 @@ struct PlaceHeader: View {
             }
             PlaceMetaLine(place: place, here: model.userLatLng)
             StatusText(place: place).font(.subheadline)
-            // The one thing most people want, in reach even with the sheet down.
-            HStack(spacing: 10) {
-                Button { model.openDirections(to: place) } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "arrow.triangle.turn.up.right.diamond.fill").font(.system(size: 20, weight: .bold))
-                        Text("Directions").font(.system(size: 20, weight: .heavy))
+            HStack(spacing: 8) {
+                if !settings.noGoogle, place.source == "google" || (place.reviewCount ?? 0) > 0 || place.featuredReview != nil {
+                    Button { showReviews = true } label: {
+                        Label("Reviews", systemImage: "star.bubble").font(.subheadline.weight(.semibold))
                     }
-                    .foregroundColor(Vela.onAccent(scheme))
-                    .frame(maxWidth: .infinity, minHeight: 56)
-                    .background(Capsule().fill(Vela.accent(scheme)))
+                    .buttonStyle(.bordered)
                 }
-                .buttonStyle(.plain)
-                Button {
-                    model.openDirections(to: place)
-                    model.autoStart = true
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "location.north.fill").font(.system(size: 18, weight: .bold))
-                        Text("Go").font(.system(size: 20, weight: .heavy))
+                if place.photoUrls.contains(where: { !settings.noGoogle || !PhotoStrip.isGoogle($0) })
+                    || (!settings.noGoogle && place.source == "google") {
+                    Button { showGallery = true } label: {
+                        Label("Photos", systemImage: "photo.on.rectangle.angled").font(.subheadline.weight(.semibold))
                     }
-                    .foregroundColor(Vela.onTonal(scheme))
-                    .padding(.horizontal, 24)
-                    .frame(minHeight: 56)
-                    .background(Capsule().fill(Vela.tonal(scheme)))
+                    .buttonStyle(.bordered)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Start driving now")
             }
-            .padding(.top, 8)
+            .sheet(isPresented: $showReviews) { PlaceMediaSheet(place: place).kiteType() }
+            .sheet(isPresented: $showGallery) { PlaceMediaSheet(place: place, photos: true).kiteType() }
+            if journey {
+                PillButton(title: "Add stop", icon: "plus.circle.fill", filled: true) { model.addJourneyStop(place) }
+                    .disabled(model.addingJourneyStop)
+            } else {
+                directions
+            }
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 10)
+    }
+
+    private var directions: some View {
+        HStack(spacing: 10) {
+            Button { model.openDirections(to: place) } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.triangle.turn.up.right.diamond.fill").font(.system(size: 20, weight: .bold))
+                    Text("Directions").font(.system(size: 20, weight: .heavy))
+                }
+                .foregroundColor(Vela.onAccent(scheme))
+                .frame(maxWidth: .infinity, minHeight: 56)
+                .background(Capsule().fill(Vela.accent(scheme)))
+            }
+            .buttonStyle(.plain)
+            Button {
+                model.openDirections(to: place)
+                model.autoStart = true
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "location.north.fill").font(.system(size: 18, weight: .bold))
+                    Text("Go").font(.system(size: 20, weight: .heavy))
+                }
+                .foregroundColor(Vela.onTonal(scheme))
+                .padding(.horizontal, 24)
+                .frame(minHeight: 56)
+                .background(Capsule().fill(Vela.tonal(scheme)))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Start driving now")
+        }
+        .padding(.top, 8)
     }
 }
 
@@ -91,7 +119,7 @@ struct PlaceBody: View {
                     .pickerStyle(.segmented)
                 }
                 if tab == 0 { overview } else { about }
-                Text(place.source == "google" ? "Place details from Google Maps" : "Map data © OpenStreetMap contributors")
+                Text(L10n.text(place.source == "google" ? "Place details from Google Maps" : "Map data © OpenStreetMap contributors"))
                     .font(.caption).foregroundColor(.secondary)
             }
             .padding(.horizontal, 16)
@@ -103,6 +131,7 @@ struct PlaceBody: View {
 
     private func loadDriveTime() async {
         driveSeconds = nil
+        guard !model.hasActiveJourney else { return }
         guard let from = model.userLatLng, from.distance(to: place.location) > 300,
               from.distance(to: place.location) < 300_000 else { return }
         // The same way the directions get it, with the user's avoid settings and today's traffic, so
@@ -131,7 +160,7 @@ struct PlaceBody: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 if let s = driveSeconds {
-                    Label("\(Fmt.duration(s)) drive", systemImage: "car.fill")
+                    Label(L10n.format("%@ drive", String(describing: Fmt.duration(s))), systemImage: "car.fill")
                         .font(.body.weight(.bold))
                         .padding(.horizontal, 16).frame(height: 52)
                         .background(Capsule().stroke(Color.secondary.opacity(0.35)))
@@ -210,6 +239,7 @@ struct PlaceBody: View {
                     }
                 }
             }
+
         }
     }
 
@@ -376,7 +406,7 @@ struct DepartureBoard: View {
 
     private func countdown(_ t: Date) -> String {
         let mins = Int((t.timeIntervalSinceNow / 60).rounded())
-        if mins <= 0 { return "Now" }
+        if mins <= 0 { return L10n.text("Now") }
         if mins < 60 { return "\(mins) min" }
         let f = DateFormatter()
         f.timeStyle = .short

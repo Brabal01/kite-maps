@@ -21,6 +21,16 @@ public struct TransitLeg: Hashable, Sendable {
     /** Minutes late (or early, below zero) when the agency sends live times. */
     public var delayMinutes: Int?
     public var path: [LatLng]
+    public var boardStop: TransitCall?
+    public var exitStop: TransitCall?
+    public var intermediateStops: [TransitCall] = []
+    public var walkSteps: [TransitWalkStep] = []
+    public var agency: String?
+    public var serviceNumber: String?
+    public var arrivalDelayMinutes: Int?
+    public var serviceAlerts: [String] = []
+    public var destinationStop: LatLng?
+    public var arrivalPoint: LatLng? { destinationStop ?? path.last }
 
     public init(isWalk: Bool, mode: String, line: String = "", color: UInt32? = nil, textColor: UInt32? = nil,
                 headsign: String? = nil, fromName: String = "", toName: String = "", depart: Date? = nil,
@@ -35,7 +45,7 @@ public struct TransitLeg: Hashable, Sendable {
     /** What kind of vehicle, for an icon. */
     public var vehicle: Vehicle { Vehicle(mode) }
 
-    public enum Vehicle: Sendable {
+    public enum Vehicle: Equatable, Sendable {
         case walk, bus, metro, tram, train, ferry, other
         init(_ mode: String) {
             switch mode {
@@ -64,6 +74,7 @@ public struct TransitTrip: Identifiable, Hashable, Sendable {
         self.transfers = transfers; self.legs = legs
     }
 
+    public var hasMetroAccessNodes: Bool { !TransitStationAccess.segments(in: self).isEmpty }
     public var rides: [TransitLeg] { legs.filter { !$0.isWalk } }
     public var walkSeconds: Double { legs.filter(\.isWalk).map(\.durationSeconds).reduce(0, +) }
     /** The whole trip's shape, for framing the map. */
@@ -84,22 +95,30 @@ public enum Transitous {
         return URLSession(configuration: c)
     }()
 
-    public static func planURL(from: LatLng, to: LatLng, max: Int = 5, time: Date? = nil, arriveBy: Bool = false) -> URL? {
-        var s = "\(base)/api/v1/plan?fromPlace=\(from.lat.plain),\(from.lng.plain)&toPlace=\(to.lat.plain),\(to.lng.plain)&numItineraries=\(max)"
+    public static func planURL(from: LatLng, to: LatLng, max: Int = 5, time: Date? = nil,
+                               arriveBy: Bool = false, widerAccess: Bool = false) -> URL? {
+        var s = "\(base)/api/v2/plan?fromPlace=\(from.lat.plain),\(from.lng.plain)&toPlace=\(to.lat.plain),\(to.lng.plain)&numItineraries=\(max)&detailedTransfers=true&useRoutedTransfers=true"
         if let time {
             let f = ISO8601DateFormatter()
             s += "&time=" + f.string(from: time)
             if arriveBy { s += "&arriveBy=true" }
         }
+        if widerAccess { s += "&maxPreTransitTime=1800&maxPostTransitTime=1800" }
         return URL(string: s)
     }
 
     /** Trips leaving now, or around [time] (arriving by it when [arriveBy]). Throws on a network error. */
     public static func plan(from: LatLng, to: LatLng, time: Date? = nil, arriveBy: Bool = false) async throws -> [TransitTrip] {
         guard let url = planURL(from: from, to: to, time: time, arriveBy: arriveBy) else { return [] }
+        let first = try await fetchPlan(url)
+        guard first.isEmpty, !Task.isCancelled,
+              let expanded = planURL(from: from, to: to, time: time, arriveBy: arriveBy, widerAccess: true) else { return first }
+        return (try? await fetchPlan(expanded)) ?? []
+    }
+
+    private static func fetchPlan(_ url: URL) async throws -> [TransitTrip] {
         let (data, resp) = try await session.data(from: url)
-        let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
-        guard status == 200 else { throw URLError(.badServerResponse) }
+        guard (resp as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
         return parse(data)
     }
 
@@ -249,19 +268,79 @@ public enum Transitous {
                              fromName: from["name"] as? String ?? "", toName: to["name"] as? String ?? "",
                              depart: start, arrive: end, durationSeconds: dur,
                              distanceMeters: number(l["distance"]) ?? 0, path: path(l))
+        out.destinationStop = point(to)
+        if (l["legGeometry"] as? [String: Any])?["precision"] == nil,
+           let origin = point(from), let destination = out.destinationStop,
+           let a = out.path.first, let b = out.path.last,
+           (a.distance(to: origin) > 300 || b.distance(to: destination) > 300) {
+            let encoded = (l["legGeometry"] as? [String: Any])?["points"] as? String ?? ""
+            let alternative = Geo.decodePolyline(encoded, precision: 1e5)
+            if let start = alternative.first, let end = alternative.last,
+               start.distance(to: origin) < 200, end.distance(to: destination) < 200 {
+                out.path = alternative
+            } else {
+                out.path = [origin, destination]
+            }
+        }
         if out.path.count < 2, let a = point(from), let b = point(to) { out.path = [a, b] }
         if out.distanceMeters == 0 { out.distanceMeters = Geo.length(out.path) }
-        guard !out.isWalk else { return out }
+        if out.isWalk {
+            out.walkSteps = (l["steps"] as? [[String: Any]] ?? []).compactMap(walkStep)
+            return out
+        }
+        out.boardStop = call(from)
+        out.exitStop = call(to)
+        out.agency = string(l["agencyName"])
+        out.serviceNumber = string(l["tripShortName"])
+        out.serviceAlerts = alerts([l, from, to])
+        let intermediate = l["intermediateStops"] as? [[String: Any]] ?? []
+        out.intermediateStops = intermediate.compactMap(call)
         out.line = [l["routeShortName"], l["displayName"], l["routeLongName"]]
             .compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty } ?? ""
         out.color = hex(l["routeColor"])
         out.textColor = hex(l["routeTextColor"])
-        out.headsign = (l["headsign"] as? String).flatMap { $0.isEmpty ? nil : $0 }
-        out.stops = ((l["intermediateStops"] as? [Any])?.count ?? 0) + 1
-        if l["realTime"] as? Bool == true, let s = start, let sched = date(l["scheduledStartTime"]) {
-            out.delayMinutes = Int((s.timeIntervalSince(sched) / 60).rounded())
+        out.headsign = string(l["headsign"]) ?? (l["tripTo"] as? [String: Any]).flatMap { string($0["name"]) }
+        out.stops = intermediate.count + 1
+        if l["realTime"] as? Bool == true {
+            if let start, let scheduled = date(l["scheduledStartTime"]) {
+                out.delayMinutes = Int((start.timeIntervalSince(scheduled) / 60).rounded())
+            }
+            if let end, let scheduled = date(l["scheduledEndTime"]) {
+                out.arrivalDelayMinutes = Int((end.timeIntervalSince(scheduled) / 60).rounded())
+            }
         }
         return out
+    }
+
+    private static func call(_ value: [String: Any]) -> TransitCall? {
+        guard let name = string(value["name"]) else { return nil }
+        return TransitCall(name: name, timeZone: string(value["tz"]), arrival: date(value["arrival"]),
+                           departure: date(value["departure"]), track: string(value["track"]) ?? string(value["scheduledTrack"]),
+                           scheduledTrack: string(value["scheduledTrack"]), stopCode: string(value["stopCode"]),
+                           detail: string(value["description"]), skipped: value["cancelled"] as? Bool == true)
+    }
+
+    private static func walkStep(_ value: [String: Any]) -> TransitWalkStep? {
+        guard let direction = string(value["relativeDirection"]) else { return nil }
+        return TransitWalkStep(direction: direction, street: string(value["streetName"]),
+                               distance: number(value["distance"]) ?? 0, fromLevel: number(value["fromLevel"]),
+                               toLevel: number(value["toLevel"]), fromNode: value["fromOsmNode"] as? Int64,
+                               toNode: value["toOsmNode"] as? Int64)
+    }
+
+    private static func alerts(_ sources: [[String: Any]]) -> [String] {
+        var seen = Set<String>()
+        return sources.flatMap { $0["alerts"] as? [[String: Any]] ?? [] }.compactMap { alert in
+            let header = string(alert["headerText"])
+            let detail = string(alert["descriptionText"])
+            let message = [header, detail == header ? nil : detail].compactMap { $0 }.joined(separator: "\n")
+            return !message.isEmpty && seen.insert(message).inserted ? message : nil
+        }
+    }
+
+    private static func string(_ value: Any?) -> String? {
+        guard let clean = (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !clean.isEmpty else { return nil }
+        return clean
     }
 
     private static func path(_ l: [String: Any]) -> [LatLng] {

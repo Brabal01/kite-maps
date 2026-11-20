@@ -71,3 +71,29 @@ final class MapLinksTests: XCTestCase {
         XCTAssertEqual(p.lng, -0.1286, accuracy: 0.001)
     }
 }
+
+final class GooglePlacePageTests: XCTestCase {
+    func testFeatureIDKeepsExactPlaceWithoutPlacesKey() {
+        var place = Place(id: "test", name: "Kavárna", location: LatLng(49, 17), source: "google")
+        place.featureId = "0x123:0xffffffffffffffff"
+        XCTAssertEqual(place.googlePlacePage?.absoluteString, "https://www.google.com/maps?cid=18446744073709551615")
+    }
+
+    func testInvalidFeatureFallsBackToGooglePlaceID() {
+        var place = Place(id: "test", name: "Kavárna", location: LatLng(49, 17), source: "google")
+        place.featureId = "invalid:0x1"
+        place.placeId = "ChIJExample"
+        let query = place.googlePlacePage.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }?.queryItems
+        XCTAssertEqual(query?.first { $0.name == "query_place_id" }?.value, "ChIJExample")
+        XCTAssertEqual(query?.first { $0.name == "query" }?.value, "Kavárna")
+        place.source = "osm"
+        XCTAssertNil(place.googlePlacePage)
+    }
+
+    func testFallbackSearchPreservesBusinessAndAddress() {
+        var place = Place(id: "test", name: "Čaj & Káva", location: LatLng(49, 17), source: "google")
+        place.address = "Olomouc"
+        let query = place.googlePlacePage.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }?.queryItems
+        XCTAssertEqual(query?.first { $0.name == "query" }?.value, "Čaj & Káva Olomouc")
+    }
+}

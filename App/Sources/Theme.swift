@@ -119,7 +119,7 @@ enum Fmt {
     static func distance(_ m: Double) -> String {
         if metric {
             if m < 950 { return "\(Int((m / 10).rounded()) * 10) m" }
-            return m < 9_950 ? String(format: "%.1f km", m / 1000) : "\(Int((m / 1000).rounded())) km"
+            return m < 9_950 ? String(format: "%.1f km", locale: AppSettings.shared.language.locale, m / 1000) : "\(Int((m / 1000).rounded())) km"
         }
         if yards {
             let yd = m * 1.09361
@@ -129,7 +129,7 @@ enum Fmt {
             if ft < 1000 { return "\(max(Int((ft / 50).rounded()) * 50, 50)) ft" }
         }
         let mi = m / 1609.344
-        return mi < 9.95 ? String(format: "%.1f mi", mi) : "\(Int(mi.rounded())) mi"
+        return mi < 9.95 ? String(format: "%.1f mi", locale: AppSettings.shared.language.locale, mi) : "\(Int(mi.rounded())) mi"
     }
 
     /** Words for the voice: "400 feet", "1.2 miles". */
@@ -192,6 +192,7 @@ enum Fmt {
 
     static func arrival(_ s: Double) -> String {
         let f = DateFormatter()
+        f.locale = AppSettings.shared.language.locale
         f.timeStyle = .short
         return f.string(from: Date().addingTimeInterval(s))
     }
@@ -360,7 +361,7 @@ struct MapLookButton: View {
             .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Map view: \(look.title)")
+        .accessibilityLabel(L10n.format("Map view: %@", L10n.text(look.title)))
         .accessibilityHint("Switches between 3D, 2D and north up")
     }
 }
@@ -377,7 +378,7 @@ struct PillButton: View {
         Button(action: action) {
             HStack(spacing: 6) {
                 Image(systemName: icon).font(.system(size: 17, weight: .bold))
-                Text(title).font(.body.weight(.bold))
+                Text(L10n.text(title)).font(.body.weight(.bold))
             }
             .padding(.horizontal, 20)
             .frame(height: 52)

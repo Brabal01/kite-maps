@@ -21,7 +21,7 @@ final class DataDiagnostics: ObservableObject {
         let mapImage: Data? = {
             guard includeMap, let map = model.map, map.bounds.width > 0, map.bounds.height > 0 else { return nil }
             return UIGraphicsImageRenderer(bounds: map.bounds).image { _ in
-                map.drawHierarchy(in: map.bounds, afterScreenUpdates: true)
+                map.mapView.drawHierarchy(in: map.bounds, afterScreenUpdates: true)
             }.pngData()
         }()
         let s = model.settings
@@ -48,7 +48,7 @@ final class DataDiagnostics: ObservableObject {
             if let mapImage { entries.append(.init(name: "map.png", data: mapImage)) }
 
             @MainActor func timed<T>(_ name: String, _ work: () async -> T?, describe: (T) -> String) async {
-                status = "Testing \(name)…"
+                status = L10n.format("Testing %@…", name)
                 let t0 = Date()
                 let result = await work()
                 let ms = Int(Date().timeIntervalSince(t0) * 1000)
@@ -69,7 +69,7 @@ final class DataDiagnostics: ObservableObject {
                 report = url
                 status = "Ready to share."
             } catch {
-                status = "Couldn't make the file: \(error.localizedDescription)"
+                status = L10n.format("Couldn't make the file: %@", error.localizedDescription)
             }
             running = false
         }
@@ -91,11 +91,11 @@ struct DataDiagnosticsView: View {
         Form {
             Section {
                 Toggle("Include a picture of the map", isOn: $includeMap)
-                Button(diagnostics.running ? "Testing…" : "Run tests") {
+                Button(L10n.text(diagnostics.running ? "Testing…" : "Run tests")) {
                     diagnostics.run(model: model, includeMap: includeMap)
                 }
                 .disabled(diagnostics.running)
-                Text(diagnostics.status).font(.footnote).foregroundColor(.secondary)
+                Text(L10n.text(diagnostics.status)).font(.footnote).foregroundColor(.secondary)
                 if let report = diagnostics.report {
                     ShareLink(item: report) { Label("Share diagnostics", systemImage: "square.and.arrow.up") }
                 }

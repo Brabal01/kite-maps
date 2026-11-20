@@ -325,6 +325,7 @@ extension StepMerge {
             guard w.range(of: #"exit \d|junction \d"#, options: .regularExpression) == nil else { continue }
             let near = google.filter { kinds.contains($0.type) && side($0.type) == side(steps[i].type) && abs($0.alongMeters - steps[i].alongMeters) < 150 }
             guard let g = near.min(by: { abs($0.alongMeters - steps[i].alongMeters) < abs($1.alongMeters - steps[i].alongMeters) }) else { continue }
+            if steps[i].exitSign == nil { steps[i].exitSign = g.exitSign }
             let gw = g.instruction.lowercased()
             // The junction number off Google's sign, with the router's destinations: "Take exit 4 toward The Midlands and London".
             if let r = gw.range(of: #"junction \d+[a-z]?"#, options: .regularExpression), w.hasPrefix("take the exit") {

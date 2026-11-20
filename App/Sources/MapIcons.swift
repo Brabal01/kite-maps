@@ -30,30 +30,40 @@ enum MapIcons {
     }
 
     static func register(in style: MLNStyle) {
-        for k in kinds { style.setImage(dot(k.symbol, UIColor(hex: k.color)), forName: k.name) }
-        style.setImage(dot("mappin", UIColor(hex: 0xE8453C)), forName: "cat-default")
-        style.setImage(selectedPin(), forName: "pin-selected")
-        style.setImage(originDot(), forName: "pin-origin")
-        style.setImage(puck(dark: true), forName: "puck")
-        style.setImage(bubble(fill: UIColor(hex: 0x0F766E), stroke: .white), forName: "bubble-sel")
-        style.setImage(bubble(fill: .white, stroke: UIColor(hex: 0xBDC1C6)), forName: "bubble-alt")
-        style.setImage(bubble(fill: UIColor(hex: 0x2DD4BF), stroke: UIColor(hex: 0x0F766E)), forName: "road-pill")
-        style.setImage(speedCamera(), forName: "cam-speed")
-        style.setImage(plateCamera(), forName: "cam-plate")
-        style.setImage(surveillanceCamera(), forName: "cam-surveillance")
-        style.setImage(trafficLight(), forName: "traffic-light")
+        registerImages { image, name in style.setImage(image, forName: name) }
+    }
+
+    static func registerImages(_ add: (UIImage, String) -> Void) {
+        for k in kinds { add(dot(k.symbol, UIColor(hex: k.color)), k.name) }
+        add(dot("mappin", UIColor(hex: 0xE8453C)), "cat-default")
+        add(selectedPin(), "pin-selected")
+        add(originDot(), "pin-origin")
+        add(puck(dark: true), "puck")
+        add(bubble(fill: UIColor(hex: 0x005BC5), stroke: .white), "bubble-sel")
+        add(bubble(fill: .white, stroke: UIColor(hex: 0xBDC1C6)), "bubble-alt")
+        add(bubble(fill: UIColor(hex: 0xB8DBFF), stroke: UIColor(hex: 0x092853)), "road-pill")
+        add(speedCamera(), "cam-speed")
+        add(plateCamera(), "cam-plate")
+        add(surveillanceCamera(), "cam-surveillance")
+        add(trafficLight(), "traffic-light")
+        add(dot("figure.walk", UIColor(hex: 0x2563EB)), "pedestrian-crossing")
+        add(dot("arrow.right", UIColor(hex: 0x2563EB)), "one-way")
+        add(dot("triangle", UIColor(hex: 0xB91C1C)), "give-way")
+        add(dot("stop.octagon.fill", UIColor(hex: 0xB91C1C)), "route-stop")
+        add(dot("train.side.front.car", UIColor(hex: 0x6D28D9)), "route-crossing")
+        add(dot("tram.fill", UIColor(hex: 0x6D28D9)), "tram-crossing")
         // Live camera photos: sky blue for road cameras, violet for Windy's scenic webcams.
-        style.setImage(dot("web.camera.fill", UIColor(hex: 0x0284C7)), forName: "livecam-road")
-        style.setImage(dot("sun.horizon.fill", UIColor(hex: 0x7C3AED)), forName: "livecam-web")
-        for k in WazeAlert.Kind.allCases { style.setImage(waze(k), forName: "waze-\(k.rawValue)") }
-        style.setImage(turnHead(), forName: "turn-head")
-        style.setImage(routeChevron(), forName: "route-chevron")
-        style.setImage(dot("smallcircle.filled.circle", UIColor(hex: 0x5F6368)), forName: "pin-stop")
+        add(dot("web.camera.fill", UIColor(hex: 0x0284C7)), "livecam-road")
+        add(dot("sun.horizon.fill", UIColor(hex: 0x7C3AED)), "livecam-web")
+        for k in WazeAlert.Kind.allCases { add(waze(k), "waze-\(k.rawValue)") }
+        add(turnHead(), "turn-head")
+        add(routeChevron(), "route-chevron")
+        add(dot("smallcircle.filled.circle", UIColor(hex: 0x5F6368)), "pin-stop")
         // My places: home, work, the parked car and saved places.
-        style.setImage(dot("house.fill", UIColor(hex: 0x1A73E8)), forName: "mine-home")
-        style.setImage(dot("briefcase.fill", UIColor(hex: 0x8D6E63)), forName: "mine-work")
-        style.setImage(dot("parkingsign", UIColor(hex: 0x1967D2)), forName: "mine-parking")
-        style.setImage(dot("bookmark.fill", UIColor(hex: 0x0F9D58)), forName: "mine-saved")
+        add(dot("house.fill", UIColor(hex: 0x1A73E8)), "mine-home")
+        add(dot("briefcase.fill", UIColor(hex: 0x8D6E63)), "mine-work")
+        add(dot("parkingsign", UIColor(hex: 0x1967D2)), "mine-parking")
+        add(dot("bookmark.fill", UIColor(hex: 0x0F9D58)), "mine-saved")
     }
 
     /** Vela's speed camera badge: amber rounded square, head-on camera with a big lens and flash slit. */

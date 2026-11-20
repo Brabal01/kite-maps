@@ -18,6 +18,6 @@ final class Connectivity: ObservableObject {
 
     /** "No internet connection." when offline, else [fallback]. */
     static func explain(_ fallback: String) -> String {
-        shared.online ? fallback : "No internet connection. Check your signal and try again."
+        L10n.text(shared.online ? fallback : "No internet connection. Check your signal and try again.")
     }
 }

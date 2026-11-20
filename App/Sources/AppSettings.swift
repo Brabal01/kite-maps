@@ -36,6 +36,16 @@ final class AppSettings: ObservableObject {
     static let shared = AppSettings()
     private let d = UserDefaults.standard
 
+    @Published var language: KiteLanguage { didSet { d.set(language.rawValue, forKey: "language") } }
+    @Published var useAppleMaps = UserDefaults.standard.bool(forKey: "useAppleMaps") {
+        didSet { d.set(useAppleMaps, forKey: "useAppleMaps") }
+    }
+    @Published var mapboxToken = UserDefaults.standard.string(forKey: "mapboxToken") ?? "" {
+        didSet { d.set(mapboxToken, forKey: "mapboxToken") }
+    }
+    @Published var useMapbox = UserDefaults.standard.bool(forKey: "useMapbox") {
+        didSet { d.set(useMapbox, forKey: "useMapbox") }
+    }
     @Published var theme: ThemeMode { didSet { d.set(theme.rawValue, forKey: "theme") } }
     @Published var units: UnitsMode { didSet { d.set(units.rawValue, forKey: "units") } }
     @Published var voice: Bool { didSet { d.set(voice, forKey: "voice") } }
@@ -49,6 +59,10 @@ final class AppSettings: ObservableObject {
     @Published var avoidTolls: Bool { didSet { d.set(avoidTolls, forKey: "avoidTolls") } }
     @Published var avoidHighways: Bool { didSet { d.set(avoidHighways, forKey: "avoidHighways") } }
     /** "Use Kite without Google": search and routes from open data only. */
+    @Published var preferGoogleSearch = UserDefaults.standard.object(forKey: "preferGoogleSearch") as? Bool ?? true {
+        didSet { d.set(preferGoogleSearch, forKey: "preferGoogleSearch") }
+    }
+    var googleSearchEnabled: Bool { !noGoogle && preferGoogleSearch }
     @Published var noGoogle: Bool { didSet { d.set(noGoogle, forKey: "noGoogle"); if noGoogle { Task { @MainActor in WazeWeb.shared.shutDown() } } } }
     /** Fixed speed cameras on the map, and plate readers (DeFlock), from OpenStreetMap. */
     @Published var speedCameras: Bool { didSet { d.set(speedCameras, forKey: "speedCameras") } }
@@ -62,6 +76,17 @@ final class AppSettings: ObservableObject {
     @Published var mapZoom: MapZoom { didSet { d.set(mapZoom.rawValue, forKey: "mapZoom") } }
     /** The driving map's 3D, 2D or north-up choice from the map button, kept for the next drive. */
     @Published var driveLook: MapLook { didSet { d.set(driveLook.rawValue, forKey: "driveLook") } }
+    /** Show 2D footprints and 3D extrusions on the navigation map, not just while browsing. */
+    @Published var navArrowScale: Double { didSet { d.set(navArrowScale, forKey: "navArrowScale") } }
+    @Published var speedOnRight: Bool { didSet { d.set(speedOnRight, forKey: "speedOnRight") } }
+    @Published var showNavSpeed: Bool { didSet { d.set(showNavSpeed, forKey: "showNavSpeed") } }
+    @Published var showNavRoad: Bool { didSet { d.set(showNavRoad, forKey: "showNavRoad") } }
+    @Published var speakLimitDrops: Bool { didSet { d.set(speakLimitDrops, forKey: "speakLimitDrops") } }
+    @Published var suggestFasterRoutes = UserDefaults.standard.object(forKey: "suggestFasterRoutes") as? Bool ?? true {
+        didSet { d.set(suggestFasterRoutes, forKey: "suggestFasterRoutes") }
+    }
+    @Published var showMusicControls: Bool { didSet { d.set(showMusicControls, forKey: "showMusicControls") } }
+    @Published var navBuildings: Bool { didSet { d.set(navBuildings, forKey: "navBuildings") } }
     /** Live reports from Waze drivers (police, crashes, hazards…): on the map, and warned about while driving. */
     @Published var waze: Bool { didSet { d.set(waze, forKey: "waze"); if !waze { Task { @MainActor in WazeWeb.shared.shutDown() } } } }
     /** The "Waze alerts (beta)" question has been answered, on first launch or after updating. */
@@ -105,6 +130,7 @@ final class AppSettings: ObservableObject {
     @Published var recentPlaces: [Place] { didSet { save(recentPlaces, "recentPlaces") } }
 
     private init() {
+        language = KiteLanguage(rawValue: d.string(forKey: "language") ?? "") ?? .system
         theme = ThemeMode(rawValue: d.string(forKey: "theme") ?? "") ?? .system
         units = UnitsMode(rawValue: d.string(forKey: "units") ?? "") ?? .auto
         voice = d.object(forKey: "voice") as? Bool ?? true
@@ -124,6 +150,13 @@ final class AppSettings: ObservableObject {
         speedingAlert = d.bool(forKey: "speedingAlert")
         mapZoom = MapZoom(rawValue: d.string(forKey: "mapZoom") ?? "") ?? .normal
         driveLook = MapLook(rawValue: d.string(forKey: "driveLook") ?? "") ?? .tilted
+        navArrowScale = min(1.35, max(0.75, d.object(forKey: "navArrowScale") as? Double ?? 1))
+        speedOnRight = d.bool(forKey: "speedOnRight")
+        showNavSpeed = d.object(forKey: "showNavSpeed") as? Bool ?? true
+        showNavRoad = d.object(forKey: "showNavRoad") as? Bool ?? true
+        speakLimitDrops = d.bool(forKey: "speakLimitDrops")
+        showMusicControls = d.bool(forKey: "showMusicControls")
+        navBuildings = d.object(forKey: "navBuildings") as? Bool ?? true
         parkingButton = d.object(forKey: "parkingButton") as? Bool ?? true
         liveCams = d.object(forKey: "liveCams") as? Bool ?? true
         liveRoadCams = d.object(forKey: "liveRoadCams") as? Bool ?? true

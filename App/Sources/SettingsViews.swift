@@ -45,7 +45,7 @@ struct LayersSheet: View {
             if let n = liveCount, settings.wazeOn, settings.wazeOnMap || settings.wazeHeatmap {
                 HStack(spacing: 8) {
                     Circle().fill(Color(hex: 0x22C55E)).frame(width: 10, height: 10)
-                    Text("Live from Waze · \(n) report\(n == 1 ? "" : "s") on the map").font(.subheadline.weight(.semibold))
+                    Text(L10n.format("Live from Waze · %@ report%@ on the map", String(describing: n), String(describing: n == 1 || L10n.isCzech ? "" : "s"))).font(.subheadline.weight(.semibold))
                         .foregroundColor(.secondary)
                 }
                 .accessibilityElement(children: .combine)
@@ -69,7 +69,7 @@ struct LayersSheet: View {
                     .frame(width: 74, height: 64)
                     .background(RoundedRectangle(cornerRadius: 14).fill(Vela.chip(scheme)))
                     .overlay(RoundedRectangle(cornerRadius: 14).stroke(on ? Vela.accent(scheme) : .clear, lineWidth: 3))
-                Text(title).font(.caption.weight(on ? .semibold : .regular))
+                Text(L10n.text(title)).font(.caption.weight(on ? .semibold : .regular))
                     .foregroundColor(on ? Vela.accent(scheme) : .primary)
             }
         }
@@ -78,6 +78,7 @@ struct LayersSheet: View {
 }
 
 struct SettingsView: View {
+    @AppStorage("walkingSpeed") private var walkingSpeed = 5.0
     @ObservedObject var settings: AppSettings
     /** For "Share diagnostics" in About. */
     var model: AppModel? = nil
@@ -105,7 +106,12 @@ struct SettingsView: View {
             // A short menu like Waze's: a few big rows, each opening a page with its switches.
             Form {
                 Section {
-                    menuRow("Voice & driving", detail: "Voice, travel mode, avoid tolls and \(Fmt.yards ? "motorways" : "highways")",
+                    Picker("Language", selection: $settings.language) {
+                        Text("System language").tag(KiteLanguage.system)
+                        Text(verbatim: "Čeština").tag(KiteLanguage.czech)
+                        Text(verbatim: "English").tag(KiteLanguage.english)
+                    }
+                    menuRow("Voice & driving", detail: L10n.format("Voice, travel mode, avoid tolls and %@", String(describing: Fmt.yards ? "motorways" : "highways")),
                             icon: "speaker.wave.2.fill", color: 0x0F766E) { drivingPage }
                     menuRow("Cameras & speed", detail: "Camera warnings, speeding alert", icon: "camera.fill", color: 0xDC2626) { camerasPage }
                     menuRow("Road alerts", detail: Waze.shares.contains(.police) ? "Police, crashes, closures" : "Closures, police aircraft",
@@ -153,11 +159,11 @@ struct SettingsView: View {
                     .frame(width: 36, height: 36)
                     .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color(hex: color)))
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(.system(size: 17, weight: .semibold))
-                    Text(detail).font(.subheadline).foregroundColor(.secondary)
+                    Text(L10n.text(title)).font(.system(size: 17, weight: .semibold))
+                    Text(L10n.text(detail)).font(.subheadline).foregroundColor(.secondary)
                 }
                 Spacer(minLength: 4)
-                if let value { Text(value).foregroundColor(.secondary) }
+                if let value { Text(L10n.text(value)).foregroundColor(.secondary) }
             }
             .padding(.vertical, 6)
         }
@@ -171,10 +177,21 @@ struct SettingsView: View {
                     SettingLabel("Voice guidance", icon: "speaker.wave.2.fill", color: 0x0F766E)
                 }
                 Picker(selection: $settings.defaultMode) {
-                    ForEach(TravelMode.allCases) { Text($0.label).tag($0) }
+                    ForEach(TravelMode.allCases) { Text(L10n.text($0.label)).tag($0) }
                 } label: { SettingLabel("Default travel mode", icon: "car.fill", color: 0x2563EB) }
             }
             Section("Routes") {
+                NavigationLink {
+                    LaneGuidancePreview()
+                } label: {
+                    SettingLabel("Lane guidance preview", icon: "road.lanes", color: 0x2563EB)
+                }
+                Toggle(isOn: $settings.suggestFasterRoutes) {
+                    SettingLabel("Suggest faster routes", icon: "arrow.triangle.branch", color: 0x0F766E)
+                }
+                Stepper(value: $walkingSpeed, in: 2...8, step: 0.5) {
+                    LabeledContent(L10n.text("Walking speed"), value: "\(walkingSpeed.formatted()) km/h")
+                }.onChange(of: walkingSpeed) { _ in model?.refreshWalkingRoutes() }
                 Toggle(isOn: $settings.avoidTolls) { SettingLabel("Avoid tolls", icon: "sterlingsign.circle.fill", color: 0xF59E0B) }
                 Toggle(isOn: $settings.avoidHighways) {
                     SettingLabel(Fmt.yards ? "Avoid motorways" : "Avoid highways", icon: "road.lanes", color: 0x1D4ED8)
@@ -238,25 +255,67 @@ struct SettingsView: View {
 
     private var mapPage: some View {
         Form {
+            if !settings.noGoogle {
+                Section("Google Places") {
+                    Toggle("Search places with Google Maps", isOn: $settings.preferGoogleSearch)
+                    PlacesKeySettings()
+                }
+            }
+            Section("Map background") {
+                Toggle("Apple Maps", isOn: $settings.useAppleMaps)
+            }
+            Section("Mapbox") {
+                MapboxSettings(settings: settings)
+                    .disabled(settings.useAppleMaps)
+            }
             Section {
                 Picker(selection: $settings.theme) {
-                    ForEach(ThemeMode.allCases) { Text($0.label).tag($0) }
+                    ForEach(ThemeMode.allCases) { Text(L10n.text($0.label)).tag($0) }
                 } label: { SettingLabel("Theme", icon: "circle.lefthalf.filled", color: 0x334155) }
                 Picker(selection: $settings.units) {
-                    ForEach(UnitsMode.allCases) { Text($0.label).tag($0) }
+                    ForEach(UnitsMode.allCases) { Text(L10n.text($0.label)).tag($0) }
                 } label: { SettingLabel("Distance units", icon: "ruler.fill", color: 0x0891B2) }
                 Toggle(isOn: $settings.parkingButton) { SettingLabel("Parking button on the map", icon: "parkingsign", color: 0x2563EB) }
             }
             Section {
+                Toggle(isOn: $settings.navBuildings) {
+                    SettingLabel("Buildings while navigating", icon: "building.2.fill", color: 0x64748B)
+                }
                 VStack(alignment: .leading, spacing: 10) {
                     SettingLabel("Map zoom while driving", icon: "plus.magnifyingglass", color: 0x0F766E)
                     Picker("Map zoom while driving", selection: $settings.mapZoom) {
-                        ForEach(MapZoom.allCases, id: \.self) { Text($0.title).tag($0) }
+                        ForEach(MapZoom.allCases, id: \.self) { Text(L10n.text($0.title)).tag($0) }
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
                 }
                 .padding(.vertical, 4)
+                Picker("Navigation arrow size", selection: $settings.navArrowScale) {
+                    Text("Small").tag(0.75)
+                    Text("Normal").tag(1.0)
+                    Text("Large").tag(1.35)
+                }
+                Toggle("Show speedometer", isOn: $settings.showNavSpeed)
+                if settings.showNavSpeed {
+                    Picker("Speedometer side", selection: $settings.speedOnRight) {
+                        Text("Left").tag(false)
+                        Text("Right").tag(true)
+                    }
+                }
+                Toggle("Show current road name", isOn: $settings.showNavRoad)
+                Toggle("Announce lower speed limits", isOn: $settings.speakLimitDrops)
+                Toggle("Media controls", isOn: $settings.showMusicControls)
+                HStack {
+                    if settings.showNavSpeed && !settings.speedOnRight { Text("58").font(.headline.monospacedDigit()) }
+                    Spacer()
+                    VStack {
+                        Image(systemName: "location.north.fill").font(.system(size: 25 * settings.navArrowScale))
+                        if settings.showNavRoad { Text("Current road").font(.caption) }
+                    }.foregroundColor(Vela.routeBlue)
+                    Spacer()
+                    if settings.showNavSpeed && settings.speedOnRight { Text("58").font(.headline.monospacedDigit()) }
+                }
+                .accessibilityLabel("Navigation layout preview")
             } header: {
                 Text("While driving")
             } footer: {
@@ -359,7 +418,7 @@ struct SettingLabel: View {
                 .foregroundColor(.white)
                 .frame(width: 29, height: 29)
                 .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color(hex: color)))
-            Text(title)
+            Text(L10n.text(title))
         }
     }
 }
@@ -424,11 +483,11 @@ struct WazeSettingsView: View {
                 Section {
                     HStack(spacing: 8) {
                         Circle().fill(connection.color).frame(width: 10, height: 10)
-                        Text(connection.text).font(.subheadline)
+                        Text(L10n.text(connection.text)).font(.subheadline)
                     }
                     HStack(spacing: 8) {
                         Circle().fill(live.color).frame(width: 10, height: 10)
-                        Text(live.text).font(.subheadline)
+                        Text(L10n.text(live.text)).font(.subheadline)
                     }
                     if let s = Waze.lastStatus, s.code == 200 {
                         // What Waze actually sent, so it's easy to see if a kind has gone missing.
@@ -439,7 +498,7 @@ struct WazeSettingsView: View {
                 } footer: {
                     if let s = Waze.lastStatus, s.code != 200 {
                         // What the hidden live map page saw, to send to whoever looks into it.
-                        Text("Details: " + WazeWeb.shared.note).font(.caption2.monospaced())
+                        Text(L10n.format("Details: %@", WazeWeb.shared.note)).font(.caption2.monospaced())
                     }
                 }
                 Section("Show and warn about") {
@@ -452,7 +511,7 @@ struct WazeSettingsView: View {
                         )) {
                             HStack(spacing: 10) {
                                 WazeBadge(kind: k, size: 26)
-                                Text(item.1)
+                                Text(L10n.text(item.1))
                             }
                         }
                     }
@@ -461,7 +520,7 @@ struct WazeSettingsView: View {
                     Toggle("Show reports on the map", isOn: $settings.wazeOnMap)
                     Toggle("Chime and say them while navigating", isOn: $settings.wazeVoice)
                     Picker("Ignore reports older than", selection: $settings.wazeMaxAge) {
-                        ForEach(ages, id: \.0) { Text($0.1).tag($0.0) }
+                        ForEach(ages, id: \.0) { Text(L10n.text($0.1)).tag($0.0) }
                     }
                 } header: {
                     Text("Alerts")
@@ -492,7 +551,7 @@ struct WazeSettingsView: View {
         .kiteList()
         .navigationTitle("Road alerts")
         .onAppear { remembered = WazeHistory.shared.sightings.count }
-        .confirmationDialog("Forget the \(remembered) police reports Kite remembered? The risk score starts again from nothing.",
+        .confirmationDialog(L10n.format("Forget the %@ police reports Kite remembered? The risk score starts again from nothing.", String(describing: remembered)),
                             isPresented: $confirmClear, titleVisibility: .visible) {
             Button("Forget them", role: .destructive) {
                 WazeHistory.shared.clear()

@@ -30,7 +30,20 @@ public enum ManeuverType: String, Sendable {
     case roundabout, unknown
 }
 
+public struct ExitSign: Hashable, Sendable {
+    public var number: String?
+    public var references: [String]
+    public var destinations: [String]
+
+    init(number: String?, references: [String] = [], destinations: [String] = []) {
+        self.number = number
+        self.references = references
+        self.destinations = destinations
+    }
+}
+
 public struct Maneuver: Hashable, Sendable {
+    public var exitSign: ExitSign?
     public var type: ManeuverType
     public var instruction: String
     /** Where on the route line the maneuver happens. */
@@ -239,6 +252,7 @@ public struct Route: Identifiable, Hashable, Sendable {
     public var source: String
     /** False when Google left steps out (it folds long motorway stretches away), so the turns can't be placed. */
     public var stepsComplete = true
+    public var routerReportedTolls: Bool?
 
     public var durationSeconds: Double { trafficSeconds ?? typicalSeconds }
 
@@ -295,6 +309,21 @@ public enum Geo {
     }
 
     public static func length(_ line: [LatLng]) -> Double { cumulative(line).last ?? 0 }
+
+    /// Check whether a refreshed route still follows the current route's corridor.
+    public static func isNearRoute(_ candidate: [LatLng], reference: [LatLng]) -> Bool {
+        guard candidate.count >= 2, reference.count >= 2 else { return true }
+        let candidateDistances = cumulative(candidate)
+        let referenceDistances = cumulative(reference)
+        let distance = candidateDistances[candidate.count - 1]
+        guard distance > 0 else { return true }
+        // Ignore small differences in how the endpoints were snapped to the road.
+        let step = max(50, distance / 100)
+        return stride(from: step, to: distance - step, by: step).allSatisfy { offset in
+            let sample = point(along: candidate, meters: offset, cumulative: candidateDistances)
+            return project(sample, on: reference, cumulative: referenceDistances).offset <= 80
+        }
+    }
 
     /** The point [meters] along [line]. */
     public static func point(along line: [LatLng], meters: Double, cumulative cum: [Double]? = nil) -> LatLng {

@@ -11,7 +11,7 @@ import VelaCore
  */
 @MainActor
 final class NavGlide: NSObject {
-    weak var map: MLNMapView?
+    weak var map: (any KiteMapSurface)?
     /**
      * Where the car sits on screen while following: low down, about 75% of the way, so most of the
      * screen shows the road ahead rather than what's already behind. That's as low as it goes with
@@ -47,6 +47,7 @@ final class NavGlide: NSObject {
     private var line: [LatLng] = []
     private var cum: [Double] = []
     private var targetAcross: Double = 600
+    private var zoomMultiplier = 1.0
     private var targetPitch: Double = 50
     /** 3D, 2D or north up, from the map button. */
     var look: MapLook = .tilted
@@ -83,7 +84,7 @@ final class NavGlide: NSObject {
             shownAlong = onRoute ? fixAlong : nil
             shownCoord = onRoute ? coord(at: fixAlong) : fixCoord
             shownBearing = fixBearing
-            shownAcross = across
+            shownAcross = across * zoomMultiplier
             shownPitch = pitch
             northBlend = look == .north ? 1 : 0
         }
@@ -91,14 +92,27 @@ final class NavGlide: NSObject {
         if jump { step(dt: 0) }
     }
 
-    func stop() {
+    func adjustZoom(by factor: Double) {
+        let next = min(5, max(0.55, zoomMultiplier * factor))
+        shownAcross *= next / zoomMultiplier
+        zoomMultiplier = next
+    }
+
+    func resetZoom() { zoomMultiplier = 1 }
+
+    func suspend() {
         link?.invalidate()
         link = nil
         nav = nil
         shownAlong = nil
         shownCoord = nil
         lastFrame = 0
-        (map?.style?.source(withIdentifier: "vela-puck") as? MLNShapeSource)?.shape = nil
+        map?.drawPuck(at: nil, bearing: 0)
+    }
+
+    func stop() {
+        resetZoom()
+        suspend()
     }
 
     private func start() {
@@ -154,16 +168,12 @@ final class NavGlide: NSObject {
         if turn > 180 { turn -= 360 } else if turn < -180 { turn += 360 }
         shownBearing = (shownBearing + turn * (dt == 0 ? 1 : 1 - exp(-dt / 0.4)) + 360).truncatingRemainder(dividingBy: 360)
         // Zooming in for a turn takes about a second; easing back out afterwards is gentler.
-        let zoomTime = targetAcross < shownAcross ? 1.0 : 2.0
-        shownAcross += (targetAcross - shownAcross) * (dt == 0 ? 1 : 1 - exp(-dt / zoomTime))
+        let targetZoom = targetAcross * zoomMultiplier
+        let zoomTime = targetZoom < shownAcross ? 1.0 : 2.0
+        shownAcross += (targetZoom - shownAcross) * (dt == 0 ? 1 : 1 - exp(-dt / zoomTime))
         shownPitch += (targetPitch - shownPitch) * (dt == 0 ? 1 : 1 - exp(-dt / zoomTime))
 
-        if let src = map.style?.source(withIdentifier: "vela-puck") as? MLNShapeSource {
-            let f = MLNPointFeature()
-            f.coordinate = coordNow
-            f.attributes = ["bearing": shownBearing]
-            src.shape = f
-        }
+        map.drawPuck(at: coordNow, bearing: shownBearing)
         let northTarget: Double = look == .north ? 1 : 0
         northBlend += (northTarget - northBlend) * (dt == 0 ? 1 : 1 - exp(-dt / 0.3))
         if abs(northTarget - northBlend) < 0.001 { northBlend = northTarget }

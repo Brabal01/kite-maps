@@ -2,6 +2,208 @@ import XCTest
 @testable import VelaCore
 
 final class RoutingTests: XCTestCase {
+    func testNewTrafficDelayTriggersAlternativeDespitePreviouslyShortETA() {
+        let original = [LatLng(0, 0), LatLng(0, 0.02)]
+        let detour = [original[0], LatLng(0.005, 0.01), original[1]]
+        func route(_ path: [LatLng], _ live: Double?) -> Route {
+            Route(mode: .drive, polyline: path, distanceMeters: Geo.length(path), typicalSeconds: 300,
+                  trafficSeconds: live, summary: nil, maneuvers: [], source: "google")
+        }
+        let better = route(detour, 480)
+        let comparison = TrafficAlternatives.compare([route(detour, nil), better, route(original, 660)],
+                                                     on: original, previousETA: 300)
+        XCTAssertEqual(comparison.currentETA, 660)
+        XCTAssertEqual(comparison.alternative?.id, better.id)
+        XCTAssertEqual(comparison.saving, 180)
+        XCTAssertNil(TrafficAlternatives.compare([route(original, 490), better], on: original, previousETA: 700).alternative)
+    }
+
+    func testPostpassCrossingRemainsAvailableWithoutOverpassGeometry() throws {
+        let response = """
+        {
+          "type": "FeatureCollection",
+          "features": [{
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [14.4112278, 50.0987692]},
+            "properties": {"osm_id": 300119059, "tags": {"ref": "P2", "railway": "level_crossing"}}
+          }]
+        }
+        """
+        let items = try XCTUnwrap(RouteControls.postpassNodes(Data(response.utf8)))
+        let line = [LatLng(50.0987692, 14.4108), LatLng(50.0987692, 14.4116)]
+        let controls = RouteControls.mapped(items, on: line, cumulative: Geo.cumulative(line))
+        XCTAssertEqual(controls.map(\.kind), [.railway])
+    }
+
+    func testUntaggedSharedTramNodeIsACrossingButBridgeIsNot() {
+        let path = [LatLng(0, 0), LatLng(0, 0.02)]
+        let nodes: [[String: Any]] = [
+            ["type": "node", "id": Int64(2), "lat": 0.0, "lon": 0.004],
+            ["type": "node", "id": Int64(4), "lat": 0.0, "lon": 0.012]
+        ]
+        let ways: [[String: Any]] = [
+            ["type": "way", "nodes": [Int64(1), 2, 3], "tags": ["highway": "residential"]],
+            ["type": "way", "nodes": [Int64(2), 5], "tags": ["railway": "tram"]],
+            ["type": "way", "nodes": [Int64(4), 6], "tags": ["railway": "rail", "bridge": "yes"]]
+        ]
+        let controls = RouteControls.mapped(nodes + ways, on: path, cumulative: Geo.cumulative(path))
+        XCTAssertEqual(controls.map(\.kind), [.tram])
+    }
+
+    func testCrossingsFollowTheSelectedPathAcrossCountries() {
+        for latitude in [-33.0, 12.0, 50.0] {
+            let path = [LatLng(latitude, 0), LatLng(latitude, 0.01)]
+            let nodes: [[String: Any]] = [
+                ["type": "node", "id": Int64(1), "lat": latitude, "lon": 0.002, "tags": ["highway": "crossing"]],
+                ["type": "node", "id": Int64(2), "lat": latitude, "lon": 0.006, "tags": ["railway": "tram_level_crossing"]],
+                ["type": "node", "id": Int64(3), "lat": latitude + 0.002, "lon": 0.005, "tags": ["highway": "stop"]]
+            ]
+            let landmarks = RouteControls.mapped(nodes, on: path, cumulative: Geo.cumulative(path))
+            XCTAssertEqual(landmarks.map(\.kind), [.crossing, .tram])
+        }
+    }
+
+    func testMappedLaneDirectionsKeepTheEntireApproach() {
+        let step = Maneuver(type: .rampRight, instruction: "Exit", location: LatLng(0, 0),
+                            alongMeters: 100, distanceMeters: 100)
+        let lanes = LaneApproach.laneList(turns: "through|through|through;slight_right|right",
+                                          count: 4, maneuver: step)
+        XCTAssertEqual(lanes.map(\.valid), [false, false, true, true])
+        XCTAssertEqual(LaneApproach.laneList(turns: nil, count: 3, maneuver: step).map(\.valid), [false, false, false])
+    }
+
+    func testTollGeometryDistinguishesCrossingFromTraversal() {
+        let geometry = [["lat": 0.0, "lon": -0.01], ["lat": 0.0, "lon": 0.01]]
+        let ways: [[String: Any]] = [["geometry": geometry, "tags": ["toll": "yes"]]]
+        XCTAssertTrue(VignetteRoads.containsToll(ways, on: [LatLng(0, -0.01), LatLng(0, 0.01)]))
+        XCTAssertFalse(VignetteRoads.containsToll(ways, on: [LatLng(-0.01, 0), LatLng(0.01, 0)]))
+    }
+
+    func testTollGeometryRejectsParallelRoadAndVehicleExemptions() {
+        let tollWay = [["lat": 0.0, "lon": -0.01], ["lat": 0.0, "lon": 0.01]]
+        let main = [LatLng(0, -0.009), LatLng(0, 0.009)]
+        let parallel = [LatLng(0.00010, -0.009), LatLng(0.00010, 0.009)]
+        let ways: [[String: Any]] = [["geometry": tollWay, "tags": ["toll:forward": "yes"]]]
+        XCTAssertTrue(VignetteRoads.containsToll(ways, on: main))
+        XCTAssertFalse(VignetteRoads.containsToll(ways, on: parallel))
+        XCTAssertFalse(VignetteRoads.containsToll(ways, on: Array(main.reversed())))
+        let exempt: [[String: Any]] = [["geometry": tollWay, "tags": ["toll": "yes", "toll:motorcar": "no"]]]
+        XCTAssertFalse(VignetteRoads.containsToll(exempt, on: main))
+    }
+
+    func testLanePreparationStartsEarlierOnFastWideApproaches() {
+        XCTAssertEqual(LaneApproach.previewDistance(speed: 0, laneCount: 4), 300)
+        XCTAssertEqual(LaneApproach.previewDistance(speed: 30, laneCount: 2), 570)
+        XCTAssertEqual(LaneApproach.previewDistance(speed: 30, laneCount: 5), 720)
+        XCTAssertEqual(LaneApproach.previewDistance(speed: 60, laneCount: 6), 900)
+    }
+
+    func testLiveLaneStripWaitsUntilTheManeuverIsClose() {
+        XCTAssertFalse(LaneApproach.showsStrip(distance: 5600, speed: 36, laneCount: 3, offRoute: false))
+        XCTAssertFalse(LaneApproach.showsStrip(distance: 451, speed: 36, laneCount: 5, offRoute: false))
+        XCTAssertTrue(LaneApproach.showsStrip(distance: 390, speed: 36, laneCount: 3, offRoute: false))
+        XCTAssertFalse(LaneApproach.showsStrip(distance: 160, speed: 13.9, laneCount: 3, offRoute: false))
+        XCTAssertTrue(LaneApproach.showsStrip(distance: 150, speed: 13.9, laneCount: 3, offRoute: false))
+        XCTAssertFalse(LaneApproach.showsStrip(distance: 100, speed: 13.9, laneCount: 3, offRoute: true))
+    }
+
+    func testOfficialD35PaidAndFreeSectionsNearOlomouc() async {
+        // East of Holice, from an independently routed eastbound carriageway.
+        let paid = [LatLng(49.58472, 17.410131), LatLng(49.584993, 17.411501),
+                    LatLng(49.58526, 17.413194), LatLng(49.58544, 17.414717),
+                    LatLng(49.58560, 17.416949)]
+        // West of the Holice boundary, on the free continuation of the same motorway.
+        let free = [LatLng(49.558293, 17.309608), LatLng(49.558618, 17.311189),
+                    LatLng(49.558863, 17.312313)]
+        let crossing = [LatLng(49.581, 17.412455), LatLng(49.589, 17.412455)]
+        XCTAssertEqual(CzechVignetteMap.roads(on: paid), ["D35"])
+        XCTAssertEqual(CzechVignetteMap.roads(on: Array(paid.reversed())), ["D35"])
+        XCTAssertTrue(CzechVignetteMap.roads(on: free).isEmpty)
+        XCTAssertTrue(CzechVignetteMap.roads(on: crossing).isEmpty)
+        let captionShowsToll = await VignetteRoads.hasMappedToll(on: paid)
+        XCTAssertTrue(captionShowsToll)
+    }
+
+    func testWorldwideTollCheckFollowsTheMatchedRoadInItsDirection() {
+        let trace = """
+        {"shape":"_shqeA~fhugF?o}@?o}@","edges":[{"toll":true,"begin_shape_index":0,"end_shape_index":2}]}
+        """
+        let californiaRoad = [LatLng(37, -122), LatLng(37, -121.998)]
+        XCTAssertTrue(Valhalla.confirmsToll(Data(trace.utf8), on: californiaRoad))
+        XCTAssertFalse(Valhalla.confirmsToll(Data(trace.utf8), on: californiaRoad.reversed()))
+        XCTAssertFalse(Valhalla.confirmsToll(Data(trace.utf8), on: [LatLng(36.999, -121.999), LatLng(37.001, -121.999)]))
+    }
+
+    func testActiveRouterRejectsMotorwaysAndDistantStops() {
+        let reply = """
+        {"trip":{"summary":{"length":0.27,"time":180,"has_highway":false},"legs":[
+        {"shape":"_h~q}Aoj|{_@o}@o}@o}@o}@","maneuvers":[
+        {"type":3,"instruction":"Walk ahead.","begin_shape_index":0,"end_shape_index":1},
+        {"type":15,"instruction":"Turn left.","begin_shape_index":1,"end_shape_index":2},
+        {"type":4,"instruction":"Arrive.","begin_shape_index":2,"end_shape_index":2}]}]}}
+        """
+        let from = LatLng(49.594, 17.251), end = LatLng(49.596, 17.253)
+        let routes = Valhalla.parseRoutes(Data(reply.utf8), mode: .walk, points: [from, end])
+        XCTAssertEqual(routes.first?.maneuvers.map(\.type), [.depart, .turnLeft, .arrive])
+        let highway = reply.replacingOccurrences(of: "false", with: "true")
+        XCTAssertTrue(Valhalla.parseRoutes(Data(highway.utf8), mode: .bike, points: [from, end]).isEmpty)
+        XCTAssertTrue(Valhalla.parseRoutes(Data(reply.utf8), mode: .walk,
+                                           points: [from, LatLng(49.597, 17.240), end]).isEmpty)
+    }
+
+    func testTollAvoidanceKeepsOnlyVerifiedFreeRoutes() async {
+        func route(_ line: [LatLng], isPaid: Bool) -> Route {
+            Route(mode: .drive, polyline: line, distanceMeters: Geo.length(line), typicalSeconds: 60,
+                  maneuvers: [], source: "test", routerReportedTolls: isPaid)
+        }
+        let paid = route([LatLng(0, 0), LatLng(0, 0.01)], isPaid: true)
+        let free = route([LatLng(0, 0), LatLng(0.01, 0.01)], isPaid: false)
+        let checked = await VignetteRoads.verifiedTollFree([paid, free])
+        XCTAssertTrue(checked.anyTolled)
+        XCTAssertEqual(checked.routes.map(\.id), [free.id])
+    }
+
+    func testIncompleteOrParallelValhallaTraceIsNotEvidenceOfFreeRoute() {
+        let data = Data("""
+        {"shape":"??o}@o}@o}@o}@","edges":[
+        {"toll":false,"begin_shape_index":0,"end_shape_index":1},
+        {"toll":false,"begin_shape_index":1,"end_shape_index":2}]}
+        """.utf8)
+        let line = Geo.decodePolyline("??o}@o}@o}@o}@")
+        XCTAssertEqual(Valhalla.tollEvidence(data, on: line), false)
+        XCTAssertNil(Valhalla.tollEvidence(data, on: line.map { LatLng($0.lat + 0.0003, $0.lng) }))
+        let partial = Data("""
+        {"shape":"??o}@o}@o}@o}@","edges":[{"toll":false,"begin_shape_index":0,"end_shape_index":1}]}
+        """.utf8)
+        XCTAssertNil(Valhalla.tollEvidence(partial, on: line))
+    }
+
+    func testDrivingRouterPreservesPerRouteTollStatus() throws {
+        let reply = """
+        {"trip":{"summary":{"length":0.27,"time":180,"has_highway":true,"has_toll":false},"legs":[
+        {"shape":"_h~q}Aoj|{_@o}@o}@o}@o}@","maneuvers":[
+        {"type":3,"instruction":"Start.","begin_shape_index":0,"end_shape_index":1},
+        {"type":4,"instruction":"Arrive.","begin_shape_index":2,"end_shape_index":2}]}]}}
+        """
+        let points = [LatLng(49.594, 17.251), LatLng(49.596, 17.253)]
+        let result = try XCTUnwrap(Valhalla.parseRoutes(Data(reply.utf8), mode: .drive, points: points).first)
+        XCTAssertEqual(result.routerReportedTolls, false)
+        let withToll = reply.replacingOccurrences(of: "\"has_toll\":false", with: "\"has_toll\":true")
+        XCTAssertEqual(Valhalla.parseRoutes(Data(withToll.utf8), mode: .drive, points: points).first?.routerReportedTolls, true)
+    }
+
+    func testTrafficRefreshDistinguishesAlternativesOfEqualLength() {
+        let start = LatLng(0, 0)
+        let end = LatLng(0.05, 0)
+        let east = [start, LatLng(0.025, 0.005), end]
+        let west = [start, LatLng(0.025, -0.005), end]
+        let refreshed = [start, LatLng(0.025, 0.0051), end]
+
+        XCTAssertEqual(Geo.length(east), Geo.length(west), accuracy: 1)
+        XCTAssertFalse(Geo.isNearRoute(west, reference: east))
+        XCTAssertTrue(Geo.isNearRoute(refreshed, reference: east))
+    }
+
     func testDecodePolyline5() {
         // Google's documented example.
         let pts = Geo.decodePolyline("_p~iF~ps|U_ulLnnqC_mqNvxq`@", precision: 1e5)
@@ -263,7 +465,7 @@ final class RoutingTests: XCTestCase {
         XCTAssertTrue(lanes[0].valid)
         XCTAssertEqual(lanes[2].indications, ["straight", "right"])
         let allValid: [String: Any] = ["intersections": [["lanes": [["indications": ["straight"], "valid": true], ["indications": ["straight"], "valid": true]]]]]
-        XCTAssertTrue(OSRM.lanes(allValid).isEmpty, "every lane fine says nothing")
+        XCTAssertEqual(OSRM.lanes(allValid).map(\.valid), [true, true])
     }
 
     func testRoundaboutApproachLanes() {
@@ -308,7 +510,7 @@ final class RoutingTests: XCTestCase {
 
     func testNamedRoundaboutWording() {
         XCTAssertEqual(OSRM.instruction(type: "roundabout", modifier: nil, road: "Millbrook Roundabout", exit: nil, mode: .drive),
-                       "Go straight through Millbrook Roundabout")
+                       "Exit Millbrook Roundabout")
         XCTAssertEqual(OSRM.instruction(type: "roundabout", modifier: nil, road: "Redbridge Roundabout", exit: 2, mode: .drive),
                        "At Redbridge Roundabout, take the 2nd exit")
         XCTAssertEqual(OSRM.instruction(type: "roundabout", modifier: nil, road: "A33", exit: 3, mode: .drive),
@@ -374,22 +576,13 @@ final class BritishWordsTests: XCTestCase {
 
 
 final class GoogleExitTests: XCTestCase {
-    func testGoogleExitCountWins() {
-        var a = Maneuver(type: .roundabout, instruction: "Go straight through Millbrook Roundabout", location: LatLng(0, 0),
-                         alongMeters: 2662, distanceMeters: 60, road: "Millbrook Roundabout", laneHint: nil)
-        var off = Maneuver(type: .roundabout, instruction: "Exit the roundabout onto Tebourba Way", location: LatLng(0, 0),
-                           alongMeters: 2726, distanceMeters: 0, road: "Tebourba Way", laneHint: nil)
-        off.leavesRoundabout = true
-        off.exit = 1
-        a.exit = nil
-        var steps = [a, off]
-        var g = Maneuver(type: .roundabout, instruction: "At the roundabout, take the 2nd exit", location: LatLng(0, 0),
-                         alongMeters: 2660, distanceMeters: 0, road: nil, laneHint: nil)
-        g.exit = 2
-        StepMerge.addGoogleExits(&steps, from: [g])
-        XCTAssertEqual(steps[0].exit, 2)
-        XCTAssertEqual(steps[0].instruction, "At Millbrook Roundabout, take the 2nd exit")
-        XCTAssertEqual(steps[1].exit, 2)
+    func testStructuredRoundaboutExitAgreement() {
+        XCTAssertEqual(OSRM.confirmedExit(entry: 2, leaving: 2), 2)
+        XCTAssertEqual(OSRM.confirmedExit(entry: nil, leaving: 3), 3)
+        XCTAssertNil(OSRM.confirmedExit(entry: 1, leaving: 2))
+        XCTAssertNil(OSRM.confirmedExit(entry: 0, leaving: nil))
+        XCTAssertEqual(OSRM.instruction(type: "roundabout", modifier: nil, road: nil, exit: nil, mode: .drive),
+                       "At the roundabout, take the exit")
     }
 }
 
@@ -434,5 +627,53 @@ final class MotorwayLinkNameTests: XCTestCase {
         let steps = try XCTUnwrap(OSRM.parse(Data(json.utf8), mode: .drive).first).maneuvers
         XCTAssertTrue(steps.contains { $0.instruction == "At the roundabout, take the 1st exit onto M27" })
         XCTAssertTrue(steps.contains { $0.instruction == "Exit the roundabout onto M27" })
+    }
+}
+
+
+final class NavigationRecoveryTests: XCTestCase {
+    func testFreshLocationAfterResume() {
+        for age in [30.0, 120.0, 600.0] {
+            XCTAssertFalse(RouteTracker.isFreshFix(age: age, accuracy: 5, maximumError: 60))
+        }
+        XCTAssertTrue(RouteTracker.isFreshFix(age: 1, accuracy: 5, maximumError: 60))
+        XCTAssertFalse(RouteTracker.isFreshFix(age: 1, accuracy: 90, maximumError: 60))
+        XCTAssertFalse(RouteTracker.isFreshFix(age: -10, accuracy: 5, maximumError: 60))
+    }
+
+    func testPreciseWrongTurnTriggersBeforeNoisyLocation() {
+        let route = Route(mode: .drive, polyline: [LatLng(0, 0), LatLng(0.01, 0)],
+                          distanceMeters: 1100, typicalSeconds: 100, maneuvers: [], source: "osm")
+        let point = LatLng(0.002, 0.0005)
+        let tracker = RouteTracker(route: route)
+        XCTAssertFalse(tracker.update(point, accuracy: 45, speed: 12).offRoute)
+        XCTAssertFalse(tracker.update(point, accuracy: 5, speed: 12, measured: false).offRoute)
+        XCTAssertTrue(tracker.update(point, accuracy: 5, speed: 12).offRoute)
+        XCTAssertFalse(tracker.update(LatLng(0.003, 0), accuracy: 5, speed: 12).offRoute)
+    }
+
+    func testCityIntersectionHighlightsOnlyMappedThroughLane() {
+        var junction: [String: Any] = [
+            "bearings": [0, 90, 180, 270], "in": 2, "out": 0,
+            "lanes": [
+                ["indications": ["left"], "valid": false],
+                ["indications": ["straight"], "valid": true],
+                ["indications": ["right"], "valid": false],
+            ],
+        ]
+        XCTAssertEqual(OSRM.throughLanes(junction).map(\.valid), [false, true, false])
+        junction["out"] = 1
+        XCTAssertTrue(OSRM.throughLanes(junction).isEmpty)
+        junction["out"] = 0
+        junction.removeValue(forKey: "lanes")
+        XCTAssertTrue(OSRM.throughLanes(junction).isEmpty)
+    }
+
+    func testStraightInstructionUsesSignedDestination() {
+        let signs = OSRM.Signs(destinations: "D35: Centrum, Olomouc")
+        XCTAssertEqual(OSRM.instruction(type: "continue", modifier: "straight", road: "XYZ",
+                                        exit: nil, mode: .drive, signs: signs),
+                       "Continue straight toward Centrum and Olomouc")
+        XCTAssertEqual(signs.panel?.references, ["D35"])
     }
 }

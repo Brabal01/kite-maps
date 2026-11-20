@@ -56,6 +56,7 @@ public struct Place: Identifiable, Hashable, Codable, Sendable {
     public var hours: [String] = []
     public var photoUrls: [String] = []
     public var featuredReview: String?
+    public var reviewExcerpts: [String]?
     public var editorialSummary: String?
     public var about: [AboutSection] = []
     public var featureId: String?
@@ -78,6 +79,36 @@ public struct Place: Identifiable, Hashable, Codable, Sendable {
         let b = other.name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !a.isEmpty, a.compare(b, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame else { return false }
         return location.distance(to: other.location) <= 150
+    }
+
+    /// Opens Google's public place page. The feature ID identifies the business even without a Places ID.
+    public var googlePlacePage: URL? {
+        guard source == "google" else { return nil }
+        if let featureId {
+            let parts = featureId.split(separator: ":", omittingEmptySubsequences: false)
+            if parts.count == 2, parts.allSatisfy({ $0.hasPrefix("0x") }),
+               UInt64(parts[0].dropFirst(2), radix: 16) != nil,
+               let cid = UInt64(parts[1].dropFirst(2), radix: 16), cid > 0 {
+                var page = URLComponents()
+                page.scheme = "https"
+                page.host = "www.google.com"
+                page.path = "/maps"
+                page.queryItems = [URLQueryItem(name: "cid", value: String(cid))]
+                return page.url
+            }
+        }
+        if placeId?.isEmpty == false { return shareURL }
+        var page = URLComponents()
+        page.scheme = "https"
+        page.host = "www.google.com"
+        page.path = "/maps/search/"
+        let address = address?.isEmpty == false ? address : nil
+        let nearby = address ?? "\(location.lat.plain),\(location.lng.plain)"
+        page.queryItems = [
+            URLQueryItem(name: "api", value: "1"),
+            URLQueryItem(name: "query", value: "\(name) \(nearby)")
+        ]
+        return page.url
     }
 
     /** A Google Maps link for the place, for sharing and for opening it in Google Maps. */

@@ -27,6 +27,10 @@ public final class RouteTracker {
     private var offCount = 0
     private var wrongWayCount = 0
 
+    public static func isFreshFix(age: Double, accuracy: Double, maximumError: Double) -> Bool {
+        (-2...8).contains(age) && (0...maximumError).contains(accuracy)
+    }
+
     public init(route: Route) {
         self.route = route
         cum = Geo.cumulative(route.polyline)
@@ -37,7 +41,7 @@ public final class RouteTracker {
      * [heading] is the way the car is moving (degrees from north), only when it's moving fast enough
      * for the phone's compass course to mean something.
      */
-    public func update(_ fix: LatLng, accuracy: Double = 10, heading: Double? = nil) -> Progress {
+    public func update(_ fix: LatLng, accuracy: Double = 10, heading: Double? = nil, speed: Double = 0, measured: Bool = true) -> Progress {
         let line = route.polyline
         // Look near the last match first (cheap, and avoids jumping to a parallel leg of the route),
         // then the whole line if nothing near fits.
@@ -50,9 +54,12 @@ public final class RouteTracker {
         let along = cum[best.seg] + best.t * (cum[best.seg + 1] - cum[best.seg])
         let snapped = LatLng(line[best.seg].lat + (line[best.seg + 1].lat - line[best.seg].lat) * best.t,
                              line[best.seg].lng + (line[best.seg + 1].lng - line[best.seg].lng) * best.t)
-        let limit = max(40, min(accuracy, 60) + 25)
-        // Well clear of the route counts double, so a wrong turn is noticed in a couple of seconds.
-        offCount = best.dist > limit * 2 ? offCount + 2 : (best.dist > limit ? offCount + 1 : 0)
+        let floor = route.mode == .drive ? 24.0 : route.mode == .bike ? 18.0 : 14.0
+        let limit = max(floor, accuracy * 1.6 + min(max(speed, 0) * 0.35, 12))
+        if measured {
+            // A precise fix well outside the corridor is enough. Near its edge require confirmation.
+            offCount = best.dist > max(limit * 2, 35) ? 3 : best.dist > limit ? min(3, offCount + 1) : 0
+        }
         let routeBearing = Geo.bearing(line[best.seg], line[best.seg + 1])
         // The road's way over about 30 m, so a tiny kink or doubled point in the line isn't "backwards".
         let a = Geo.point(along: line, meters: max(0, along - 10), cumulative: cum)
@@ -60,10 +67,10 @@ public final class RouteTracker {
         let roadBearing = a.distance(to: b) > 5 ? Geo.bearing(a, b) : routeBearing
         // On the route's road but driving back along it (after turning round, or snapped onto the
         // route the wrong way): that's off the route too, or it would never reroute.
-        if let heading, best.dist <= limit {
+        if measured, let heading, best.dist <= limit {
             let diff = abs((heading - roadBearing + 540).truncatingRemainder(dividingBy: 360) - 180)
             wrongWayCount = diff > 120 ? wrongWayCount + 1 : 0
-        } else {
+        } else if measured {
             wrongWayCount = 0
         }
         let next = route.maneuvers.firstIndex { !$0.silent && $0.alongMeters > along + 8 }

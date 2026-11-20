@@ -42,6 +42,43 @@ final class SearchParserTests: XCTestCase {
         XCTAssertEqual(places[0].openNow, false)
     }
 
+    func testSearchFindsRelocatedListAndCzechHours() {
+        let first = entry(name: "Kavárna Most", lat: 50, lng: 14, status: "Otevřeno · Zavírá v 18:00")
+        let second = entry(name: "Kavárna u parku", lat: 50.02, lng: 14, status: "Zavřeno")
+        let places = SearchParser.parse(root: [NSNull(), [first, second]] as [Any], near: nil)
+        XCTAssertEqual(places.map(\.name), ["Kavárna Most", "Kavárna u parku"])
+        XCTAssertEqual(places.map(\.openNow), [true, false])
+        XCTAssertEqual(PlaceSearch.mapFocus(query: "kavarna", places: places, category: true).count, 2)
+        XCTAssertEqual(PlaceSearch.mapFocus(query: "kavarna", places: places, category: false).count, 1)
+    }
+
+    func testGoogleFocusedResultOnlyAddsMatchingBranches() {
+        func nested(_ value: Any, _ indices: [Int]) -> Any {
+            indices.reversed().reduce(value) { child, index in
+                var row = [Any](repeating: NSNull(), count: index + 1)
+                row[index] = child
+                return row
+            }
+        }
+        var focus = entry(name: "Cafe Atlas", lat: 50, lng: 14, status: nil)[1] as! [Any]
+        let branch = entry(name: "Cafe Atlas Centrum", lat: 50.02, lng: 14, status: nil)
+        let other = entry(name: "Atlas Books", lat: 50.03, lng: 14, status: nil)
+        focus[99] = nested([branch, other, branch], [0, 0, 1])
+        let places = SearchParser.parse(root: nested(focus, [0, 1, 0, 14]), near: nil, query: "cafe atlas")
+        XCTAssertEqual(places.map(\.name), ["Cafe Atlas", "Cafe Atlas Centrum"])
+    }
+
+    func testLivePlaceSearchWhenRequested() async throws {
+        guard ProcessInfo.processInfo.environment["KITE_VERIFY_GOOGLE"] == "1" else {
+            throw XCTSkip("Live search is opt-in")
+        }
+        let response = await PlaceSearch.search("Eiffel Tower", center: LatLng(48.858, 2.294),
+                                                spanMeters: 10_000, language: "en")
+        guard response.places.contains(where: { $0.source == "google" && $0.name.lowercased().contains("eiffel") }) else {
+            throw XCTSkip("Google did not return a verifiable Eiffel Tower result from this runner")
+        }
+    }
+
     func testOpensIsClosed() {
         XCTAssertEqual(SearchParser.openNow("Opens 5 AM"), false)
         XCTAssertEqual(SearchParser.openNow("Open 24 hours"), true)

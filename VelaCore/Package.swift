@@ -8,7 +8,7 @@ let package = Package(
         .library(name: "VelaCore", targets: ["VelaCore"]),
     ],
     targets: [
-        .target(name: "VelaCore"),
+        .target(name: "VelaCore", resources: [.process("Resources")]),
         // `swift run vela-probe pizza` asks Google live and prints what the parser saw.
         .executableTarget(name: "vela-probe", dependencies: ["VelaCore"]),
         .testTarget(name: "VelaCoreTests", dependencies: ["VelaCore"]),
