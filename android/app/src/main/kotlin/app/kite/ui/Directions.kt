@@ -48,7 +48,6 @@ import androidx.compose.ui.window.DialogProperties
 import app.kite.*
 import app.kite.core.*
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Calendar
 import java.util.Date
@@ -578,59 +577,84 @@ fun SectionTitle(text: String) {
         modifier = Modifier.padding(horizontal = 18.dp).padding(top = 16.dp, bottom = 4.dp))
 }
 
-/** Search for a place to stop at on the way. Home, work and saved places are one tap. */
+/** Search for a stop, then choose a result on the map. */
 @Composable
 fun StopPicker(model: AppModel) {
-    val s = AppSettings
-    var query by remember { mutableStateOf("") }
-    var found by remember { mutableStateOf<List<Place>>(emptyList()) }
-    var searching by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
-    fun close() { model.addingStop = false }
-    fun run() {
-        val q = query.trim()
-        if (q.isEmpty()) return
-        searching = true
-        found = emptyList()
-        // Look between you and where you're going, so stops fall along the way.
-        val a = model.userLatLng ?: model.viewport.first
-        val b = model.directions?.destination?.location ?: a
-        val mid = LatLng((a.lat + b.lat) / 2, (a.lng + b.lng) / 2)
-        val span = max(a.distanceTo(b) * 1.2, 5_000.0)
-        scope.launch {
-            val r = withContext(Dispatchers.IO) { PlaceSearch.search(q, mid, span, !s.noGoogle) }
-            found = r.places.take(30)
-            searching = false
-        }
-    }
-    PickerPage("Add stop", ::close) {
-        PickerSearchField(query, { query = it }, "Search for a stop", ::run)
+    var query by remember { mutableStateOf(model.stopSearch?.query.orEmpty()) }
+    val close = { model.addingStop = false }
+    PickerPage("Add stop", close) {
+        PickerSearchField(query, { query = it }, "Search along the route") { model.searchStops(query) }
         LazyColumn(Modifier.fillMaxSize()) {
-            fun pick(p: Place) { model.addStop(p); close() }
-            if (found.isNotEmpty()) {
-                item { SectionTitle("Results") }
-                items(found, key = { it.id }) { p ->
-                    IconRow(Icons.Filled.Place, p.name, p.address, model.userLatLng?.let { Fmt.distance(it.distanceTo(p.location)) }) { pick(p) }
-                }
-            } else if (searching) {
-                item {
-                    Row(Modifier.padding(18.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp); Text("Searching…", color = secondaryText)
-                    }
-                }
-            }
+            item { SectionTitle("Along the route") }
+            val categories = Category.all.filter { it.icon in listOf(Icons.Filled.LocalGasStation,
+                Icons.Filled.LocalCafe, Icons.Filled.Restaurant, Icons.Filled.ShoppingCart,
+                Icons.Filled.LocalParking, Icons.Filled.LocalPharmacy) } +
+                listOf(Category("EV charging", Icons.Filled.EvStation, "ev charging station"),
+                    Category(if (Fmt.yards) "Toilets" else "Restrooms", Icons.Filled.Wc,
+                        if (Fmt.yards) "public toilets" else "public restroom"))
+            items(categories.distinctBy { it.label }) { c -> IconRow(c.icon, c.label) { model.searchStops(c.query) } }
+            val s = AppSettings
             val mine = listOfNotNull(s.home?.let { it to Icons.Filled.Home }, s.work?.let { it to Icons.Filled.Work }) +
                 s.saved.take(12).map { it to Icons.Filled.Bookmark }
-            if (mine.isNotEmpty() && found.isEmpty()) {
+            if (mine.isNotEmpty()) {
                 item { SectionTitle("Your places") }
-                items(mine, key = { "mine-" + it.first.id }) { (p, icon) ->
-                    IconRow(icon, p.name, p.address, model.userLatLng?.let { Fmt.distance(it.distanceTo(p.location)) }) { pick(p) }
+                items(mine) { (p, icon) ->
+                    IconRow(icon, p.name, p.address) { model.acceptStop(StopCandidate(p, null, 0.0)) }
                 }
             }
-            if (found.isEmpty() && !searching) {
-                item { SectionTitle("Along the way") }
-                items(listOf(if (Fmt.yards) "Petrol stations" else "Gas stations", "Coffee", "Restaurants", "EV charging")) { c ->
-                    IconRow(Icons.Filled.Search, c) { query = c; run() }
+        }
+    }
+}
+
+@Composable
+fun StopMapOverlay(model: AppModel, showMapbox: Boolean) {
+    val search = model.stopSearch ?: return
+    val dark = LocalDark.current
+    var showList by remember(search.query) { mutableStateOf(false) }
+    androidx.activity.compose.BackHandler { model.closeStopSearch() }
+    if (showList) TripSheet("Stops ahead", "Map", { showList = false }) {
+        LazyColumn {
+            items(search.results, key = { it.place.id }) { candidate ->
+                IconRow(Icons.Filled.Place, candidate.place.name, candidate.place.address,
+                    candidate.ahead?.let { Fmt.distance(it) }) {
+                    model.showStopPin(candidate)
+                    showList = false
+                }
+            }
+        }
+    }
+    Box(Modifier.fillMaxSize().systemBarsPadding()) {
+        if (showMapbox) MapboxAttribution(Modifier.align(Alignment.TopStart).padding(start = 16.dp, top = 62.dp))
+        Row(Modifier.align(Alignment.TopCenter).padding(12.dp).fillMaxWidth().glass(RoundedCornerShape(22.dp))
+            .padding(start = 16.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(search.query.replaceFirstChar { it.titlecase() }, modifier = Modifier.weight(1f),
+                fontWeight = FontWeight.SemiBold, color = primaryText, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            TextButton({ model.addingStop = true }) { Text("Search") }
+            IconButton({ model.closeStopSearch() }) { Icon(Icons.Filled.Close, "Close stop search") }
+        }
+        val selected = search.selected
+        Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(12.dp)
+            .glass(RoundedCornerShape(24.dp)).padding(horizontal = 16.dp, vertical = 12.dp)) {
+            when {
+                search.loading -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                    Text("Looking along your route…", color = secondaryText)
+                }
+                selected != null -> {
+                    Text(selected.place.name, color = primaryText, fontWeight = FontWeight.Bold,
+                        maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    val sub = listOfNotNull(selected.ahead?.let { "${Fmt.distance(it)} ahead" }, selected.place.address)
+                    if (sub.isNotEmpty()) Text(sub.joinToString(" · "), color = secondaryText, maxLines = 2)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically) {
+                        TextButton({ showList = true }) { Text("All results") }
+                        Button({ model.acceptStop(selected) }) { Text("Add stop") }
+                    }
+                }
+                search.results.isEmpty() -> Text("No stops found near the road ahead.", color = primaryText, modifier = Modifier.padding(vertical = 8.dp))
+                else -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Choose a pin on the map", Modifier.weight(1f), color = primaryText)
+                    TextButton({ showList = true }) { Text("List (${search.results.size})", color = Vela.accentText(dark)) }
                 }
             }
         }

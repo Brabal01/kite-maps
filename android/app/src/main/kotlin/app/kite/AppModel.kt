@@ -120,6 +120,9 @@ class AppModel {
     var liveCamRoute by mutableStateOf<List<LiveCam>>(emptyList())
     /** The "Add stop" search sheet. */
     var addingStop by mutableStateOf(false)
+    var stopSearch by mutableStateOf<StopSearch?>(null)
+        private set
+    private var stopSearchJob: Job? = null
     var picking by mutableStateOf<PickKind?>(null)
     var showSteps by mutableStateOf(false)
     /** "Start" on a place: begin the drive as soon as its route arrives. */
@@ -495,6 +498,8 @@ class AppModel {
     // Directions
 
     fun openDirections(place: Place) {
+        closeStopSearch(restore = false)
+        addingStop = false
         if (resumeOffer != null) dismissResume()
         autoStart = false
         directions = DirectionsState(destination = place, mode = settings.defaultMode)
@@ -503,6 +508,7 @@ class AppModel {
     }
 
     fun closeDirections() {
+        closeStopSearch(restore = false)
         autoStart = false
         directions = null
         showSteps = false
@@ -520,10 +526,114 @@ class AppModel {
         frameRoute()
     }
 
-    fun addStop(p: Place) {
+    fun searchStops(query: String) {
+        val q = query.trim()
+        if (q.isEmpty()) return
+        val driving = nav
+        val d = directions
+        val route = driving?.route ?: d?.route
+        val origin = userLatLng ?: viewport.first
+        val line = route?.polyline?.takeIf { it.size >= 2 } ?: listOf(origin, d?.destination?.location ?: origin)
+        val cum = Geo.cumulative(line)
+        val start = (driving?.progress?.alongMeters ?: 0.0).coerceIn(0.0, cum.last())
+        val end = min(cum.last(), start + 42_000.0)
+        val span = end - start
+        val existing = driving?.stops ?: d?.stops.orEmpty()
+        val destinationId = (driving?.destination ?: d?.destination)?.id
+        val useGoogle = settings.welcomed && !settings.noGoogle
+        val search = StopSearch(q, wasFollowing = stopSearch?.wasFollowing ?: (driving?.following == true))
+        stopSearchJob?.cancel()
+        stopSearch = search
+        addingStop = false
+        driving?.following = false
+        map?.cancelTransitions()
+        stopSearchJob = scope.launch {
+            val results = withContext(Dispatchers.Default) {
+                val count = ceil(span / 14_000.0).toInt().coerceIn(1, 3)
+                val window = Geo.slice(line, start, end, cum)
+                val windowCum = Geo.cumulative(window)
+                val found = coroutineScope {
+                    List(count) { i ->
+                        async {
+                            val center = if (span > 0) Geo.point(line, start + span * (i + 0.5) / count, cum) else origin
+                            PlaceSearch.search(q, center, max(4_000.0, span / count * 1.3), useGoogle).places
+                        }
+                    }.awaitAll().flatten()
+                }
+                val candidates = found.mapNotNull { p ->
+                    if (p.id == destinationId || existing.any(p::matchesNearby)) return@mapNotNull null
+                    if (span <= 1 || window.size < 2) {
+                        val distance = origin.distanceTo(p.location)
+                        return@mapNotNull if (distance < 3500) StopCandidate(p, null, distance) else null
+                    }
+                    val at = Geo.project(p.location, window, windowCum)
+                    if (at.offset > 2200 || (driving != null && at.along < 40)) return@mapNotNull null
+                    StopCandidate(p, at.along, at.offset, start + at.along)
+                }.sortedBy { (it.ahead ?: 0.0) + it.offset * 3 }
+                buildList<StopCandidate> {
+                    for (p in candidates) {
+                        if (none { it.place.matchesNearby(p.place) }) add(p)
+                        if (size == 16) break
+                    }
+                }
+            }
+            if (stopSearch !== search) return@launch
+            if (nav !== driving || directions?.destination?.id != d?.destination?.id) {
+                closeStopSearch(restore = false)
+                return@launch
+            }
+            if (driving != null && driving.route.id != route?.id) {
+                searchStops(q)
+                return@launch
+            }
+            stopSearch = search.copy(loading = false, results = results)
+            if (results.isNotEmpty()) {
+                val first = if (span > 0) Geo.point(line, start, cum) else origin
+                frame(listOf(first) + results.take(7).map { it.place.location }, bottomFraction = 0.27f, top = 125)
+            }
+        }
+    }
+
+    fun selectStopPin(id: String?) {
+        val search = stopSearch ?: return
+        val selected = search.results.firstOrNull { it.place.id == id }
+        if (search.selected != selected) stopSearch = search.copy(selected = selected)
+    }
+
+    fun showStopPin(candidate: StopCandidate) {
+        selectStopPin(candidate.place.id)
+        frame(listOf(candidate.place.location), bottomFraction = 0.27f, top = 125)
+    }
+
+    fun closeStopSearch(restore: Boolean = true) {
+        val search = stopSearch ?: return
+        stopSearchJob?.cancel()
+        stopSearch = null
+        if (restore) {
+            if (search.wasFollowing && nav != null) recenterNav()
+            else if (nav == null) frameRoute()
+        }
+    }
+
+    fun acceptStop(candidate: StopCandidate) {
+        val driving = nav
+        val route = driving?.route ?: directions?.route
+        val existing = driving?.stops ?: directions?.stops.orEmpty()
+        val along = candidate.routeMeters
+        val cum = route?.let { Geo.cumulative(it.polyline) }
+        val idx = if (along == null || route == null || cum == null) (if (driving != null) 0 else existing.size) else {
+            existing.indexOfFirst { Geo.project(it.location, route.polyline, cum).along > along }
+                .takeIf { it >= 0 } ?: existing.size
+        }
+        closeStopSearch(restore = driving != null)
+        if (driving != null) driving.addStop(candidate.place, idx) else addStop(candidate.place, idx)
+        addingStop = false
+    }
+
+    fun addStop(p: Place, index: Int = directions?.stops?.size ?: 0) {
         val d = directions ?: return
         if (d.stops.size >= 8) return
-        edit { it.copy(stops = it.stops + p) }
+        edit { it.copy(stops = it.stops.toMutableList().apply { add(index.coerceIn(0, size), p) }) }
         reloadRoutes()
     }
 
@@ -666,18 +776,21 @@ class AppModel {
 
     // Navigation
 
+    private var navZoomSteps = 0
+
     fun startNavigation() {
         val d = directions ?: return
         val route = d.route ?: return
         if (d.reversed) return
         val n = Navigator(route, d.destination, d.stops, scope)
+        navZoomSteps = 0
         nav = n
         n.onFinished = { if (nav === n) endNavigation() }
         // In a tunnel the Navigator carries on along the route by itself: move the arrow with it.
         n.onEstimate = { f ->
             if (nav === n) {
                 n.handle(f, estimated = true)
-                followCamera(n, f, animated = true)
+                followCamera(n, f)
                 driveNote(n)
                 mapTick++
             }
@@ -686,10 +799,12 @@ class AppModel {
         rememberTrip(n)
         location.setNavigating(true)
         DriveService.start(KiteApp.app)
-        location.last?.let { n.handle(it); followCamera(n, it, animated = false) }
+        location.last?.let { n.handle(it); followCamera(n, it) }
     }
 
     fun endNavigation() {
+        closeStopSearch(restore = false)
+        addingStop = false
         nav?.stop()
         glide.stop()
         nav = null
@@ -706,8 +821,22 @@ class AppModel {
 
     fun recenterNav() {
         val n = nav ?: return
+        if (!n.following) glide.easeFromCurrentCamera()
         n.following = true
-        location.last?.let { followCamera(n, it, animated = true) }
+        location.last?.let { followCamera(n, it) }
+    }
+
+    fun zoomNavigation(step: Int) {
+        val n = nav ?: return
+        val m = map ?: return
+        if (n.following) {
+            navZoomSteps = (navZoomSteps + step).coerceIn(-3, 4)
+            location.last?.let { followCamera(n, it) }
+        } else {
+            val camera = m.cameraPosition
+            m.animateCamera(CameraUpdateFactory.newCameraPosition(CameraPosition.Builder(camera)
+                .zoom((camera.zoom + step * 0.55).coerceIn(2.0, 20.0)).build()), 220)
+        }
     }
 
     fun previewNavTurn(turn: Maneuver) {
@@ -730,7 +859,7 @@ class AppModel {
         if (location.reducedAccuracy || f.accuracy > 200) areaRisk = null
         val n = nav ?: run { followBrowse(f, entering = false); return }
         n.handle(f)
-        followCamera(n, f, animated = true)
+        followCamera(n, f)
         tripCheck(n)
         driveNote(n)
         mapTick++
@@ -756,14 +885,14 @@ class AppModel {
         }
     }
 
-    private fun followCamera(n: Navigator, f: Fix, animated: Boolean) {
+    private fun followCamera(n: Navigator, f: Fix) {
         val p = n.progress
         // Further out on long stretches, closer in and flatter just before a turn (see NavZoom).
         // Then the zoom setting (Closer, Normal, Wider) and the 3D, 2D or north-up button.
         val view = NavZoom.view(f.speed, p?.distanceToNext, n.nextManeuver?.type, n.route.mode == TravelMode.DRIVE)
             .applying(settings.mapZoom, settings.driveLook)
         glide.look = settings.driveLook
-        glide.fix(n, f, view.across, view.pitch, jump = !animated)
+        glide.fix(n, f, view.across / 1.36.pow(navZoomSteps), view.pitch)
     }
 
     /** The map button while driving: 3D, then 2D, then north up. Kept for the next drive. */
@@ -771,7 +900,7 @@ class AppModel {
         settings.driveLook = settings.driveLook.next
         val n = nav ?: return
         n.following = true
-        location.last?.let { followCamera(n, it, animated = true) }
+        location.last?.let { followCamera(n, it) }
     }
 
     /**
@@ -858,6 +987,17 @@ class AppModel {
     companion object {
         const val LOCATION_OFF_TEXT = "Location is off for Kite. Turn it on in Settings to get directions from where you are."
     }
+}
+
+data class StopCandidate(val place: Place, val ahead: Double?, val offset: Double, val routeMeters: Double? = null)
+data class StopSearch(
+    val query: String,
+    val wasFollowing: Boolean,
+    val loading: Boolean = true,
+    val results: List<StopCandidate> = emptyList(),
+    val selected: StopCandidate? = null,
+) {
+    companion object { const val PINS = "kite-stop-candidates" }
 }
 
 /** Street View asked for from a place: where, and what to call it. */

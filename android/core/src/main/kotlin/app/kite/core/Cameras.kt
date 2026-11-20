@@ -76,7 +76,11 @@ object Overpass {
 
     data class SignalNode(val id: Long, val at: LatLng)
 
-    data class AlongRoute(val cameras: List<RoadCamera>, val ways: List<LimitWay>, val zones: List<AverageSpeedZone>, val signals: List<LatLng>)
+    enum class ControlKind { SIGNAL, STOP, RAIL }
+    data class RoadControl(val kind: ControlKind, val along: Double)
+
+    data class AlongRoute(val cameras: List<RoadCamera>, val ways: List<LimitWay>, val zones: List<AverageSpeedZone>,
+                          val signals: List<LatLng>, val controls: List<RoadControl>)
 
     /** Cameras in a box. Null when every mirror failed, so the caller can retry later. */
     suspend fun cameras(south: Double, west: Double, north: Double, east: Double, speed: Boolean, plate: Boolean): List<RoadCamera>? {
@@ -97,11 +101,12 @@ object Overpass {
     }
 
     private suspend fun alongRouteMapped(line: List<LatLng>, speed: Boolean, plate: Boolean, limits: Boolean): AlongRoute? {
-        if (line.size < 2) return AlongRoute(emptyList(), emptyList(), emptyList(), emptyList())
+        if (line.size < 2) return AlongRoute(emptyList(), emptyList(), emptyList(), emptyList(), emptyList())
         val cams = LinkedHashMap<Long, RoadCamera>()
         val ways = mutableListOf<LimitWay>()
         val zones = mutableListOf<AverageSpeedZone>()
         val signals = mutableListOf<LatLng>()
+        val roadside = mutableSetOf<Pair<ControlKind, LatLng>>()
         var answered = false
         for (piece in pieces(line, 40_000.0)) {
             val data = alongQuery(piece, speed, plate, limits) ?: continue
@@ -113,12 +118,28 @@ object Overpass {
             ways += w
             zones += averageZones(data, line)
             signals += lights.map { it.at }
+            roadside += parseRoadside(data)
             RoadCache.shared.add(w, found, lights)
             // This stretch's answer is the whole truth about its cameras: one the map has dropped goes.
             RoadCache.shared.forgetCameras(piece, found.map { it.id }.toSet(), speed, plate)
         }
         if (!answered) return null
-        return AlongRoute(cams.values.toList(), ways, CameraAlerts.merge(zones, emptyList()), signalsOnRoute(signals, line))
+        return withContext(Dispatchers.Default) {
+            val onRoute = signalsOnRoute(signals, line)
+            val cum = Geo.cumulative(line)
+            val controls = (roadside + onRoute.map { ControlKind.SIGNAL to it }).mapNotNull { (kind, location) ->
+                val at = Geo.project(location, line, cum)
+                val tolerance = if (kind == ControlKind.STOP) 13.0 else 20.0
+                if (at.offset <= tolerance) RoadControl(kind, at.along) else null
+            }.groupBy { it.kind }.values.flatMap { group ->
+                buildList<RoadControl> {
+                    for (control in group.sortedBy { it.along }) {
+                        if (lastOrNull()?.let { control.along - it.along < 35 } != true) add(control)
+                    }
+                }
+            }.sortedBy { it.along }
+            AlongRoute(cams.values.toList(), ways, CameraAlerts.merge(zones, emptyList()), onRoute, controls)
+        }
     }
 
     /** [line] cut into runs of about [meters], each sharing its first point with the last run's end. */
@@ -154,6 +175,8 @@ object Overpass {
         if (limits) parts.add("way[\"highway\"][\"maxspeed\"](around:12,$c);")
         if (speed) parts.add("relation[\"enforcement\"=\"average_speed\"](around:200,$c);")
         parts.add("node[\"highway\"=\"traffic_signals\"](around:50,$c);")
+        parts.add("node[\"highway\"=\"stop\"](around:22,$c);")
+        parts.add("node[\"railway\"=\"level_crossing\"](around:22,$c);")
         val q = "[out:json][timeout:40];(" + parts.joinToString("") + ");out body geom 8000;"
         return firstAnswer(q) { parse(it) != null }
     }
@@ -212,6 +235,19 @@ object Overpass {
         }
         return out.sortedBy { it.startMeters }
     }
+
+    private fun parseRoadside(data: ByteArray): List<Pair<ControlKind, LatLng>> =
+        Json.obj(data)?.get("elements").asMaps().orEmpty().mapNotNull { e ->
+            val tags = e.tags()
+            val kind = when {
+                tags["highway"] == "stop" -> ControlKind.STOP
+                tags["railway"] == "level_crossing" -> ControlKind.RAIL
+                else -> return@mapNotNull null
+            }
+            val lat = e["lat"].num() ?: return@mapNotNull null
+            val lng = e["lon"].num() ?: return@mapNotNull null
+            kind to LatLng(lat, lng)
+        }
 
     fun parseSignalNodes(data: ByteArray): List<SignalNode> {
         val elements = Json.obj(data)?.get("elements").asMaps() ?: return emptyList()
@@ -352,7 +388,7 @@ object Overpass {
             val lat = e["lat"].num() ?: return@mapNotNull null
             val lon = e["lon"].num() ?: return@mapNotNull null
             val tags = e.tags()
-            if (tags["highway"] == "traffic_signals") return@mapNotNull null
+            if (tags["highway"] != "speed_camera" && tags["surveillance:type"] != "ALPR") return@mapNotNull null
             val id = e["id"].long() ?: 0
             val plate = tags["surveillance:type"] == "ALPR"
             // The map marks a camera that's switched off or taken away without deleting it.

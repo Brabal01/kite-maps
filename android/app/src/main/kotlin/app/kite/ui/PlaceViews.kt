@@ -11,6 +11,8 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -169,8 +171,20 @@ private fun PlaceReviews(place: Place) {
     reviews.orEmpty().forEach { review ->
         Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Text(review.author, fontWeight = FontWeight.Bold, color = primaryText)
-            val meta = listOfNotNull(review.stars?.let { "$it / 5" }, review.relativeTime).joinToString("  ·  ")
-            if (meta.isNotBlank()) Text(meta, fontSize = KType.caption, color = secondaryText)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                review.stars?.let { rating ->
+                    val stars = rating.coerceIn(0, 5)
+                    Row(Modifier.semantics { contentDescription = "$stars out of 5 stars" }) {
+                        repeat(5) { index ->
+                            val filled = index < stars
+                            Icon(if (filled) Icons.Filled.Star else Icons.Outlined.StarBorder, null,
+                                tint = if (filled) Color(if (LocalDark.current) 0xFFFFC55E else 0xFF985300) else secondaryText,
+                                modifier = Modifier.size(17.dp))
+                        }
+                    }
+                }
+                review.relativeTime?.let { Text(it, fontSize = KType.caption, color = secondaryText) }
+            }
             review.text?.let { Text(it, color = primaryText) }
             if (review.photos.isNotEmpty()) PhotoStrip(review.photos, 82.dp, opensViewer = true)
         }

@@ -25,6 +25,15 @@ class CameraTests {
         assertEquals(listOf(ll(0.0050, 0.0001), ll(0.0095, 0.0)), on)
     }
 
+    @Test fun roadControlsAreNotCameras() {
+        val json = """{"elements":[
+            {"type":"node","id":1,"lat":0.001,"lon":0,"tags":{"highway":"stop"}},
+            {"type":"node","id":2,"lat":0.002,"lon":0,"tags":{"railway":"level_crossing"}},
+            {"type":"node","id":3,"lat":0.003,"lon":0,"tags":{"highway":"speed_camera"}}
+        ]}"""
+        assertEquals(listOf(3L), Overpass.parse(b(json))!!.map { it.id })
+    }
+
     @Test fun query() {
         assertEquals("[out:json][timeout:25];(node[\"highway\"=\"speed_camera\"](1,2,3,4););out body 4000;",
             Overpass.query("(1,2,3,4)", speed = true, plate = false))

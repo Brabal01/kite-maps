@@ -48,6 +48,12 @@ object AppSettings {
     var voiceAlertsOnly by bool("voiceAlertsOnly")
     var mapboxEnabled by bool("mapboxEnabled", true)
     var standardMap by bool("standardMap", true)
+    private fun palette(key: String, dark: Boolean) = Pref(key,
+        { MapPalette.decode(it.getString(key, null)) ?: MapPalette.default(dark) },
+        { e, value -> e.putString(key, value.colors.joinToString(",")) })
+    var dayMapPalette by palette("dayMapPalette", false)
+    var nightMapPalette by palette("nightMapPalette", true)
+    var roadAheadStrip by bool("roadAheadStrip", true)
     var terrain3D by bool("terrain3D")
     var buildingShadows by bool("buildingShadows", true)
     var streetLamps by bool("streetLamps", true)

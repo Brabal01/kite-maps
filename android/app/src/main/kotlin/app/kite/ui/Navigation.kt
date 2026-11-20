@@ -64,7 +64,6 @@ import app.kite.*
 import app.kite.core.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.*
 
@@ -76,7 +75,6 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
     val dark = LocalDark.current
     val ctx = LocalContext.current
     var showSteps by remember { mutableStateOf(false) }
-    var showAlong by remember { mutableStateOf(false) }
     var confirmEnd by remember { mutableStateOf(false) }
     var turnPreview by remember(nav) { mutableStateOf(false) }
     // Screenshot run: the end trip question.
@@ -121,6 +119,8 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val h = maxHeight
         val w = maxWidth
+        val showRoadAhead = AppSettings.roadAheadStrip && nav.route.mode == TravelMode.DRIVE &&
+            !nav.arrived && !confirmEnd && (h >= 480.dp || mainAlert == null)
         // The car, while the camera follows it: always at the same spot, pointing up the screen and
         // lying flat on the tilted map.
         // In 2D it lies round, and north up it moves up to the middle and turns the way you're going.
@@ -140,7 +140,8 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
         val road = nav.currentRoad
         if (nav.following && !nav.arrived && !chipShowing && road != null) {
             // On a short phone (360 x 800) that spot is behind the trip bar: keep it just above the bar instead.
-            val barTop = h - WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() - 68.dp
+            val barTop = h - WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() -
+                (if (showRoadAhead) 124.dp else 68.dp)
             val pillTop = minOf(NavGlide.carY(h.value, if (north) 1f else 0f).dp + 46.dp - 15.dp, barTop - 30.dp - 8.dp)
             Box(Modifier.fillMaxWidth().offset(y = pillTop), contentAlignment = Alignment.TopCenter) {
                 Text(road, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = primaryText, maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -149,7 +150,8 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
             }
         }
 
-        if (showMapbox) MapboxAttribution(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 73.dp))
+        if (showMapbox) MapboxAttribution(Modifier.align(Alignment.BottomCenter).navigationBarsPadding()
+            .padding(bottom = if (showRoadAhead) 128.dp else 73.dp))
 
         // One column, so however many warnings are up, they push the map buttons down rather than cover them.
         Column(Modifier.fillMaxSize().systemBarsPadding(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -225,6 +227,11 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
                     // The same when the next speed limit is up: on a short phone the column would reach the cards.
                     val limitDrop = nav.limitDropAhead
                     if (showRiskChip && risk != null && !((mainAlert != null || limitDrop != null) && h < 700.dp)) PoliceRiskChip(risk)
+                    if (nav.route.mode == TravelMode.DRIVE && !nav.arrived) {
+                        MapFab(Icons.Filled.AddLocationAlt, modifier = Modifier.semantics { contentDescription = "Add stop" }) {
+                            model.addingStop = true
+                        }
+                    }
                     SpeedBadge(nav.speedMps, nav.speedLimitKmh, limitDrop)
                 }
                 Spacer(Modifier.weight(1f))
@@ -235,6 +242,14 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
                             .padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             Text(title, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Vela.accentText(true))
                             Text(detail, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Color.White)
+                        }
+                    }
+                    if (nav.route.mode == TravelMode.DRIVE && !nav.arrived) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                            MapFab(Icons.Filled.Remove, size = 48.dp,
+                                modifier = Modifier.semantics { contentDescription = "Zoom out" }) { model.zoomNavigation(-1) }
+                            MapFab(Icons.Filled.Add, size = 48.dp,
+                                modifier = Modifier.semantics { contentDescription = "Zoom in" }) { model.zoomNavigation(1) }
                         }
                     }
                     // 3D, 2D or north up: one tap each, and the drive carries on.
@@ -265,7 +280,8 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
             }
             // A traffic jam ahead: small and calm over the trip bar, so the top stays for turns and cameras.
             val jam = nav.wazeAhead?.takeIf { it.alert.kind == WazeAlert.Kind.JAM && !nav.arrived && !confirmEnd }
-            if (jam != null) TrafficLine(jam, Modifier.align(Alignment.CenterHorizontally).tap { nav.dismissWaze() })
+            if (showRoadAhead) RoadAheadStrip(nav, Modifier.padding(horizontal = 12.dp), showLabels = h >= 550.dp)
+            if (jam != null && !showRoadAhead) TrafficLine(jam, Modifier.align(Alignment.CenterHorizontally).tap { nav.dismissWaze() })
             // A faster way: two big buttons instead of the route just changing under you.
             // Arriving answers the end-trip question: the trip bar's Done takes over.
             val offer = nav.fasterOffer?.takeIf { !nav.arrived }
@@ -278,13 +294,12 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
     }
     androidx.activity.compose.BackHandler { if (confirmEnd) confirmEnd = false else if (!nav.arrived) confirmEnd = true else model.endNavigation() }
 
-    if (showAlong) AlongRouteSheet(nav) { showAlong = false }
     if (showSteps) {
         TripSheet("Your trip", "Done", { showSteps = false }) {
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 // The things that used to be buttons on the map, out of the way until wanted.
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    TripAction(Icons.Filled.Search, "Find on route") { showSteps = false; showAlong = true }
+                    TripAction(Icons.Filled.Search, "Add stop") { showSteps = false; model.addingStop = true }
                     TripAction(Icons.Filled.Share, "Share ETA") { ctx.share(etaText()) }
                     TripAction(Icons.Filled.ZoomOutMap, "Overview") { showSteps = false; model.overviewNav() }
                 }
@@ -1041,87 +1056,6 @@ fun AverageCheckCard(check: AverageCheck) {
             Text("avg ${Fmt.speedUnit}", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = sub, lineHeight = 11.sp)
         }
         check.limitKmh?.let { SpeedLimitSign(it) }
-    }
-}
-
-/** Find a stop ahead without leaving navigation: fuel, food, coffee… near the road still to drive. */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-fun AlongRouteSheet(nav: Navigator, close: () -> Unit) {
-    val s = AppSettings
-    val scope = rememberCoroutineScope()
-    var found by remember { mutableStateOf<List<Pair<Place, Double>>>(emptyList()) }
-    var searching by remember { mutableStateOf(false) }
-    var picked by remember { mutableStateOf<String?>(null) }
-    val y = Fmt.yards
-    val kinds = listOf(
-        Triple(if (y) "Petrol" else "Gas", Icons.Filled.LocalGasStation, if (y) "petrol station" else "gas station"),
-        Triple("EV charging", Icons.Filled.EvStation, "ev charging station"),
-        Triple("Coffee", Icons.Filled.LocalCafe, "coffee"), Triple("Food", Icons.Filled.Restaurant, "restaurants"),
-        Triple(if (y) "Supermarket" else "Groceries", Icons.Filled.ShoppingCart, if (y) "supermarket" else "grocery store"),
-        Triple(if (y) "Toilets" else "Restrooms", Icons.Filled.Wc, if (y) "public toilets" else "public restroom"),
-        Triple("Parking", Icons.Filled.LocalParking, "parking"), Triple("Pharmacy", Icons.Filled.LocalPharmacy, "pharmacy"),
-    )
-    fun run(query: String, label: String) {
-        picked = label
-        searching = true
-        found = emptyList()
-        val line = nav.route.polyline
-        val cum = Geo.cumulative(line)
-        val here = nav.progress?.alongMeters ?: 0.0
-        val total = cum.lastOrNull() ?: 0.0
-        // The next stretch of road, up to 40 km: search around its middle, wide enough to cover it.
-        val end = min(total, here + 40_000)
-        val mid = Geo.point(line, (here + end) / 2, cum)
-        val span = max(end - here, 3_000.0)
-        scope.launch {
-            val r = withContext(Dispatchers.IO) { PlaceSearch.search(query, mid, span, !s.noGoogle) }
-            found = r.places.mapNotNull { p ->
-                val at = Geo.project(p.location, line, cum)
-                // Close to the road (a short detour) and still ahead of you.
-                if (at.offset < 800 && at.along > here + 100) p to (at.along - here) else null
-            }.sortedBy { it.second }.take(20)
-            searching = false
-        }
-    }
-    TripSheet("Search along route", "Close", close) {
-        LazyColumn(Modifier.fillMaxSize()) {
-            item {
-                FlowRow(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), maxItemsInEachRow = 2) {
-                    kinds.forEach { (label, icon, q) ->
-                        Row(Modifier.weight(1f).height(44.dp).clip(RoundedCornerShape(10.dp))
-                            .background(if (picked == label) Vela.routeBlue.copy(alpha = 0.22f) else secondaryText.copy(alpha = 0.12f))
-                            .tap { run(q, label) }.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Icon(icon, null, tint = primaryText, modifier = Modifier.size(20.dp))
-                            Text(label, fontSize = KType.subheadline, fontWeight = FontWeight.SemiBold, color = primaryText, maxLines = 1)
-                        }
-                    }
-                }
-            }
-            if (searching) item {
-                Row(Modifier.padding(18.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp); Text("Looking along your route…", color = secondaryText)
-                }
-            } else if (picked != null && found.isEmpty()) item {
-                Text("Nothing found close to the road ahead.", color = secondaryText, modifier = Modifier.padding(18.dp))
-            }
-            if (found.isNotEmpty()) {
-                item { SectionTitle("Ahead on your route") }
-                items(found, key = { it.first.id }) { (p, ahead) ->
-                    Row(Modifier.fillMaxWidth().tap { nav.addStop(p); close() }.padding(horizontal = 18.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(p.name, color = primaryText, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(listOfNotNull(p.rating?.let { String.format("%.1f ★", it) }, p.statusText).joinToString("  "), fontSize = KType.caption,
-                                color = secondaryText, maxLines = 1)
-                        }
-                        Column(horizontalAlignment = Alignment.End) {
-                            Text("in ${Fmt.distance(ahead)}", fontSize = KType.subheadline, fontWeight = FontWeight.Medium, color = primaryText)
-                            Text("Add stop", fontSize = KType.caption, fontWeight = FontWeight.SemiBold, color = Vela.routeBlue)
-                        }
-                    }
-                }
-            }
-        }
     }
 }
 

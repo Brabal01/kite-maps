@@ -17,6 +17,7 @@ import org.maplibre.android.MapLibre
 import org.maplibre.android.WellKnownTileServer
 import app.kite.core.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.location.LocationComponentActivationOptions
 import org.maplibre.android.location.LocationComponentOptions
@@ -58,10 +59,32 @@ class KiteMap(private val model: AppModel, private val context: Context) {
     }
 
     var scenery: MapboxScenery? = null
+    private var syncingClassic = false
+    private var lastClassicCamera = 0L
+
+    private fun driveCamera(camera: CameraPosition) {
+        val m = map ?: return
+        val native = scenery?.takeIf { it.ready }
+        if (native == null) {
+            m.moveCamera(org.maplibre.android.camera.CameraUpdateFactory.newCameraPosition(camera))
+            return
+        }
+        native.syncFromKite(camera)
+        val time = android.os.SystemClock.elapsedRealtime()
+        if (time - lastClassicCamera >= 300L) {
+            lastClassicCamera = time
+            syncFromScenery(camera)
+            native.refreshLamps()
+        }
+    }
 
     fun syncFromScenery(camera: CameraPosition) {
         val m = map ?: return
-        if (m.cameraPosition != camera) m.moveCamera(org.maplibre.android.camera.CameraUpdateFactory.newCameraPosition(camera))
+        if (m.cameraPosition == camera) return
+        syncingClassic = true
+        try {
+            m.moveCamera(org.maplibre.android.camera.CameraUpdateFactory.newCameraPosition(camera))
+        } finally { syncingClassic = false }
     }
 
     fun sceneTap(point: LatLng): Boolean = map?.let { tapped(it, point.ml()) } ?: false
@@ -70,6 +93,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
     fun refreshScenery() {
         lastResultsKey = ""; lastRouteKey = ""; lastMineKey = ""; lastCameraKey = ""
         lastWazeKey = ""; lastLiveKey = ""; lastSignalsKey = ""; lastHeadKey = ""; lastNextRoadKey = ""
+        shownStopPins = null
         shownGooglePlaces = null
         map?.let(::loadGooglePlaces)
         render()
@@ -138,8 +162,12 @@ class KiteMap(private val model: AppModel, private val context: Context) {
     private var lastWazeKey = ""
     private var googlePlaces = emptyList<Place>()
     private var shownGooglePlaces: List<Place>? = null
+    private var shownStopPins: Pair<List<StopCandidate>, String?>? = null
     private var googlePlacesJob: Job? = null
     private var googlePlacesCenter: LatLng? = null
+    private val googlePlacesCache = object : LinkedHashMap<LatLng, List<Place>>(8, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<LatLng, List<Place>>?) = size > 8
+    }
     private data class RailBox(val s: Double, val w: Double, val n: Double, val e: Double, val z: Int)
     private var railBox: RailBox? = null
     private var locationOn = false
@@ -148,6 +176,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
 
     fun attach(v: MapView) {
         view = v
+        model.glide.cameraOutput = ::driveCamera
         model.glide.mapTouched = false
         // Pause frame-by-frame camera writes before the SDK has recognized the gesture.
         v.setOnTouchListener { _, event ->
@@ -221,8 +250,10 @@ class KiteMap(private val model: AppModel, private val context: Context) {
                 loadGooglePlaces(m)
             }
             m.addOnCameraMoveListener {
-                noteHeading(m)
-                scenery?.syncFromKite(m.cameraPosition)
+                if (!syncingClassic) {
+                    noteHeading(m)
+                    if (model.nav?.following != true || scenery?.ready != true) scenery?.syncFromKite(m.cameraPosition)
+                }
             }
             WazeHistory.onChange = { render() }
             LiveCamStore.onChange = { render() }
@@ -287,6 +318,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         enableLocation(style)
         render()
         loadCameras(m); loadWazeCameras(m); loadWaze(m); loadLiveCams(m); updateHeat(m)
+        shownStopPins = null
         shownGooglePlaces = null
         showGooglePlaces(style)
         loadGooglePlaces(m)
@@ -350,7 +382,11 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         (style.getLayer("vela-rail-case") as? LineLayer)?.setProperties(lineColor(if (dark) c(0x000000, 0.9f) else c(0xFFFFFF, 0.9f)))
         val text = if (dark) c(0xE8EAED) else c(0x202124)
         val halo = if (dark) c(0x0B1526) else Color.WHITE
-        for (id in listOf("vela-mine", "vela-results", "vela-selected")) {
+        for (id in listOf(MAPBOX_POI, "kite-google-places")) {
+            (style.getLayer(id) as? SymbolLayer)?.setProperties(textColor(text), textHaloColor(halo),
+                textHaloWidth(0.85f), textHaloBlur(0.55f))
+        }
+        for (id in listOf("vela-mine", "vela-results", "vela-selected", StopSearch.PINS)) {
             (style.getLayer(id) as? SymbolLayer)?.setProperties(textColor(text), textHaloColor(halo), textHaloWidth(1.5f))
         }
         lastResultsKey = ""
@@ -493,25 +529,43 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         if (googlePlacesCenter?.distanceTo(center)?.let { it < 650 } == true) return
         googlePlacesCenter = center
         googlePlacesJob?.cancel()
+        val cached = googlePlacesCache.keys.firstOrNull { it.distanceTo(center) < 500 }?.let { googlePlacesCache[it] }
+        if (cached != null) {
+            googlePlaces = cached
+            m.style?.let(::showGooglePlaces)
+            return
+        }
+        googlePlaces = googlePlaces.filter { it.location.distanceTo(center) < 1_600 }
+        m.style?.let(::showGooglePlaces)
         googlePlacesJob = scope.launch {
-            delay(900)
-            val matches = listOf("places", "coffee", "restaurants", "shops", "gas stations").chunked(2).flatMap { terms ->
-                coroutineScope { terms.map { term ->
-                    async {
-                        try { GoogleClient.shared.search(term, center, 4_000.0, pages = 1) }
+            delay(350)
+            val terms = listOf("places", "restaurants", "coffee", "shops", "gas stations")
+            val found = mutableListOf<Place>()
+            val batches = Channel<List<Place>>(terms.size)
+            for (queue in listOf(terms.filterIndexed { i, _ -> i % 2 == 0 }, terms.filterIndexed { i, _ -> i % 2 != 0 })) {
+                launch {
+                    for (term in queue) {
+                        val places = try { GoogleClient.shared.search(term, center, 4_000.0, pages = 1) }
                         catch (e: CancellationException) { throw e }
                         catch (_: Exception) { emptyList() }
+                        batches.send(places)
                     }
-                }.awaitAll().flatten() }
-            }.filter { it.location.distanceTo(center) <= 2_200 }.distinctBy { it.id }
-            if (googlePlacesCenter != center || !googlePlacesEnabled()) return@launch
-            val seen = mutableListOf<Place>()
-            for (place in matches.sortedBy { it.location.distanceTo(center) }) {
-                if (seen.none { it.matchesNearby(place) }) seen += place
-                if (seen.size >= 60) break
+                }
             }
-            googlePlaces = seen
-            m.style?.let(::showGooglePlaces)
+            repeat(terms.size) {
+                val places = batches.receive().filter { it.location.distanceTo(center) <= 2_200 }
+                if (places.isEmpty()) return@repeat
+                found += places
+                val seen = mutableListOf<Place>()
+                for (place in found.distinctBy { it.id }.sortedBy { it.location.distanceTo(center) }) {
+                    if (seen.none { it.matchesNearby(place) }) seen += place
+                    if (seen.size >= 60) break
+                }
+                googlePlaces = seen
+                m.style?.let(::showGooglePlaces)
+            }
+            if (found.isNotEmpty()) googlePlacesCache[center] = googlePlaces
+            else googlePlacesCenter = null
         }
     }
 
@@ -524,9 +578,9 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         if (!showingMapbox) MapIcons.registerMapPlaces(style, AppSettings.satellite)
         src("kite-google-places")
         style.addLayer(SymbolLayer("kite-google-places", "kite-google-places").withProperties(
-            iconImage(get("icon")), iconSize(0.7f), textOptional(true), textField(get("name")), textFont(overlayFont),
-            textSize(11f), textColor(if (dark) Color.WHITE else c(0x263A4F)),
-            textHaloColor(if (dark) c(0x182332) else Color.WHITE), textHaloWidth(1.2f),
+            iconImage(get("icon")), iconSize(0.91f), textOptional(true), textField(get("name")), textFont(overlayFont),
+            textSize(12f), textColor(c(if (dark) 0xE8EAED else 0x202124)),
+            textHaloColor(c(if (dark) 0x101A29 else 0xFFFFFF)), textHaloWidth(0.85f), textHaloBlur(0.55f),
             textAnchor(Property.TEXT_ANCHOR_TOP), textOffset(arrayOf(0f, 1.0f)),
         ).also { it.minZoom = 14.5f })
         // Satellite (Esri World Imagery) under the roads, off unless picked in Layers.
@@ -640,6 +694,12 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             iconImage(get("icon")), iconAllowOverlap(true), textField(get("label")), textFont(overlayFont),
             textSize(12f), textAnchor(Property.TEXT_ANCHOR_LEFT), textOffset(arrayOf(1.4f, 0f)), textOptional(true),
             textMaxWidth(8f), textJustify(Property.TEXT_JUSTIFY_LEFT), symbolSortKey(get("rank"))))
+
+        src(StopSearch.PINS)
+        style.addLayer(SymbolLayer(StopSearch.PINS, StopSearch.PINS).withProperties(
+            iconImage(get("icon")), iconAllowOverlap(true), iconIgnorePlacement(true),
+            textField(get("label")), textFont(overlayFont), textSize(12f), textOptional(true),
+            textAnchor(Property.TEXT_ANCHOR_TOP), textOffset(arrayOf(0f, 1.3f))))
 
         src("vela-selected")
         style.addLayer(SymbolLayer("vela-selected", "vela-selected").withProperties(
@@ -755,6 +815,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         }
         if (!showingMapbox) for (id in listOf("building", "building-3d")) visible(style, id, !s.satellite && !navigating)
         renderResults(style)
+        renderStopPins(style)
         renderRoutes(style)
         renderPuck(style)
         renderCameras(style)
@@ -982,6 +1043,21 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         }
     }
 
+    private fun renderStopPins(style: Style) {
+        val search = model.stopSearch
+        val results = search?.results.orEmpty()
+        val selected = search?.selected?.place?.id
+        val key = results to selected
+        if (shownStopPins == key) return
+        shownStopPins = key
+        val ordered = results.partition { it.place.id == selected }.let { it.second + it.first }
+        setShape(style, StopSearch.PINS, ordered.map { (place) ->
+            point(place.location, mapOf("id" to place.id,
+                "icon" to if (place.id == selected) "pin-selected" else MapIcons.iconName(place),
+                "label" to place.name))
+        })
+    }
+
     private fun renderResults(style: Style) {
         val showList = model.directions == null && model.nav == null
         val list = if (showList) model.visibleResults else emptyList()
@@ -1151,6 +1227,11 @@ class KiteMap(private val model: AppModel, private val context: Context) {
     private fun str(f: Feature, k: String): String? = f.getProperty(k)?.takeIf { it.isJsonPrimitive }?.asString
 
     private fun tapped(m: MapLibreMap, at: org.maplibre.android.geometry.LatLng): Boolean {
+        if (model.stopSearch != null) {
+            val pin = m.queryRenderedFeatures(box(m, at), StopSearch.PINS).firstOrNull()
+            model.selectStopPin(pin?.let { str(it, "id") })
+            return true
+        }
         if (model.nav != null || now() - pinDroppedAt < 1000) return false
         val box = box(m, at)
         if (model.directions != null) {
@@ -1218,6 +1299,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
     }
 
     private fun pressed(m: MapLibreMap, at: org.maplibre.android.geometry.LatLng) {
+        if (model.stopSearch != null) return
         pinDroppedAt = now()
         if (model.nav != null || model.directions != null) return
         view?.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)

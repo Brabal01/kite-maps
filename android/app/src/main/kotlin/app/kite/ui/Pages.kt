@@ -369,6 +369,7 @@ private fun LiveCamSettings() {
 @Composable
 private fun MapSettings() {
     val s = AppSettings
+    var editColors by remember { mutableStateOf(false) }
     SettingsGroup {
         PickRow("Theme", Icons.Filled.Contrast, 0x334155, s.theme, ThemeMode.entries.toList(), { it.label }) { s.theme = it }
         RowDivider()
@@ -377,8 +378,14 @@ private fun MapSettings() {
         ToggleRow("Parking button on the map", Icons.Filled.LocalParking, 0x2563EB, s.parkingButton) { s.parkingButton = it }
     }
     MapboxSettings()
-    SettingsGroup(header = "Mapbox Standard", footer = "Mapbox Standard uses your Mapbox token. Street lamps appear where OpenStreetMap maps them at street zoom.") {
+    SettingsGroup(header = "Mapbox Standard", footer = "Mapbox Standard uses your Mapbox token. Street lamps use mapped posts and lit streets at street zoom.") {
         ToggleRow("Mapbox Standard", Icons.Filled.ViewInAr, 0x0F766E, s.standardMap) { s.standardMap = it }
+        RowDivider()
+        Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).tap { editColors = true }.padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            SettingLabel("Map colors", Icons.Filled.Palette, 0x6D4EB0, Modifier.weight(1f))
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = secondaryText)
+        }
         RowDivider()
         ToggleRow("3D terrain", Icons.Filled.Terrain, 0x166534, s.terrain3D) { s.terrain3D = it }
         RowDivider()
@@ -388,6 +395,7 @@ private fun MapSettings() {
         RowDivider()
         ToggleRow("Street lamps", Icons.Filled.Lightbulb, 0xB45309, s.streetLamps) { s.streetLamps = it }
     }
+    if (editColors) MapColorsPage { editColors = false }
     SettingsGroup(header = "Places on the map", footer = "When enabled, Kite asks Google about nearby businesses after the map stops moving. Open map places are also displayed.") {
         ToggleRow("More place icons from Google", Icons.Filled.Place, 0x1D4ED8, s.googleMapPlaces, enabled = !s.noGoogle) { s.googleMapPlaces = it }
     }
@@ -397,6 +405,84 @@ private fun MapSettings() {
             SettingLabel("Map zoom while driving", Icons.Filled.ZoomIn, 0x0F766E)
             Segmented(MapZoom.entries.toList(), s.mapZoom, { it.title }) { s.mapZoom = it }
         }
+        RowDivider()
+        ToggleRow("Road ahead strip", Icons.Filled.Traffic, 0x0F766E, s.roadAheadStrip) { s.roadAheadStrip = it }
+    }
+}
+
+@Composable
+private fun MapColorsPage(close: () -> Unit) {
+    val s = AppSettings
+    val appDark = LocalDark.current
+    var dark by remember { mutableStateOf(appDark) }
+    var field by remember { mutableStateOf<MapColor?>(null) }
+    val palette = if (dark) s.nightMapPalette else s.dayMapPalette
+    fun apply(value: MapPalette) {
+        if (dark) s.nightMapPalette = value else s.dayMapPalette = value
+    }
+    fun swatch(hex: String) = Color(android.graphics.Color.parseColor(hex))
+    TripSheet("Map colors", "Done", close) {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Segmented(listOf(false, true), dark, { if (it) "Night" else "Day" }) { dark = it }
+            SettingsGroup(header = "Palettes") {
+                for ((name, preset) in MapPalette.presets(dark)) {
+                    Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).tap { apply(preset) }.padding(horizontal = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(name, Modifier.weight(1f), color = primaryText)
+                        for (color in preset.colors) Box(Modifier.size(15.dp).clip(CircleShape).background(swatch(color)))
+                        if (palette == preset) Icon(Icons.Filled.Check, "Selected", modifier = Modifier.size(18.dp))
+                    }
+                }
+            }
+            SettingsGroup(header = "Custom colors", footer = "Day and night palettes apply to Mapbox Standard. The route color also applies on satellite.") {
+                for (color in MapColor.entries) {
+                    Row(Modifier.fillMaxWidth().heightIn(min = 49.dp).tap { field = color }.padding(horizontal = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(color.label, Modifier.weight(1f), color = primaryText)
+                        Text(palette[color], fontSize = KType.caption, color = secondaryText)
+                        Box(Modifier.size(25.dp).clip(CircleShape).background(swatch(palette[color]))
+                            .border(1.dp, secondaryText, CircleShape))
+                    }
+                }
+            }
+            TextButton({ apply(MapPalette.default(dark)) }) { Text("Reset colors") }
+        }
+    }
+    field?.let { selected ->
+        var value by remember(dark, selected) { mutableStateOf(palette[selected]) }
+        val normalized = "#" + value.trim().removePrefix("#").uppercase(java.util.Locale.ROOT)
+        val valid = MapPalette.isColor(normalized)
+        AlertDialog(onDismissRequest = { field = null },
+            title = { Text(selected.label) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    val colors = (MapPalette.presets(dark).values.map { it[selected] } +
+                        listOf("#172330", "#48556E", "#EDF0F4", "#B0CBA4", "#57DDCA", "#A3CFE1",
+                            "#4763C7", "#C6BBED", "#E7B477", "#946D5F", "#FF8D88", "#FFC190")).distinct()
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        for (color in colors) {
+                            Box(Modifier.size(38.dp).clip(CircleShape).background(swatch(color))
+                                .border(if (normalized == color) 2.dp else 0.5.dp, secondaryText, CircleShape)
+                                .semantics { contentDescription = color }.tap { value = color },
+                                contentAlignment = Alignment.Center) {
+                                if (normalized == color) {
+                                    val tint = if (android.graphics.Color.luminance(android.graphics.Color.parseColor(color)) > 0.38)
+                                        Color.Black else Color.White
+                                    Icon(Icons.Filled.Check, null, tint = tint, modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        }
+                    }
+                    OutlinedTextField(value, { if (it.length <= 7) value = it }, singleLine = true,
+                        label = { Text("Hex color") }, supportingText = { Text("Example #369ABF") },
+                        leadingIcon = {
+                            Box(Modifier.size(20.dp).clip(CircleShape).background(swatch(if (valid) normalized else palette[selected])))
+                        })
+                }
+            },
+            confirmButton = { TextButton({ apply(palette.change(selected, normalized)); field = null }, enabled = valid) { Text("Apply") } },
+            dismissButton = { TextButton({ field = null }) { Text("Cancel") } })
     }
 }
 

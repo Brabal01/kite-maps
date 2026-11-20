@@ -108,6 +108,7 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
         onDispose {
             LocationService.onUpdate = modelUpdate
             model.glide.onMapPuck = null
+            model.glide.cameraOutput = null
         }
     }
     val driving = model.nav?.route?.mode == app.kite.core.TravelMode.DRIVE
@@ -118,7 +119,8 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
     val usableStandardToken = standardToken.takeUnless { scenery.failed }
     val standardReady = usableStandardToken != null && scenery.ready
     val showingMapbox = standardReady || kiteMap.showingMapbox
-    val look = MapboxScenery.Look(dark, satellite, s.terrain3D, s.terrain, s.buildingShadows, s.streetLamps, s.traffic && !driving)
+    val look = MapboxScenery.Look(dark, satellite, s.terrain3D, s.terrain, s.buildingShadows, s.streetLamps, s.traffic && !driving,
+        if (dark) s.nightMapPalette else s.dayMapPalette)
     LaunchedEffect(look) { scenery.setLook(look) }
     LaunchedEffect(dark, driving, satellite, mapboxToken, standardReady) {
         kiteMap.applyBasemap(dark, driving, satellite && !standardReady, mapboxToken.takeUnless { standardReady })
@@ -131,7 +133,7 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
     // Redraw the map's layers whenever anything they show changes.
     LaunchedEffect(Unit) {
         snapshotFlow {
-            listOf(model.mapTick, model.results, model.selected?.id, model.directions, model.nav, model.openNowOnly, model.rating4Only,
+            listOf(model.mapTick, model.results, model.selected?.id, model.directions, model.nav, model.stopSearch, model.openNowOnly, model.rating4Only,
                 s.traffic, s.satellite, s.terrain, s.transitLines, s.speedCameras, s.plateCameras, s.wazeOnMap, s.wazeHeatmap,
                 s.home, s.work, s.parking, s.saved, LocationService.authorized, model.tab,
                 s.welcomed, s.noGoogle, s.surveillanceCameras, s.wazeOn, s.wazeKinds, s.wazeMaxAge,
@@ -176,6 +178,7 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
         val nav = model.nav
         CompositionLocalProvider(LocalMapboxAttribution provides if (standardReady) scenery::openAttribution else null) {
             when {
+                model.stopSearch != null -> StopMapOverlay(model, showingMapbox)
                 nav != null -> NavigationOverlay(model, nav, showingMapbox)
                 model.directions != null -> DirectionsOverlay(model, showingMapbox)
                 else -> when (model.tab) {

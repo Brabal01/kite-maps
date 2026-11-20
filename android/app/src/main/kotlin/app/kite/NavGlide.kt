@@ -23,6 +23,21 @@ class NavGlide : Choreographer.FrameCallback {
     var map: MapLibreMap? = null
     var mapTouched = false
     var onMapPuck: ((Feature?) -> Unit)? = null
+    var cameraOutput: ((CameraPosition) -> Unit)? = null
+        set(value) {
+            field = value
+            lastCamera = null
+        }
+    private var cameraEntry: CameraPosition? = null
+    private var cameraEntryAt = 0L
+    private var lastCamera: CameraPosition? = null
+
+    fun easeFromCurrentCamera() {
+        cameraEntry = map?.cameraPosition
+        cameraEntryAt = System.nanoTime()
+        lastCamera = null
+        map?.cancelTransitions()
+    }
     /** The map's height in dp. */
     var heightDp = 800f
     /**
@@ -81,10 +96,9 @@ class NavGlide : Choreographer.FrameCallback {
     private var shownAcross = 600.0
     private var shownPitch = 50.0
 
-    private fun nowS() = System.nanoTime() / 1e9
-
     /** Called on every GPS fix while navigating. */
-    fun fix(n: Navigator, loc: Fix, across: Double, pitch: Double = 50.0, jump: Boolean) {
+    fun fix(n: Navigator, loc: Fix, across: Double, pitch: Double) {
+        if (nav !== n) easeFromCurrentCamera()
         nav = n
         val p = n.progress
         val poly = n.route.polyline
@@ -102,7 +116,7 @@ class NavGlide : Choreographer.FrameCallback {
         fixBearing = if (fixCourse >= 0) fixCourse else (p?.routeBearing ?: shownBearing)
         targetAcross = across
         targetPitch = pitch
-        if (jump || shownCoord == null) {
+        if (shownCoord == null) {
             shownAlong = if (onRoute) fixAlong else null
             shownCoord = if (onRoute) coord(fixAlong) else fixCoord
             shownBearing = fixBearing
@@ -111,7 +125,6 @@ class NavGlide : Choreographer.FrameCallback {
             northBlend = if (look == MapLook.NORTH) 1.0 else 0.0
         }
         start()
-        if (jump) step(0.0)
     }
 
     fun stop() {
@@ -120,6 +133,8 @@ class NavGlide : Choreographer.FrameCallback {
         nav = null
         shownAlong = null
         shownCoord = null
+        cameraEntry = null
+        lastCamera = null
         lastFrame = 0
         carOnScreen = false
         clearPuck()
@@ -182,10 +197,12 @@ class NavGlide : Choreographer.FrameCallback {
         shownPitch += (targetPitch - shownPitch) * (if (dt == 0.0) 1.0 else 1 - exp(-dt / zoomTime))
 
         val style = m.style ?: return
-        if (n.following) {
+        val entering = cameraEntry != null
+        if (n.following && !entering) {
             if (!carOnScreen) carOnScreen = true
             if (puckOnMap) { clearPuck(); puckOnMap = false }
         } else {
+            if (!n.following) { cameraEntry = null; lastCamera = null }
             if (carOnScreen) carOnScreen = false
             // On the map, moved only now and then: each new spot makes the map fade the arrow in again.
             val now = System.nanoTime()
@@ -218,8 +235,46 @@ class NavGlide : Choreographer.FrameCallback {
             val zoom = MapCam.zoomFor(shownAcross, coordNow.lat, 400f) + 0.35
             val camera = CameraPosition.Builder().target(coordNow.ml()).zoom(zoom).tilt(shownPitch).bearing(heading)
                 .padding(0.0, topInset(heightDp) * (1 - northBlend) * d, 0.0, BOTTOM_INSET * d).build()
-            if (camera != m.cameraPosition) m.moveCamera(CameraUpdateFactory.newCameraPosition(camera))
+            val visible = enter(camera)
+            val last = lastCamera
+            if (last == null || !nearCamera(last, visible)) {
+                lastCamera = visible
+                cameraOutput?.invoke(visible) ?: m.moveCamera(CameraUpdateFactory.newCameraPosition(visible))
+            }
         }
+    }
+
+    private fun enter(target: CameraPosition): CameraPosition {
+        val from = cameraEntry ?: return target
+        val a = from.target ?: return target.also { cameraEntry = null }
+        val b = target.target ?: return target.also { cameraEntry = null }
+        val t = ((System.nanoTime() - cameraEntryAt) / 720_000_000.0).coerceIn(0.0, 1.0)
+        if (t >= 1.0) {
+            cameraEntry = null
+            return target
+        }
+        val f = t * t * (3 - 2 * t)
+        fun mix(x: Double, y: Double) = x + (y - x) * f
+        fun angle(x: Double, y: Double) = x + ((y - x + 540) % 360 - 180) * f
+        val startPadding = from.padding ?: DoubleArray(4)
+        val endPadding = target.padding ?: DoubleArray(4)
+        return CameraPosition.Builder().target(
+            org.maplibre.android.geometry.LatLng(mix(a.latitude, b.latitude),
+                ((angle(a.longitude, b.longitude) + 540) % 360) - 180))
+            .zoom(mix(from.zoom, target.zoom)).tilt(mix(from.tilt, target.tilt))
+            .bearing((angle(from.bearing, target.bearing) + 360) % 360)
+            .padding(DoubleArray(4) { mix(startPadding[it], endPadding[it]) }).build()
+    }
+
+    private fun nearCamera(a: CameraPosition, b: CameraPosition): Boolean {
+        val center = a.target ?: return false
+        val next = b.target ?: return false
+        val pad = a.padding ?: return false
+        val other = b.padding ?: return false
+        return abs(a.zoom - b.zoom) < 0.001 && abs(a.tilt - b.tilt) < 0.05 &&
+            abs((a.bearing - b.bearing + 540) % 360 - 180) < 0.07 &&
+            center.kite().distanceTo(next.kite()) < 0.16 &&
+            pad.indices.all { abs(pad[it] - other[it]) < 0.4 }
     }
 
     private fun coord(along: Double): LatLng = Geo.point(line, along, cum)

@@ -97,6 +97,8 @@ class Navigator(route0: Route, val destination: Place, stops0: List<Place>, priv
     var averageCheck by mutableStateOf<AverageCheck?>(null); private set
     /** Traffic lights on the route, one per junction, drawn on the map like Waze. */
     var routeSignals by mutableStateOf<List<LatLng>>(emptyList()); private set
+    var roadControls by mutableStateOf<List<Overpass.RoadControl>>(emptyList()); private set
+    var routeJams by mutableStateOf<List<PlacedAlert>>(emptyList()); private set
     /** Stops still ahead, in trip order; each is dropped once reached. */
     var stops by mutableStateOf(stops0); private set
     /** Drivers' reports from Waze's app servers, asked every 90 seconds. */
@@ -363,8 +365,9 @@ class Navigator(route0: Route, val destination: Place, stops0: List<Place>, priv
     }
 
     /** A stop picked on the way (search along the route): go there first, then on. */
-    fun addStop(p: Place) {
-        stops = listOf(p) + stops
+    fun addStop(p: Place, index: Int = 0) {
+        if (stops.size >= 8 || stops.any(p::matchesNearby)) return
+        stops = stops.toMutableList().apply { add(index.coerceIn(0, size), p) }
         speak("Adding a stop at ${p.name}.")
         lastFix?.let { reroute(it, quiet = true, adding = p) }
     }
@@ -434,6 +437,7 @@ class Navigator(route0: Route, val destination: Place, stops0: List<Place>, priv
         zoneEntry = null
         averageCheck = null
         routeSignals = emptyList()
+        roadControls = emptyList()
         camerasTick++
         val s = AppSettings
         if (route.mode != TravelMode.DRIVE) return
@@ -488,7 +492,8 @@ class Navigator(route0: Route, val destination: Place, stops0: List<Place>, priv
             val start = Geo.slice(line, 0.0, 6000.0, cum)
             scope.launch {
                 val limits = !matcher.await()
-                Overpass.alongRoute(start, speed, plate, limits) ?: return@launch
+                val first = Overpass.alongRoute(start, speed, plate, limits) ?: return@launch
+                if (!stopped && route.id == id && !fullRoadData) roadControls = first.controls
                 useKnown()
             }
         }
@@ -509,6 +514,7 @@ class Navigator(route0: Route, val destination: Place, stops0: List<Place>, priv
             if (!matchedLimits) setLimits(Overpass.speedLimits(found.ways, line))
             zones = CameraAlerts.merge(found.zones, CameraAlerts.averageZones(routeCameras))
             routeSignals = found.signals
+            roadControls = found.controls
             camerasTick++
         }
     }
@@ -574,6 +580,7 @@ class Navigator(route0: Route, val destination: Place, stops0: List<Place>, priv
             val merged = linkedMapOf<String, WazeAlert>()
             for (a in closureAlerts + liveAlerts) merged[a.id] = a
             routeWaze = Waze.project(merged.values.toList(), line)
+            routeJams = routeWaze.filter { it.alert.kind == WazeAlert.Kind.JAM }
         }
     }
 
@@ -996,6 +1003,7 @@ class Navigator(route0: Route, val destination: Place, stops0: List<Place>, priv
         loadRoundabouts()
         wazeAt = 0
         routeWaze = emptyList()
+        routeJams = emptyList()
         wazeAhead = null
         loadWaze()
         lastFix?.let { handle(it, estimating) }
