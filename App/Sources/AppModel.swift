@@ -866,7 +866,7 @@ final class AppModel: ObservableObject {
         transitTask = Task {
             do {
                 async let planned = Transitous.plan(from: from, to: to, time: time, arriveBy: arriveBy)
-                async let live = Self.liveFeed(near: from, manual: liveURL, discover: discover)
+                async let live = Self.liveFeed(from: from, to: to, manual: liveURL, discover: discover)
                 let trips = try await planned
                 guard directions?.destination.id == destId, transitRequest == req else { return }
                 // Show the timetable immediately; a slow live feed is applied when it arrives.
@@ -894,11 +894,18 @@ final class AppModel: ObservableObject {
      * catalog is asked for a public feed covering the journey. Only one feed is tried; a failure
      * leaves the scheduled timetable untouched.
      */
-    private static func liveFeed(near origin: LatLng, manual: String, discover: Bool) async -> TransitRealtime.Feed? {
+    private static func liveFeed(from origin: LatLng, to destination: LatLng,
+                                 manual: String, discover: Bool) async -> TransitRealtime.Feed? {
         if !manual.isEmpty { return await TransitRealtime.fetch(manual, timeout: 15) }
         guard discover else { return nil }
-        let candidates = await TransitCatalog.shared.candidates(near: origin, radiusMeters: 40_000, limit: 2)
-        for candidate in candidates {
+        // A regional feed must cover the journey, not only the street where it starts.
+        async let atOrigin = TransitCatalog.shared.candidates(near: origin, radiusMeters: 40_000, limit: 3)
+        async let atDestination = TransitCatalog.shared.candidates(near: destination, radiusMeters: 40_000, limit: 3)
+        let originFeeds = await atOrigin
+        let destinationFeeds = await atDestination
+        var seen = Set<String>()
+        let candidates = (originFeeds + destinationFeeds).filter { seen.insert($0.id).inserted }
+        for candidate in candidates.prefix(3) {
             if Task.isCancelled { return nil }
             if let feed = await TransitRealtime.fetch(candidate.url, timeout: 15) { return feed }
         }
