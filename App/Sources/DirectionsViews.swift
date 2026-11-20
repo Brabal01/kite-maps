@@ -457,7 +457,14 @@ struct TripBody: View {
                         HStack { ProgressView(); Text("Finding routes…").foregroundColor(.secondary) }
                             .padding(.vertical, 20)
                     } else {
-                        Text(L10n.text(d.errors[d.mode] ?? "No route found.")).foregroundColor(.secondary).padding(.vertical, 20)
+                        // The header already explains why (location off, provider down).
+                        // The expanded sheet gets a proper empty state, not the same
+                        // sentence repeated under it.
+                        KiteEmptyState(icon: "map",
+                                       title: "No route to show",
+                                       detail: "Change the start, the destination or the travel mode, then try again.",
+                                       actionTitle: "Try again") { model.reloadRoutes() }
+                            .padding(.vertical, KiteSpace.s)
                     }
                 }
                 .padding(.horizontal, 16)

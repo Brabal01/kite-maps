@@ -339,7 +339,9 @@ struct BrowseOverlay: View {
                     if let n = model.notice, !searchFocused {
                         NoticeBanner(text: n) { model.notice = nil }
                     }
-                    if !searchFocused { StatusCards(location: model.location) }
+                    // A place or results sheet already has the screen: the map-status
+                    // card would only cover it. It returns with the map.
+                    if !searchFocused && !hasSheet { StatusCards(location: model.location) }
                     // Kite closed in the middle of a drive: one big button to carry on.
                     if idle, let trip = model.resumeOffer {
                         ResumeCard(trip: trip, onGo: { model.resumeTrip() }, onClose: { withAnimation { model.dismissResume() } })
