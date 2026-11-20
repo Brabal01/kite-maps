@@ -8,7 +8,7 @@ import VelaCore
 
 /** The dock's pages. */
 enum AppTab: Equatable {
-    case map, saved, settings
+    case map, routes, saved, settings
 }
 
 /** Which of your places the "pick a place" sheet is choosing. */
@@ -122,6 +122,13 @@ final class AppModel: ObservableObject {
     @Published var resultsTitle = ""
     @Published var selected: Place?
     @Published var searching = false
+    /** Bumped by the Routes page (or a shortcut) to open the search field on the map. */
+    @Published var focusSearchRequest = 0
+
+    func requestSearch() {
+        tab = .map
+        focusSearchRequest += 1
+    }
     @Published var notice: String?
     @Published var detent: SheetDetent = .half
     @Published var openNowOnly = false
@@ -255,6 +262,57 @@ final class AppModel: ObservableObject {
     /** How wide the side panel is on a big screen (the open iPhone Duo), so the map centres
      *  things in the part you can see; 0 on a phone. */
     var sideInset: CGFloat = 0 { didSet { glide.leftInset = sideInset } }
+
+    /** Where the map opens: the last browse area, else the user, else a neutral world view. */
+    struct MapStart {
+        var center: CLLocationCoordinate2D
+        var zoom: Double
+        /// True when this is the area the user was looking at before the app closed.
+        var restored: Bool
+    }
+
+    var mapStart: MapStart {
+        if let saved = settings.lastMapCenter, settings.lastMapZoom >= 2.5,
+           abs(saved.lat) <= 85, abs(saved.lng) <= 180 {
+            return MapStart(center: CLLocationCoordinate2D(latitude: saved.lat, longitude: saved.lng),
+                            zoom: min(18, max(2.5, settings.lastMapZoom)), restored: true)
+        }
+        if let fix = location.last, fix.horizontalAccuracy >= 0, fix.horizontalAccuracy <= 500,
+           abs(fix.coordinate.latitude) <= 85 {
+            return MapStart(center: fix.coordinate, zoom: 14, restored: false)
+        }
+        // No saved area and no fix yet: a calm world view beats pretending to be in London.
+        return MapStart(center: CLLocationCoordinate2D(latitude: 20, longitude: 0), zoom: 1.6, restored: false)
+    }
+
+    /** A good first fix must not yank the map away from the area the user left it in. */
+    func keepsRestoredView(for fix: CLLocation) -> Bool {
+        guard let saved = settings.lastMapCenter else { return false }
+        let here = LatLng(fix.coordinate.latitude, fix.coordinate.longitude)
+        return saved.distance(to: here) < 60_000
+    }
+
+    private var lastCameraWrite = Date.distantPast
+    private var lastCameraWriteCenter: LatLng?
+
+    /** Remember the browse camera occasionally, never during guidance or route planning. */
+    func rememberBrowseCamera(_ surface: KiteMapSurface) {
+        guard nav == nil, !hasActiveJourney, directions == nil, transitJourney == nil,
+              tab == .map else { return }
+        let c = CLLocationCoordinate2D(latitude: surface.centerCoordinate.latitude,
+                                       longitude: surface.centerCoordinate.longitude)
+        guard abs(c.latitude) <= 85, abs(c.longitude) <= 180, surface.zoomLevel >= 2.5 else { return }
+        let point = LatLng(c.latitude, c.longitude)
+        let now = Date()
+        if let last = lastCameraWriteCenter,
+           now.timeIntervalSince(lastCameraWrite) < 6,
+           last.distance(to: point) < 250,
+           abs(settings.lastMapZoom - surface.zoomLevel) < 0.4 { return }
+        lastCameraWrite = now
+        lastCameraWriteCenter = point
+        settings.lastMapCenter = point
+        settings.lastMapZoom = surface.zoomLevel
+    }
     /** Moves the nav arrow and camera every frame between GPS fixes. */
     let glide = NavGlide()
     /** Bumped on every new route or transit request, so answers to an older one (before a

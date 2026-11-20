@@ -287,7 +287,21 @@ struct SettingsView: View {
                 Picker(selection: $settings.units) {
                     ForEach(UnitsMode.allCases) { Text(L10n.text($0.label)).tag($0) }
                 } label: { SettingLabel("Distance units", icon: "ruler.fill", color: 0x0891B2) }
-                Toggle(isOn: $settings.parkingButton) { SettingLabel("Parking button on the map", icon: "parkingsign", color: 0x2563EB) }
+            }
+            Section {
+                ForEach(QuickActionKind.allCases) { kind in
+                    Toggle(isOn: Binding(
+                        get: { settings.quickActions.contains(kind) },
+                        set: { on in setQuickAction(kind, on) }
+                    )) {
+                        SettingLabel(L10n.text(kind.title), icon: kind.icon, color: 0x0F766E)
+                    }
+                    .disabled(settings.quickActions.count == 1 && settings.quickActions.contains(kind))
+                }
+            } header: {
+                Text("Shortcuts on the map")
+            } footer: {
+                Text("Shown under the search field. Tap a shortcut's own checkbox to add it back. The order follows the order you add them in; hiding a shortcut keeps its place in your saved data.")
             }
             Section {
                 Toggle(isOn: $settings.navBuildings) {
@@ -336,6 +350,16 @@ struct SettingsView: View {
         }
         .kiteList()
         .navigationTitle("Map & display")
+    }
+
+    private func setQuickAction(_ kind: QuickActionKind, _ on: Bool) {
+        if on {
+            guard !settings.quickActions.contains(kind) else { return }
+            settings.quickActions.append(kind)
+        } else {
+            guard settings.quickActions.count > 1 else { return }
+            settings.quickActions.removeAll { $0 == kind }
+        }
     }
 
     private var placesPage: some View {

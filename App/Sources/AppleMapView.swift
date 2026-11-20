@@ -77,7 +77,8 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
             native.traitOverrides.preferredContentSizeCategory = .medium
         }
         native.layoutMargins.bottom = 108
-        native.setCenter(Self.start, animated: false)
+        let start = coordinator.model.mapStart
+        setCenter(start.center, zoomLevel: start.zoom, animated: false)
         native.selectableMapFeatures = [.pointsOfInterest, .physicalFeatures, .territories]
         native.delegate = self
 
@@ -101,8 +102,10 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
         native.addGestureRecognizer(press)
         native.addGestureRecognizer(tap)
 
-        pendingCamera = MLNMapCamera(lookingAtCenter: Self.start, altitude: 9_000,
-                                      pitch: coordinator.model.browsePitch, heading: 0)
+        if let camera = pendingCamera {
+            camera.pitch = coordinator.model.browsePitch
+            pendingCamera = camera
+        }
     }
 
     required init?(coder: NSCoder) { nil }

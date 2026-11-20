@@ -8,6 +8,43 @@ enum ThemeMode: String, CaseIterable, Identifiable {
     var label: String { rawValue.capitalized }
 }
 
+/**
+ One of the shortcuts under the search bar. The list is user-editable, so it is
+ stored as raw strings and unknown values are dropped on load instead of
+ breaking old data.
+ */
+enum QuickActionKind: String, CaseIterable, Identifiable {
+    case home, work, parking, transit, fuel, food, lastDestination, justDrive
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .home: return "Home"
+        case .work: return "Work"
+        case .parking: return "Parking"
+        case .transit: return "Transit"
+        case .fuel: return "Fuel"
+        case .food: return "Food"
+        case .lastDestination: return "Last destination"
+        case .justDrive: return "Just drive"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .home: return "house.fill"
+        case .work: return "briefcase.fill"
+        case .parking: return "parkingsign"
+        case .transit: return "tram.fill"
+        case .fuel: return "fuelpump.fill"
+        case .food: return "fork.knife"
+        case .lastDestination: return "clock.arrow.circlepath"
+        case .justDrive: return "car.fill"
+        }
+    }
+}
+
 enum UnitsMode: String, CaseIterable, Identifiable {
     case auto, metric, imperial, yards
     var id: String { rawValue }
@@ -48,6 +85,15 @@ final class AppSettings: ObservableObject {
     }
     @Published var theme: ThemeMode { didSet { d.set(theme.rawValue, forKey: "theme") } }
     @Published var units: UnitsMode { didSet { d.set(units.rawValue, forKey: "units") } }
+    /** The shortcuts shown under the search bar, in the user's order. */
+    @Published var quickActions: [QuickActionKind] {
+        didSet { d.set(quickActions.map(\.rawValue), forKey: "quickActions") }
+    }
+    /** The browse map's last meaningful camera, so a launch does not flash London.
+     *  Deliberately not @Published: the map itself asks for it at creation time and
+     *  writing it must not re-render every screen that observes settings. */
+    var lastMapCenter: LatLng? { didSet { save(lastMapCenter, "lastMapCenter") } }
+    var lastMapZoom: Double { didSet { d.set(lastMapZoom, forKey: "lastMapZoom") } }
     @Published var voice: Bool { didSet { d.set(voice, forKey: "voice") } }
     /** The speaker button was last left on "Alerts only" (cameras and police, no turns). */
     @Published var voiceAlertsOnly: Bool { didSet { d.set(voiceAlertsOnly, forKey: "voiceAlertsOnly") } }
@@ -143,6 +189,11 @@ final class AppSettings: ObservableObject {
         language = KiteLanguage(rawValue: d.string(forKey: "language") ?? "") ?? .system
         theme = ThemeMode(rawValue: d.string(forKey: "theme") ?? "") ?? .system
         units = UnitsMode(rawValue: d.string(forKey: "units") ?? "") ?? .auto
+        quickActions = (d.stringArray(forKey: "quickActions"))
+            .map { $0.compactMap(QuickActionKind.init(rawValue:)) }
+            ?? [.home, .work, .parking, .transit, .lastDestination]
+        lastMapCenter = d.data(forKey: "lastMapCenter").flatMap { try? JSONDecoder().decode(LatLng.self, from: $0) }
+        lastMapZoom = d.object(forKey: "lastMapZoom") as? Double ?? 0
         voice = d.object(forKey: "voice") as? Bool ?? true
         voiceAlertsOnly = d.bool(forKey: "voiceAlertsOnly")
         traffic = d.object(forKey: "traffic") as? Bool ?? true
@@ -206,6 +257,12 @@ final class AppSettings: ObservableObject {
 
     private func save<T: Encodable>(_ v: T, _ key: String) {
         if let data = try? JSONEncoder().encode(v) { d.set(data, forKey: key) }
+    }
+
+    /** Forget the restored browse camera (used by tests and by "centre on me"). */
+    func clearLastMapCenter() {
+        lastMapCenter = nil
+        lastMapZoom = 0
     }
 
     var colorScheme: ColorScheme? {

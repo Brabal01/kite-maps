@@ -2,28 +2,46 @@ import SwiftUI
 import VelaCore
 
 /**
- * The bar along the bottom: Map, Saved and Settings as three icons in one slim see-through pill,
- * with a dot under the page you're on. Each is still a big target (72 by 60).
+ The bar along the bottom: Map, Routes, Saved and Settings.
+
+ One floating surface, four equal targets (72×56 on a phone). The selected page
+ gets a soft teal capsule behind its icon and label, so the current page is
+ readable at a glance without a second navigation control anywhere else.
  */
 struct KiteDock: View {
     @ObservedObject var model: AppModel
     let bottomInset: CGFloat
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    static let height: CGFloat = 60
+    static let height: CGFloat = 64
     /** How far the dock sits above the screen's bottom edge. */
-    static func bottomGap(_ inset: CGFloat) -> CGFloat { max(inset - 14, 10) }
+    static func bottomGap(_ inset: CGFloat) -> CGFloat { max(inset - 12, 10) }
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 2) {
             item(.map, "map.fill", "Map")
+            item(.routes, "arrow.triangle.turn.up.right.diamond.fill", "Routes")
             item(.saved, "bookmark.fill", "Saved")
             item(.settings, "gearshape.fill", "Settings")
         }
-        .padding(.horizontal, 8)
-        .frame(height: Self.height)
-        .glass(Capsule())
+        .padding(.horizontal, 6)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 26, style: .continuous)
+                        .fill(KiteColor.surface.opacity(scheme == .dark ? 0.82 : 0.92))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 26, style: .continuous)
+                        .strokeBorder(KiteColor.strokeStrong, lineWidth: 0.75)
+                )
+                .shadow(color: KiteElevation.medium.color, radius: 16, y: 6)
+        )
         .frame(maxWidth: .infinity)
+        .padding(.horizontal, 28)
         .padding(.bottom, Self.bottomGap(bottomInset))
     }
 
@@ -31,19 +49,197 @@ struct KiteDock: View {
         let on = model.tab == tab
         return Button {
             if tab != model.tab, model.tab == .settings { model.reloadRoutes() }
-            model.tab = tab
+            withAnimation(reduceMotion ? nil : KiteMotion.snap) { model.tab = tab }
         } label: {
-            VStack(spacing: 5) {
-                Image(systemName: icon).font(.system(size: 23, weight: .semibold))
-                Circle().fill(on ? Vela.accentText(scheme) : Color.clear).frame(width: 5, height: 5)
+            VStack(spacing: 3) {
+                Image(systemName: icon).font(.system(size: 20, weight: .semibold))
+                Text(L10n.text(title)).font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                    .lineLimit(1)
             }
-            .foregroundColor(on ? Vela.accentText(scheme) : Vela.muted(scheme))
-            .frame(width: 72, height: Self.height)
-            .contentShape(Rectangle())
+            .foregroundColor(on ? KiteColor.accentText : KiteColor.inkSecondary)
+            .frame(maxWidth: .infinity, minHeight: 52)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(on ? KiteColor.accentSoft : .clear)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(L10n.text(title))
-        .accessibilityAddTraits(on ? .isSelected : [])
+        .accessibilityAddTraits(on ? [.isSelected, .isButton] : .isButton)
+    }
+}
+
+/**
+ The Routes page: start a new journey, carry on the one Kite remembers, or go
+ again where you went last. It deliberately does not repeat the map's search
+ field; "Plan a route" opens the same field on the map.
+ */
+struct RoutesPage: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject private var settings = AppSettings.shared
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .bottom) {
+                KiteColor.canvas.ignoresSafeArea()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: KiteSpace.xl) {
+                        header
+                        planCard
+                        if let trip = model.resumeOffer {
+                            resumeCard(trip)
+                        }
+                        homeWork
+                        recent
+                        if settings.recentPlaces.isEmpty {
+                            KiteEmptyState(icon: "clock.arrow.circlepath",
+                                           title: "No recent journeys yet",
+                                           detail: "Places you open or navigate to will be listed here, ready for the next trip.",
+                                           actionTitle: "Find a place") { model.requestSearch() }
+                        }
+                    }
+                    .padding(.horizontal, KiteSpace.m)
+                    .padding(.top, KiteSpace.s)
+                    .padding(.bottom, KiteDock.height + 44)
+                }
+                KiteDock(model: model, bottomInset: geo.safeAreaInsets.bottom)
+            }
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(L10n.text("Routes")).font(KiteText.display(34)).foregroundColor(KiteColor.ink)
+            Text(L10n.text("Plan, resume or repeat a journey."))
+                .font(KiteText.body(15)).foregroundColor(KiteColor.inkSecondary)
+        }
+    }
+
+    private var planCard: some View {
+        Button { model.requestSearch() } label: {
+            HStack(spacing: KiteSpace.s) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundColor(KiteColor.onAccent)
+                    .frame(width: 48, height: 48)
+                    .background(Circle().fill(KiteColor.accent))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(L10n.text("Where to?")).font(KiteText.headline()).foregroundColor(KiteColor.ink)
+                    Text(L10n.text("Search a place, an address or a category"))
+                        .font(KiteText.caption()).foregroundColor(KiteColor.inkSecondary).lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").font(.system(size: 15, weight: .bold)).foregroundColor(KiteColor.inkSecondary)
+            }
+            .kiteCard()
+            .contentShape(RoundedRectangle(cornerRadius: KiteRadius.card, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(L10n.text("Plan a route"))
+    }
+
+    private func resumeCard(_ trip: SavedTrip) -> some View {
+        VStack(alignment: .leading, spacing: KiteSpace.s) {
+            KiteSectionHeader(title: "Carry on", subtitle: trip.destination.name)
+            Button { model.resumeTrip() } label: {
+                Label("Carry on", systemImage: "location.north.fill")
+            }
+            .buttonStyle(KitePrimaryButtonStyle(height: 52))
+        }
+        .kiteCard()
+    }
+
+    private var homeWork: some View {
+        VStack(alignment: .leading, spacing: KiteSpace.s) {
+            KiteSectionHeader(title: "Favourites")
+            HStack(spacing: KiteSpace.s) {
+                destinationTile("Home", icon: "house.fill", place: settings.home) { model.picking = .home }
+                destinationTile("Work", icon: "briefcase.fill", place: settings.work) { model.picking = .work }
+            }
+        }
+    }
+
+    private func destinationTile(_ title: String, icon: String, place: Place?, unset: @escaping () -> Void) -> some View {
+        Button {
+            if let place { model.openDirections(to: place) } else { unset() }
+        } label: {
+            VStack(alignment: .leading, spacing: KiteSpace.xs) {
+                Image(systemName: icon)
+                    .font(.system(size: 19, weight: .bold))
+                    .foregroundColor(KiteColor.accentText)
+                    .frame(width: 42, height: 42)
+                    .background(Circle().fill(KiteColor.accentSoft))
+                Text(L10n.text(title)).font(KiteText.headline(16)).foregroundColor(KiteColor.ink)
+                Text(place?.name ?? L10n.text("Tap to set"))
+                    .font(KiteText.caption()).foregroundColor(KiteColor.inkSecondary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .kiteCard(padding: KiteSpace.s)
+            .contentShape(RoundedRectangle(cornerRadius: KiteRadius.card, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(place == nil ? "Set \(L10n.text(title))" : "\(L10n.text(title)), \(place?.name ?? "")")
+    }
+
+    private var recent: some View {
+        VStack(alignment: .leading, spacing: KiteSpace.s) {
+            KiteSectionHeader(title: "Recent", actionTitle: settings.recentPlaces.isEmpty ? nil : "Clear") {
+                settings.recentPlaces = []
+                settings.recents = []
+            }
+            if !settings.recentPlaces.isEmpty {
+                VStack(spacing: 0) {
+                    ForEach(Array(settings.recentPlaces.prefix(8).enumerated()), id: \.element.id) { index, place in
+                        if index > 0 { Divider().padding(.leading, 58) }
+                        recentRow(place)
+                    }
+                }
+                .background(
+                    RoundedRectangle(cornerRadius: KiteRadius.card, style: .continuous)
+                        .fill(KiteColor.surface)
+                        .overlay(RoundedRectangle(cornerRadius: KiteRadius.card, style: .continuous)
+                            .strokeBorder(KiteColor.stroke, lineWidth: 1))
+                )
+            }
+        }
+    }
+
+    private func recentRow(_ place: Place) -> some View {
+        Button { model.openDirections(to: place) } label: {
+            HStack(spacing: KiteSpace.s) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(KiteColor.inkSecondary)
+                    .frame(width: 34, height: 34)
+                    .background(Circle().fill(KiteColor.fill))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(place.name).font(KiteText.label(16)).foregroundColor(KiteColor.ink).lineLimit(1)
+                    if let detail = place.address ?? place.category {
+                        Text(detail).font(KiteText.caption()).foregroundColor(KiteColor.inkSecondary).lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 0)
+                if let here = model.userLatLng {
+                    Text(Fmt.distance(here.distance(to: place.location)))
+                        .font(KiteText.caption()).foregroundColor(KiteColor.inkSecondary)
+                }
+                Image(systemName: "arrow.triangle.turn.up.right.diamond.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(KiteColor.accentText)
+            }
+            .padding(.horizontal, KiteSpace.m)
+            .frame(minHeight: 58)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button(role: .destructive) {
+                settings.recentPlaces.removeAll { $0.id == place.id }
+            } label: { Label("Remove from recents", systemImage: "trash") }
+        }
     }
 }
 

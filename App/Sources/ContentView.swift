@@ -101,6 +101,7 @@ struct ContentView: View {
             } else {
                 switch model.tab {
                 case .map: BrowseOverlay(model: model)
+                case .routes: RoutesPage(model: model).sidePage(panel).transition(.opacity)
                 case .saved: SavedPage(model: model).sidePage(panel).transition(.opacity)
                 case .settings: SettingsPage(model: model).sidePage(panel).transition(.opacity)
                 }
@@ -266,15 +267,6 @@ struct BrowseOverlay: View {
                         VStack(spacing: 10) {
                             MapFab(icon: "square.3.layers.3d", size: 48) { model.showLayers = true }
                                 .accessibilityLabel("Map layers")
-                            if idle {
-                                MapFab(icon: "car.fill", size: 48) { model.startJustDrive() }
-                                    .accessibilityLabel("Just drive")
-                            }
-                            if settings.parkingButton || settings.parking != nil {
-                                MapFab(icon: "parkingsign", tint: settings.parking != nil ? Vela.routeBlue : .primary, size: 48) {
-                                    if let p = settings.parking { model.select(p) } else { model.saveParking() }
-                                }
-                            }
                             // 3D, 2D or north up, always there. On north up with the map turned by hand,
                             // the needle shows which way north is and a tap faces north again.
                             MapLookButton(look: model.browseLook, heading: model.mapHeading, size: 48) {
@@ -331,8 +323,14 @@ struct BrowseOverlay: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
 
-                VStack(spacing: 12) {
+                VStack(spacing: 10) {
                     SearchBar(model: model, voice: voice, focused: $searchFocused)
+                    if idle && !voice.listening {
+                        QuickActionBar(model: model, settings: settings) {
+                            searchFocused = true
+                        }
+                        .transition(.opacity)
+                    }
                     if voice.listening { ListeningCard(voice: voice) }
                     // Home, Work and recents are one tap away under "Where to?", so the map itself stays clear.
                     if searchFocused {
@@ -353,6 +351,9 @@ struct BrowseOverlay: View {
             }
             .animation(.spring(response: 0.3, dampingFraction: 0.85), value: hasSheet)
             .animation(.easeOut(duration: 0.2), value: idle)
+        }
+        .onChange(of: model.focusSearchRequest) { _ in
+            withAnimation(KiteMotion.gentle) { searchFocused = true }
         }
         .task {
             // Screenshot run only: the search box open, to check nothing sits on its panel.
@@ -381,31 +382,49 @@ struct BrowseOverlay: View {
     }
 }
 
-/** "Where to?": the one way into search, big enough to hit from a phone holder. */
+/**
+ The search field: the main entry point of the map screen.
+
+ One surface, one radius. The magnifier is a real button when a search is open
+ (back), the field is the biggest touch target on screen, and the voice button
+ sits in a tinted circle so it reads as an action rather than decoration.
+ */
 struct SearchBar: View {
     @ObservedObject var model: AppModel
     @ObservedObject var voice: VoiceSearch
     var focused: FocusState<Bool>.Binding
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var open: Bool {
+        focused.wrappedValue || !model.query.isEmpty || !model.results.isEmpty || model.selected != nil
+    }
 
     var body: some View {
-        HStack(spacing: 14) {
-            if focused.wrappedValue || !model.results.isEmpty || model.selected != nil {
+        HStack(spacing: KiteSpace.xs) {
+            if open {
                 Button {
                     if focused.wrappedValue { focused.wrappedValue = false } else { model.clearSearch() }
                 } label: {
-                    Image(systemName: "arrow.left").font(.system(size: 22, weight: .semibold))
-                        .frame(width: 44, height: 44)
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundColor(KiteColor.ink)
+                        .frame(width: 40, height: 40)
+                        .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Back")
             } else {
-                Image(systemName: "magnifyingglass").font(.system(size: 20, weight: .semibold))
-                    .foregroundColor(Vela.muted(scheme))
-                    .padding(.leading, 8)
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundColor(KiteColor.accentText)
+                    .frame(width: 40, height: 40)
+                    .accessibilityHidden(true)
             }
+
             TextField("Where to?", text: $model.query)
-                .font(.system(size: 19, weight: .medium))
+                .font(KiteText.headline(19))
+                .foregroundColor(KiteColor.ink)
                 .focused(focused)
                 .submitLabel(.search)
                 .autocorrectionDisabled()
@@ -414,41 +433,154 @@ struct SearchBar: View {
                 .onChange(of: model.query) { q in
                     if focused.wrappedValue { model.typed(q) }
                 }
-            if model.searching {
-                ProgressView().frame(width: 48, height: 48)
-            } else if !model.query.isEmpty || !model.results.isEmpty || model.selected != nil {
-                Button {
-                    model.clearSearch()
-                    focused.wrappedValue = false
-                } label: {
-                    Image(systemName: "xmark").font(.system(size: 18, weight: .bold))
-                        .frame(width: 48, height: 48)
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Clear search")
-            } else {
-                Button {
-                    focused.wrappedValue = false
-                    voice.start(onDone: { text in
-                        model.query = text
-                        model.search(text)
-                    }, onError: { model.notice = $0 })
-                } label: {
-                    Image(systemName: "mic.fill").font(.system(size: 19, weight: .semibold))
-                        .frame(width: 48, height: 48)
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Search by voice")
-            }
+                .accessibilityLabel(L10n.text("Where to?"))
+
+            trailing
         }
-        .foregroundColor(.primary)
-        .padding(.leading, 12)
-        .padding(.trailing, 4)
-        .frame(height: 54)
-        .glass(Capsule())
+        .padding(.horizontal, 6)
+        .frame(height: 58)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(KiteColor.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .strokeBorder(open ? KiteColor.accent.opacity(0.45) : KiteColor.strokeStrong, lineWidth: 1)
+                )
+                .shadow(color: KiteElevation.medium.color, radius: 12, y: 4)
+        )
         .padding(.horizontal, 16)
+        .animation(KiteMotion.gentle, value: open)
+    }
+
+    @ViewBuilder
+    private var trailing: some View {
+        if model.searching {
+            ProgressView().frame(width: 46, height: 46)
+                .accessibilityLabel("Searching")
+        } else if open {
+            Button {
+                model.clearSearch()
+                focused.wrappedValue = false
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundColor(KiteColor.inkSecondary)
+                    .frame(width: 40, height: 40)
+                    .background(Circle().fill(KiteColor.fill))
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Clear search")
+        } else {
+            Button {
+                focused.wrappedValue = false
+                voice.start(onDone: { text in
+                    model.query = text
+                    model.search(text)
+                }, onError: { model.notice = $0 })
+            } label: {
+                Image(systemName: "mic.fill")
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundColor(KiteColor.accentText)
+                    .frame(width: 42, height: 42)
+                    .background(Circle().fill(KiteColor.accentSoft))
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Search by voice")
+        }
+    }
+}
+
+/**
+ The shortcuts under the search field: Home, Work, Parking and whatever else the
+ user kept. They are contextual (a parking shortcut turns into "I parked here"
+ once Kite knows where the car is) and never duplicate the map's own buttons.
+ */
+struct QuickActionBar: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject var settings: AppSettings
+    let onSearch: () -> Void
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: KiteSpace.xs) {
+                ForEach(settings.quickActions) { kind in
+                    Button { run(kind) } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: kind.icon)
+                                .font(.system(size: 14, weight: .bold))
+                            Text(L10n.text(detailTitle(kind)))
+                                .font(KiteText.label(14))
+                                .lineLimit(1)
+                        }
+                        .foregroundColor(KiteColor.ink)
+                        .padding(.horizontal, 13)
+                        .frame(height: 38)
+                        .background(
+                            Capsule()
+                                .fill(KiteColor.surface.opacity(scheme == .dark ? 0.88 : 0.94))
+                                .overlay(Capsule().strokeBorder(KiteColor.stroke, lineWidth: 1))
+                                .shadow(color: KiteElevation.low.color, radius: 5, y: 2)
+                        )
+                        .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .contextMenu {
+                        Button(role: .destructive) {
+                            guard settings.quickActions.count > 1 else { return }
+                            settings.quickActions.removeAll { $0 == kind }
+                        } label: {
+                            Label("Hide shortcut", systemImage: "eye.slash")
+                        }
+                        Button { model.tab = .settings } label: {
+                            Label("Edit shortcuts", systemImage: "slider.horizontal.3")
+                        }
+                    }
+                    .accessibilityLabel(L10n.text(kind.title))
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 2)
+        }
+    }
+
+    /** Home/Work become "I parked here" and "Recent" once they have context. */
+    private func detailTitle(_ kind: QuickActionKind) -> String {
+        switch kind {
+        case .parking where settings.parking != nil: return "I parked here"
+        case .lastDestination: return "Recent"
+        default: return kind.title
+        }
+    }
+
+    private func run(_ kind: QuickActionKind) {
+        switch kind {
+        case .home:
+            if let p = settings.home { model.openDirections(to: p) }
+            else { model.picking = .home }
+        case .work:
+            if let p = settings.work { model.openDirections(to: p) }
+            else { model.picking = .work }
+        case .parking:
+            if let p = settings.parking { model.select(p) } else { model.saveParking() }
+        case .transit:
+            search(Fmt.yards ? "bus stop" : "transit station", "Transit")
+        case .fuel:
+            search(Fmt.yards ? "petrol station" : "gas stations", "Fuel")
+        case .food:
+            search("restaurants", "Food")
+        case .lastDestination:
+            if let p = settings.recentPlaces.first { model.openDirections(to: p) } else { onSearch() }
+        case .justDrive:
+            model.startJustDrive()
+        }
+    }
+
+    private func search(_ query: String, _ title: String) {
+        onSearch()
+        model.search(query, title: L10n.text(title))
     }
 }
 

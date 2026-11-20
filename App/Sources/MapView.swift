@@ -27,7 +27,10 @@ struct VelaMapView: UIViewRepresentable {
         map.logoView.isHidden = true
         map.attributionButtonPosition = .bottomLeft
         map.attributionButtonMargins = CGPoint(x: 8, y: 8)
-        map.setCenter(CLLocationCoordinate2D(latitude: 51.5074, longitude: -0.1278), zoomLevel: 12, animated: false)
+        // Never open on a hard-coded city: restore the user's last area, or their
+        // current fix, or a neutral world view until the first fix arrives.
+        let start = model.mapStart
+        map.setCenter(start.center, zoomLevel: start.zoom, animated: false)
         let camera = map.camera
         camera.pitch = model.browsePitch
         map.camera = camera
@@ -1417,6 +1420,7 @@ struct VelaMapView: UIViewRepresentable {
             render(map)
             loadRail(map)
             noteHeading(map)
+            model.rememberBrowseCamera(map)
         }
 
         nonisolated func mapViewRegionIsChanging(_ mapView: MLNMapView) {
@@ -1453,6 +1457,9 @@ struct VelaMapView: UIViewRepresentable {
             movedToUser = true
             guard model.results.isEmpty, model.selected == nil, model.directions == nil,
                   !model.hasActiveJourney else { return }
+            // The user left the map over their own city: keep that view. Only a fix
+            // far away from the restored area takes the camera.
+            if model.mapStart.restored, model.keepsRestoredView(for: loc) { return }
             map.setCenter(loc.coordinate, zoomLevel: 15, animated: false)
             let camera = map.camera
             camera.pitch = model.browsePitch
