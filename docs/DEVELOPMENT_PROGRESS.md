@@ -2,7 +2,7 @@
 
 Updated: 2026-11-20
 
-## v27 (in progress)
+## v27 (verified build 1043)
 
 Base: `iphone-custom-v26` (verified build 1036/1037).
 
@@ -36,6 +36,15 @@ Base: `iphone-custom-v26` (verified build 1036/1037).
   walking transfer.
 - The timetable is shown immediately; a slow live feed updates it afterwards without blanking the
   screen.
+
+### Verification
+
+- GitHub Actions run `44768158140` built commit `44f6fa0` successfully in 3m27s.
+- VelaCore on CI: **214 tests, 0 failures** (208 local Linux + the Darwin-only fixture).
+- Artifact `Kite-custom-ipa` downloaded and checked: clean `unzip -t`, arm64 app and widget,
+  bundle IDs `app.vela.ios` / `app.vela.ios.navigation`, `CFBundleVersion` 1043, `_CodeSignature`
+  on both.
+- Physical iPhone checks for locked screen, background GPS, compass and battery still need a device.
 
 ### Not done in this stage
 

@@ -22,10 +22,12 @@
 ## iOS build
 
 - Compiled, signed and packaged by `.github/workflows/custom-iphone.yml`.
-- Verified build for v26: run `44758806622`, commit `48178b7`, artifact `Kite-custom-ipa`.
+- Verified build for v27: run `44768158140`, commit `44f6fa0`, artifact `Kite-custom-ipa`,
+  `CFBundleVersion` 1043.
+- VelaCore on the CI runner: **214 tests, 0 failures**.
+- Verified build for v26: run `44758806622`, commit `48178b7`, `CFBundleVersion` 1036.
 - Artifact checks: `Payload/Kite.app`, arm64, `NavigationWidget.appex`, bundle identifiers,
-  `CFBundleVersion` 1036, `unzip -t`, `_CodeSignature` on app and widget.
-- VelaCore on the CI runner: **200 tests, 0 failures**.
+  `unzip -t`, `_CodeSignature` on app and widget.
 
 ## Not testable here
 
