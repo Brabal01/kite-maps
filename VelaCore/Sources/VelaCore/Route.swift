@@ -256,6 +256,39 @@ public struct Route: Identifiable, Hashable, Sendable {
 
     public var durationSeconds: Double { trafficSeconds ?? typicalSeconds }
 
+    /**
+     * Seconds left from [meters] along the route. With mapped traffic spans this sums each stretch
+     * at its own speed instead of taking a flat share of the whole trip; without them it is exactly
+     * the old proportional estimate. It never invents live traffic that the router did not send.
+     */
+    public func remainingSeconds(from meters: Double) -> Double {
+        let total = Geo.length(polyline)
+        guard total > 0, typicalSeconds > 0 else { return 0 }
+        let start = max(0, min(meters, total))
+        let remaining = total - start
+        guard remaining > 0 else { return 0 }
+        guard !trafficSpans.isEmpty else { return durationSeconds * remaining / total }
+        let base = typicalSeconds / total // seconds per meter in free flow
+        var seconds = 0.0
+        var at = start
+        while at < total {
+            let step = min(80, total - at)
+            let middle = at + step / 2
+            var factor = 1.0
+            for span in trafficSpans where span.startMeters <= middle && span.startMeters + span.lengthMeters > middle {
+                switch span.level {
+                case 3: factor = min(factor, 0.25)
+                case 2: factor = min(factor, 0.5)
+                case 1: factor = min(factor, 0.75)
+                default: break
+                }
+            }
+            seconds += step * base / max(0.2, factor)
+            at += step
+        }
+        return seconds
+    }
+
     /** The limit at [meters] along the route. */
     public func speedLimit(at meters: Double) -> Double? {
         speedLimits.last { $0.startMeters <= meters }?.kmh

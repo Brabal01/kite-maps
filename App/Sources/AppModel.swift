@@ -269,6 +269,7 @@ final class AppModel: ObservableObject {
         walkingSettingsTask?.cancel()
     }
     private var transitRequest = 0
+    private var transitTask: Task<Void, Never>?
     private var transitLoadedAt = Date.distantPast
     private var searchTask: Task<Void, Never>?
     private var navSub: AnyCancellable?
@@ -859,7 +860,9 @@ final class AppModel: ObservableObject {
         directions?.trips = nil
         directions?.tripsError = nil
         directions?.trip = 0
-        Task {
+        // A newer trip replaces the request still loading; its answer must never land afterwards.
+        transitTask?.cancel()
+        transitTask = Task {
             do {
                 var trips = try await Transitous.plan(from: from, to: to, time: time, arriveBy: arriveBy)
                 // Transitous already carries live times from its own GTFS-Realtime sources. An

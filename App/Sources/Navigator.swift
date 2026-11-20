@@ -117,6 +117,8 @@ final class Navigator: ObservableObject {
     private var trafficScale = 1.0
     private var trafficAt = Date()
     private var trafficLoading = false
+    private var trafficTask: Task<Void, Never>?
+    private var trafficRequest = 0
     private var cameraSpokenAt = Date.distantPast
     private var cameraSpokenLimit: Double?
     /** The car has been on the route at least once since it was planned. */
@@ -247,6 +249,10 @@ final class Navigator: ObservableObject {
     func stop() {
         stopped = true
         rerouteTask?.cancel()
+        trafficTask?.cancel()
+        trafficTask = nil
+        trafficRequest += 1
+        trafficLoading = false
         coverage = nil
         gpsWatch?.invalidate()
         speech.stopSpeaking(at: .immediate)
@@ -461,7 +467,15 @@ final class Navigator: ObservableObject {
         if p.offsetMeters < 40 { joinedRoute = true }
         // Right by the pin at the end of the route, a new route is only a U-turn round the block: let
         // the car park instead. Still a long way round to go, though, the driver found another way in.
-        if p.offRoute && !estimated && !rerouting && (toPin > 150 || !nearPin) && (joinedRoute || p.offsetMeters > max(100, loc.horizontalAccuracy * 3)) && Date().timeIntervalSince(lastReroute) > 3 {
+        if p.offRoute, !estimated, !rerouting,
+           ReroutePolicy.shouldReroute(offsetMeters: p.offsetMeters,
+                                       accuracy: loc.horizontalAccuracy,
+                                       speed: speedMps,
+                                       offRouteFixes: p.offRouteFixes,
+                                       joinedRoute: joinedRoute,
+                                       nearDestination: toPin <= 150 && nearPin,
+                                       secondsSinceLast: Date().timeIntervalSince(lastReroute),
+                                       confidence: p.confidence) {
             reroute(from: loc)
             return
         }
@@ -1058,11 +1072,15 @@ final class Navigator: ObservableObject {
               p.remainingMeters > 1_500, !p.offRoute, Date().timeIntervalSince(trafficAt) > 90 else { return }
         trafficLoading = true
         trafficAt = Date()
+        trafficRequest += 1
+        let request = trafficRequest
         let from = LatLng(loc.coordinate.latitude, loc.coordinate.longitude)
         let course = heading(loc), id = route.id, planned = p.remainingSeconds / trafficScale
         let to = destination.location, hw = avoidHighways, tolls = avoidTolls, via = stops.map(\.location)
-        Task {
+        trafficTask?.cancel()
+        trafficTask = Task {
             let r = await Directions.routes(from: from, to: to, mode: .drive, avoidHighways: hw, avoidTolls: tolls, via: via, heading: course)
+            guard !Task.isCancelled, request == self.trafficRequest else { return }
             self.trafficLoading = false
             // Arrived (or ended) while asking: no new route, and no "Found a faster route" in the car park.
             guard !self.stopped, !self.arrived, self.route.id == id, !self.rerouting,
@@ -1295,6 +1313,10 @@ final class Navigator: ObservableObject {
         toldContinue = []
         trafficScale = 1
         trafficAt = Date()
+        trafficTask?.cancel()
+        trafficTask = nil
+        trafficRequest += 1
+        trafficLoading = false
         loadCameras()
         loadRoundabouts()
         wazeAt = .distantPast
