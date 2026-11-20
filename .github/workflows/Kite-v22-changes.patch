@@ -267,7 +267,7 @@ index 00157a7..f28176e 100644
             let exit = text.range(of: #"\b(?:exit|junction)\s+[0-9]+[A-Z]?\b"#, options: [.regularExpression, .caseInsensitive]) {
              let number = text[exit].split(separator: " ").last.map(String.init)
 diff --git a/VelaCore/Sources/VelaCore/OSRM.swift b/VelaCore/Sources/VelaCore/OSRM.swift
-index a66eadc..51f26c6 100644
+index a66eadc..d2a2e8e 100644
 --- a/VelaCore/Sources/VelaCore/OSRM.swift
 +++ b/VelaCore/Sources/VelaCore/OSRM.swift
 @@ -154,12 +154,12 @@ public enum OSRM {
@@ -335,10 +335,10 @@ index a66eadc..51f26c6 100644
  
      /** The turn lanes at a step's maneuver point (its first intersection), left to right. */
 +    static func throughLanes(_ junction: [String: Any]) -> [Lane] {
-+        guard let bearings = junction["bearings"] as? [Double],
++        guard let bearings = junction["bearings"] as? [Int],
 +              let incoming = junction["in"] as? Int, let outgoing = junction["out"] as? Int,
 +              bearings.indices.contains(incoming), bearings.indices.contains(outgoing),
-+              abs((bearings[outgoing] - bearings[incoming] + 360).truncatingRemainder(dividingBy: 360) - 180) < 25 else { return [] }
++              abs((bearings[outgoing] - bearings[incoming] + 360) % 360 - 180) < 25 else { return [] }
 +        let mapped = lanes(["intersections": [junction]])
 +        guard mapped.contains(where: { $0.valid && $0.indications.contains("straight") }),
 +              mapped.contains(where: { !$0.valid }) else { return [] }
