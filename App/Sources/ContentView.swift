@@ -97,16 +97,11 @@ struct ContentView: View {
                 .onChange(of: g.size) { screen = $0 }
         })
         .environment(\.sidePanel, panel)
-        .onAppear {
-            LaunchTrace.mark("ContentView appeared")
-            model.sideInset = panel
-            DispatchQueue.main.asyncAfter(deadline: .now() + 10) { LaunchTrace.markReady() }
-        }
+        .onAppear(perform: didAppear)
         .onChange(of: panel) { model.sideInset = $0 }
         .animation(.easeOut(duration: 0.25), value: model.wazeInfo?.id)
         .animation(.easeOut(duration: 0.2), value: model.tab)
         .kiteType()
-        .environment(\.locale, settings.language.locale)
         .preferredColorScheme(settings.colorScheme)
         .task { await DemoScript.run(model) }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
@@ -200,6 +195,12 @@ struct ContentView: View {
         }
     }
 
+
+    private func didAppear() {
+        LaunchTrace.mark("ContentView appeared")
+        model.sideInset = panel
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { LaunchTrace.markReady() }
+    }
 
     private func wazeProbeText() -> String {
         let status: String

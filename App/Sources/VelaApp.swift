@@ -2,6 +2,8 @@ import SwiftUI
 
 @main
 struct VelaApp: App {
+    @AppStorage("language") private var languageRaw = ""
+
     init() {
         LaunchTrace.mark("app init")
         CrashDiagnostics.shared.start()
@@ -14,6 +16,7 @@ struct VelaApp: App {
                 SafeModeView()
             } else {
                 ContentView()
+                    .environment(\.locale, KiteLanguage(rawValue: languageRaw)?.locale ?? .current)
             }
         }
     }
