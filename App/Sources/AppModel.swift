@@ -878,7 +878,10 @@ final class AppModel: ObservableObject {
                 // The fastest first, so it's the one picked (Matteo, 2026-11-13: a bike route marked
                 // "Slower route" was picked while one 5 min faster sat below it).
                 let allowed = m == .drive ? r.routes.filter { d.exclusion?.allows($0) ?? true } : r.routes
-                directions?.routes[m] = allowed.sorted { $0.durationSeconds < $1.durationSeconds }
+                // Two answers that differ by seconds and a few hundred metres are one
+                // choice, not two cards. The fastest always stays.
+                directions?.routes[m] = RouteAlternatives.distinct(allowed)
+                    .sorted { $0.durationSeconds < $1.durationSeconds }
                 if allowed.isEmpty, m == .drive, d.exclusion != nil {
                     directions?.errors[m] = "No alternative avoids this segment. Undo the avoidance to see all routes."
                 } else if r.routes.isEmpty {

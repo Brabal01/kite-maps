@@ -246,15 +246,11 @@ struct TripHeader: View {
     private var goButton: some View {
         Button { model.startNavigation() } label: {
             HStack(spacing: 10) {
-                Image(systemName: "location.north.fill").font(.system(size: 24, weight: .bold))
-                Text("Go").font(.system(size: 26, weight: .heavy))
+                Image(systemName: "location.north.fill").font(.system(size: 22, weight: .bold))
+                Text(L10n.text("Go")).font(KiteText.headline(22))
             }
-            .foregroundColor(Vela.onAccent(scheme))
-            .frame(maxWidth: .infinity, minHeight: 68)
-            .background(Capsule().fill(Vela.accent(scheme)))
-            .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(KitePrimaryButtonStyle(height: 62))
         .accessibilityLabel("Start navigation")
     }
 
@@ -290,14 +286,15 @@ struct TripHeader: View {
                 }
                 .font(.caption2.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.7)
             }
-            .frame(maxWidth: .infinity, minHeight: 88, alignment: .leading)
-            .padding(.horizontal, 9)
-            .foregroundStyle(.primary)
-            .background(RoundedRectangle(cornerRadius: 16).fill(on ? Color(hex: 0x007AFF).opacity(scheme == .dark ? 0.25 : 0.13) : Vela.chip(scheme)))
-            .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(
-                on ? Color(hex: scheme == .dark ? 0x80BFFF : 0x007AFF) : .clear, lineWidth: 2
+            .frame(maxWidth: .infinity, minHeight: 92, alignment: .leading)
+            .padding(.horizontal, 10)
+            .foregroundStyle(KiteColor.ink)
+            .background(RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(on ? KiteColor.accentSoft : KiteColor.fill))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(
+                on ? KiteColor.accent : .clear, lineWidth: 2
             ))
-            .contentShape(RoundedRectangle(cornerRadius: 16))
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
@@ -335,7 +332,7 @@ struct TripHeader: View {
                     } else if let r = d.route {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(Fmt.duration(r.durationSeconds))
-                                .font(.system(size: 44, weight: .heavy))
+                                .font(KiteText.digits(44, weight: .heavy))
                                 .foregroundColor(TripBody.delayColor(r, scheme))
                                 .lineLimit(1).minimumScaleFactor(0.7)
                             Text(L10n.format("%@ · arrive %@", String(describing: Fmt.distance(r.distanceMeters)), String(describing: Fmt.arrival(r.durationSeconds))))
@@ -419,9 +416,10 @@ struct ModeTabs: View {
                 }
             }
             .frame(maxWidth: .infinity, minHeight: 62)
-            .foregroundColor(on ? Vela.onAccent(scheme) : .primary)
-            .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(on ? Vela.accent(scheme) : Vela.chip(scheme)))
-            .contentShape(RoundedRectangle(cornerRadius: 18))
+            .foregroundColor(on ? KiteColor.onAccent : KiteColor.ink)
+            .background(RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(on ? KiteColor.accent : KiteColor.fill))
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(on ? .isSelected : [])
@@ -498,12 +496,12 @@ struct TripBody: View {
         ShareLink(item: url) {
             HStack(spacing: 8) {
                 Image(systemName: "square.and.arrow.up").font(.system(size: 17, weight: .bold))
-                Text("Share place").font(.system(size: 17, weight: .bold))
+                Text("Share place").font(KiteText.label(16))
             }
             .padding(.horizontal, 20)
-            .frame(height: 52)
-            .foregroundColor(Vela.onTonal(scheme))
-            .background(Capsule().fill(Vela.tonal(scheme)))
+            .frame(height: 50)
+            .foregroundColor(KiteColor.accentText)
+            .background(Capsule().fill(KiteColor.accentSoft))
         }
         .buttonStyle(.plain)
     }

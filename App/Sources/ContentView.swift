@@ -757,6 +757,27 @@ enum DemoScript {
         model.settings.mapZoom = .normal
         await wait(6)
         if step == "browse" { return }
+        if step == "home" || step == "routes" {
+            // The new map home and the Routes page with real context: Home, Work, a parked car
+            // and recent destinations, around Davis.
+            var home = Place(id: "demo-home", name: "Home", location: LatLng(38.5480, -121.7445), source: "demo")
+            home.address = "Home"
+            model.settings.home = home
+            model.settings.work = Place(id: "demo-work", name: "UC Davis", location: LatLng(38.5402, -121.7500), source: "demo")
+            var car = Place(id: "parking:demo", name: "Parked car", location: LatLng(38.5446, -121.7392), source: "osm")
+            car.category = "Parked at 9:41 AM"
+            model.settings.parking = car
+            let cafe = Place(id: "demo-cafe", name: "Temple Coffee", location: LatLng(38.5440, -121.7400), source: "demo")
+            model.settings.recentPlaces = [cafe, home]
+            model.map?.setCenter(CLLocationCoordinate2D(latitude: 38.5445, longitude: -121.7440), zoomLevel: 14.6, animated: false)
+            if step == "routes" { model.tab = .routes }
+            return
+        }
+        if step == "routesempty" {
+            model.settings.recentPlaces = []
+            model.tab = .routes
+            return
+        }
         if step == "browse3d" || step == "browse2d" {
             // Off a route: the map button follows you in 3D (one tap) or 2D (two taps).
             model.cycleBrowseLook()

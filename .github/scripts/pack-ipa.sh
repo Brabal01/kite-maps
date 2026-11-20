@@ -20,6 +20,10 @@ case "$VARIANT" in
   *) echo "Unknown variant: $VARIANT" >&2; exit 1 ;;
 esac
 
+# zip runs inside a temporary directory; make the output path absolute first.
+OUT_DIR="$(cd "$(dirname "$OUT")" && pwd)"
+OUT="$OUT_DIR/$(basename "$OUT")"
+
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 

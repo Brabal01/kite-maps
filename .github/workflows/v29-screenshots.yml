@@ -1,0 +1,109 @@
+name: Kite v29 simulator screenshots
+
+# Captures the redesigned screens on three phone sizes, in both appearances and
+# with large text. The screenshots are artefacts for review; the script below
+# only catches mechanical failures (missing, black or blank frames).
+on:
+  workflow_dispatch:
+  push:
+    branches: [iphone-custom-v29-redesign]
+
+permissions:
+  contents: read
+
+jobs:
+  screens:
+    name: Screenshots
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Make the Xcode project
+        run: xcodegen generate
+      - name: Build for the simulator
+        run: |
+          set -o pipefail
+          xcodebuild -project Kite.xcodeproj -scheme Kite -configuration Debug \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath simbuild CODE_SIGNING_ALLOWED=NO build > build.log 2>&1 \
+            || { grep -E "error:" build.log | sort -u | head -60; tail -n 30 build.log; exit 1; }
+          tail -n 5 build.log
+      - name: Capture screens
+        run: |
+          set -euo pipefail
+          APP="$PWD/simbuild/Build/Products/Debug-iphonesimulator/Kite.app"
+          mkdir -p shots
+
+          capture() { # device, appearance, content-size, name, demo-step, seconds
+            local dev="$1" look="$2" size="$3" name="$4" step="$5" wait="$6"
+            xcrun simctl ui "$dev" appearance "$look"
+            xcrun simctl ui "$dev" content_size "$size"
+            xcrun simctl terminate "$dev" app.vela.ios >/dev/null 2>&1 || true
+            xcrun simctl launch "$dev" app.vela.ios -demo "$step" >/dev/null
+            sleep "$wait"
+            xcrun simctl io "$dev" screenshot "shots/$name.png" >/dev/null
+            echo "captured $name"
+          }
+
+          boot() { # name, device-type -> prints udid
+            local name="$1" type="$2" udid
+            udid=$(xcrun simctl create "$name" "$type" 2>/dev/null) || udid=""
+            [ -n "$udid" ] || { echo "no device $type"; return 1; }
+            xcrun simctl boot "$udid" >/dev/null 2>&1
+            xcrun simctl bootstatus "$udid" -b >/dev/null 2>&1
+            xcrun simctl install "$udid" "$APP"
+            xcrun simctl privacy "$udid" grant location app.vela.ios >/dev/null 2>&1 || true
+            xcrun simctl location "$udid" set 38.5449,-121.7405 >/dev/null 2>&1 || true
+            echo "$udid"
+          }
+
+          DEV=$(boot "Kite16" com.apple.CoreSimulator.SimDeviceType.iPhone-16)
+          SE=$(boot "KiteSE" com.apple.CoreSimulator.SimDeviceType.iPhone-SE-3rd-generation) || SE=""
+          MAX=$(boot "KiteMax" com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro-Max) || MAX=""
+
+          for look in dark light; do
+            capture "$DEV" "$look" medium "home-$look" home 22
+            capture "$DEV" "$look" medium "routes-$look" routes 22
+          done
+          capture "$DEV" dark medium search-dark searchfocus 18
+          capture "$DEV" dark medium place-dark place 26
+          capture "$DEV" light medium place-light place 26
+          capture "$DEV" dark medium directions-dark directions 40
+          capture "$DEV" light medium nav-light uk 60
+          capture "$DEV" dark medium nav-dark uk 60
+          capture "$DEV" dark medium settings-dark settings 14
+          capture "$DEV" dark medium transit-dark transit 45
+          capture "$DEV" dark medium longname longname 22
+          capture "$DEV" dark medium longdir longdir 40
+          capture "$DEV" dark medium allalerts allalerts 55
+
+          capture "$DEV" dark extra-extra-extra-large big-home home 24
+          capture "$DEV" dark extra-extra-extra-large big-nav uk 62
+
+          if [ -n "$SE" ]; then
+            capture "$SE" dark medium se-home home 24
+            capture "$SE" dark medium se-nav uk 62
+          fi
+          if [ -n "$MAX" ]; then
+            capture "$MAX" dark medium max-home home 24
+          fi
+      - name: Check the screenshots are not blank
+        run: |
+          pip3 install --quiet --break-system-packages pillow || pip3 install --quiet pillow
+          python3 .github/scripts/check-screenshots.py shots | tee shots/CHECK.txt
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kite-v29-Simulator-Screenshots
+          path: shots
+          if-no-files-found: warn
+      - name: Upload build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kite-v29-Simulator-BuildLog
+          path: build.log
+          if-no-files-found: warn

@@ -298,7 +298,7 @@ struct NavigationOverlay: View {
                     if nav.arrived { model.endNavigation() } else {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { confirmEnd = true }
                     }
-                }, onSteps: { showSteps = true })
+                }, onSteps: { showSteps = true }, onAddStop: { showAlong = true })
                 .inSidePanel(panel)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
@@ -491,8 +491,16 @@ struct InstructionBanner: View {
     }
 
     /**
-     * The light look: one see-through strip, with the arrow (or the roundabout) in teal, the distance
-     * the biggest thing on it, and the lanes in a second row only when there are lanes to show.
+     * Navigation HUD 2.0: one strong card with a single hierarchy.
+
+       [maneuver]  [distance]           <- the biggest two things
+                   [what to do, road or signed destination]
+                   [exit number and destinations, when the data has them]
+                   [recommended lanes]
+                   [Then: next maneuver in 80 m]
+
+     Everything the driver needs is in one surface; warnings are shown by the
+     alert coordinator below, not stacked into this card.
      */
     private func full(_ m: Maneuver?, leftTraffic: Bool, refs: [String]) -> some View {
         let lanes: (lanes: [Lane], words: String)? = {
@@ -501,113 +509,165 @@ struct InstructionBanner: View {
                                           laneCount: m.lanes.count, offRoute: p.offRoute) else { return nil }
             return LaneGuide.lanes(for: m, leftTraffic: leftTraffic)
         }()
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .center, spacing: 12) {
-                if m?.type == .roundabout {
-                    RoundaboutDiagram(shape: m?.roundabout, exit: m?.exit ?? 1, clockwise: leftTraffic)
-                        .frame(width: 76, height: 76)
-                } else {
-                    Image(systemName: maneuverSymbol(m?.type ?? .straight))
-                        .font(.system(size: 46, weight: .heavy))
-                        .foregroundColor(Vela.accentText(scheme))
-                        .frame(width: 64, height: 72)
-                }
+        return VStack(alignment: .leading, spacing: KiteSpace.s) {
+            HStack(alignment: .center, spacing: KiteSpace.s) {
+                maneuverTile(m, leftTraffic: leftTraffic)
                 VStack(alignment: .leading, spacing: 2) {
                     if let p = nav.progress {
                         Text(Fmt.distance(p.distanceToNext))
-                            .font(.system(size: 38, weight: .heavy))
-                            .monospacedDigit()
-                            .lineLimit(1).minimumScaleFactor(0.6)
+                            .font(KiteText.digits(40, weight: .heavy))
+                            .foregroundColor(KiteColor.ink)
+                            .lineLimit(1).minimumScaleFactor(0.55)
                     }
                     if let parts = Self.split(Self.headline(m)) {
-                        // "At the end of the road, turn left" small, the road you turn onto big, like Waze.
+                        // "At the end of the road, turn left" small, the road you turn onto big.
                         Text(parts.0)
-                            .font(.system(size: 15, weight: .semibold)).foregroundColor(Vela.muted(scheme))
+                            .font(KiteText.label(14)).foregroundColor(KiteColor.inkSecondary)
                             .lineLimit(1).minimumScaleFactor(0.75)
                         Text(parts.1)
-                            .font(.system(size: 21, weight: .bold))
+                            .font(KiteText.headline(22))
+                            .foregroundColor(KiteColor.ink)
                             .lineLimit(2).minimumScaleFactor(0.7)
                     } else {
                         Text(Self.headline(m))
-                            .font(.system(size: 20, weight: .semibold))
-                            .lineLimit(2)
-                            .minimumScaleFactor(0.75)
+                            .font(KiteText.headline(20))
+                            .foregroundColor(KiteColor.ink)
+                            .lineLimit(2).minimumScaleFactor(0.75)
                     }
                     if m?.exitSign == nil && !refs.isEmpty {
-                        HStack(spacing: 6) { ForEach(refs, id: \.self) { RoadShield(ref: $0) } }
-                            .padding(.top, 2)
-                    } else if m?.type == .roundabout, let road = m?.road {
-                        Text(L10n.format("onto %@", String(describing: road))).font(.system(size: 16, weight: .medium)).foregroundColor(Vela.muted(scheme)).lineLimit(1)
+                        HStack(spacing: 6) {
+                            ForEach(refs.prefix(4), id: \.self) { RoadShield(ref: $0) }
+                        }
+                        .padding(.top, 1)
                     }
                 }
                 Spacer(minLength: 0)
-                // No lanes to show: "Then" tucks into the corner instead of taking a row of its own.
-                if lanes == nil {
-                    VStack { Spacer(minLength: 0); thenView }
-                }
             }
+
             if let sign = m?.exitSign {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
-                        if let number = sign.number {
-                            Text(L10n.format("Exit %@", number)).font(.subheadline.weight(.heavy))
-                                .padding(.horizontal, 8).padding(.vertical, 3)
-                                .foregroundColor(Color(hex: 0x114333))
-                                .background(RoundedRectangle(cornerRadius: 4).fill(Color.white))
-                        }
-                        ForEach(Array((sign.references.isEmpty ? refs : sign.references).prefix(3).enumerated()), id: \.offset) { _, reference in
-                            RoadShield(ref: reference)
-                        }
-                    }
-                    if !sign.destinations.isEmpty {
-                        Text(sign.destinations.joined(separator: " · "))
-                            .font(.subheadline.weight(.semibold)).lineLimit(2)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(8).foregroundColor(.white)
-                .background(RoundedRectangle(cornerRadius: 9).fill(Color(hex: 0x114333)))
+                exitSign(sign, refs: refs)
             }
+
             if let lanes {
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 8) {
-                        Text(lanes.words).font(.subheadline.weight(.bold)).lineLimit(2)
+                        Image(systemName: "road.lanes")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundColor(KiteColor.accentText)
+                        Text(L10n.text("Recommended lanes"))
+                            .font(KiteText.label(13)).foregroundColor(KiteColor.inkSecondary)
                         Spacer(minLength: 0)
-                        thenView
+                        Text(lanes.words).font(KiteText.label(13))
+                            .foregroundColor(KiteColor.ink).lineLimit(1).minimumScaleFactor(0.7)
                     }
-                    if !lanes.lanes.isEmpty {
-                        LaneStrip(lanes: lanes.lanes, turn: m?.type ?? .straight, exitAngle: m?.roundabout.flatMap { shape in
-                            shape.exits.indices.contains(shape.taken) ? shape.exits[shape.taken] : nil
-                        })
-                    }
+                    LaneStrip(lanes: lanes.lanes, turn: m?.type ?? .straight, exitAngle: m?.roundabout.flatMap { shape in
+                        shape.exits.indices.contains(shape.taken) ? shape.exits[shape.taken] : nil
+                    })
                 }
+            }
+
+            if let then = nav.thenManeuver {
+                thenRow(then)
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .foregroundColor(.primary)
-        .glass(RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .padding(.horizontal, KiteSpace.m)
+        .padding(.vertical, KiteSpace.s)
+        .background(
+            RoundedRectangle(cornerRadius: KiteRadius.sheet, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: KiteRadius.sheet, style: .continuous)
+                        .fill(KiteColor.surface.opacity(scheme == .dark ? 0.86 : 0.94))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: KiteRadius.sheet, style: .continuous)
+                        .strokeBorder(KiteColor.strokeStrong, lineWidth: 0.75)
+                )
+                .shadow(color: KiteElevation.high.color, radius: 18, y: 8)
+        )
         .accessibilityElement(children: .combine)
     }
 
+    /// The arrow (or the real roundabout) in one tinted tile, so the eye lands there first.
     @ViewBuilder
-    private var thenView: some View {
-        if let then = nav.thenManeuver {
-            HStack(spacing: 6) {
-                Text("Then").font(.system(size: 14, weight: .semibold)).foregroundColor(Vela.muted(scheme))
-                Image(systemName: maneuverSymbol(then.type)).font(.system(size: 18, weight: .heavy))
-                if let meters = nav.thenDistanceMeters, meters >= 10 {
-                    Text(L10n.format("after %@", Fmt.distance(meters)))
-                        .font(.system(size: 13, weight: .semibold))
-                        .lineLimit(1).minimumScaleFactor(0.7)
-                }
-                if then.type == .roundabout, let n = then.exit {
-                    // Which exit, so the next roundabout is known before the banner changes.
-                    Text("\(n)").font(.system(size: 14, weight: .heavy)).foregroundColor(.white)
-                        .frame(minWidth: 22, minHeight: 22).background(Circle().fill(Color(hex: 0x0F766E)))
-                }
+    private func maneuverTile(_ m: Maneuver?, leftTraffic: Bool) -> some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(KiteColor.accentSoft)
+            if m?.type == .roundabout {
+                RoundaboutDiagram(shape: m?.roundabout, exit: m?.exit ?? 1, clockwise: leftTraffic)
+                    .frame(width: 70, height: 70)
+            } else {
+                Image(systemName: maneuverSymbol(m?.type ?? .straight))
+                    .font(.system(size: 40, weight: .heavy))
+                    .foregroundColor(KiteColor.accentText)
             }
         }
+        .frame(width: 74, height: 74)
+        .accessibilityHidden(true)
+    }
+
+    /// A motorway-style sign: exit number, road refs, and the real signed destinations.
+    private func exitSign(_ sign: ExitSign, refs: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                if let number = sign.number {
+                    Text(L10n.format("Exit %@", number))
+                        .font(KiteText.label(14))
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .foregroundColor(Color(hex: 0x0B3B2A))
+                        .background(RoundedRectangle(cornerRadius: 5).fill(Color.white))
+                }
+                ForEach(Array((sign.references.isEmpty ? refs : sign.references).prefix(3).enumerated()), id: \.offset) { _, reference in
+                    RoadShield(ref: reference)
+                }
+            }
+            if !sign.destinations.isEmpty {
+                Text(sign.destinations.joined(separator: " · "))
+                    .font(KiteText.headline(16))
+                    .foregroundColor(.white)
+                    .lineLimit(2).minimumScaleFactor(0.8)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10).padding(.vertical, 8)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color(hex: 0x0B5D3B)))
+    }
+
+    /// The next maneuver, kept visible when two turns come close together.
+    private func thenRow(_ then: Maneuver) -> some View {
+        let close = (nav.thenDistanceMeters ?? .infinity) < 180
+        return HStack(spacing: 8) {
+            Text(L10n.text("Then"))
+                .font(KiteText.label(13))
+                .foregroundColor(close ? KiteColor.warning : KiteColor.inkSecondary)
+            Image(systemName: maneuverSymbol(then.type))
+                .font(.system(size: 17, weight: .heavy))
+                .foregroundColor(KiteColor.ink)
+            if then.type == .roundabout, let n = then.exit {
+                Text("\(n)").font(KiteText.label(13)).foregroundColor(.white)
+                    .frame(minWidth: 20, minHeight: 20)
+                    .background(Circle().fill(KiteColor.accent))
+            }
+            if let meters = nav.thenDistanceMeters, meters >= 10 {
+                Text(L10n.format("in %@", Fmt.distance(meters)))
+                    .font(KiteText.label(13))
+                    .foregroundColor(KiteColor.ink)
+            }
+            Text(Self.headline(then))
+                .font(KiteText.caption())
+                .foregroundColor(KiteColor.inkSecondary)
+                .lineLimit(1).minimumScaleFactor(0.7)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 34)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(close ? KiteColor.warningSoft : KiteColor.fill)
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(L10n.format("Then %@ in %@", Self.headline(then), String(describing: Fmt.distance(nav.thenDistanceMeters ?? 0))))
     }
 
     /**
@@ -859,66 +919,106 @@ struct TripBar: View {
     @ObservedObject var nav: Navigator
     let onEnd: () -> Void
     let onSteps: () -> Void
+    var onAddStop: () -> Void = {}
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         let remaining = nav.progress?.remainingSeconds ?? nav.route.durationSeconds
         let meters = nav.progress?.remainingMeters ?? nav.route.distanceMeters
-        HStack(spacing: 4) {
+        HStack(spacing: KiteSpace.xs) {
             Button(action: onEnd) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 21, weight: .heavy))
-                    .foregroundColor(scheme == .dark ? Color(hex: 0xFCA5A5) : Vela.closed)
-                    .frame(width: 56, height: 56)
+                    .font(.system(size: 19, weight: .heavy))
+                    .foregroundColor(scheme == .dark ? Color(hex: 0xFCA5A5) : KiteColor.danger)
+                    .frame(width: 46, height: 46)
+                    .background(Circle().fill(KiteColor.danger.opacity(0.10)))
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("End trip")
-            // One slim line: when you get there in teal, then the minutes and miles left.
-            // The arrival time turns orange (or red) when traffic is making you late.
-            let arrive = TripBar.arrivalParts(remaining)
-            let left = TripBar.timeParts(remaining)
-            let dist = TripBar.distanceParts(meters)
-            let color = TripBody.delayColor(nav.route, scheme)
-            if nav.arrived {
-                // There: no "1 min · 20 yd" left over from the last moment of the drive.
-                Text("Arrived")
-                    .font(.system(size: 24, weight: .heavy))
-                    .foregroundColor(Vela.accentText(scheme))
-                    .frame(maxWidth: .infinity)
-            } else {
-                VStack(spacing: 2) {
-                    if let stop = nav.stops.first {
-                        Text(L10n.format("Next stop: %@", stop.name))
-                            .font(.caption.weight(.semibold)).foregroundColor(Vela.muted(scheme))
+
+            VStack(alignment: .leading, spacing: 1) {
+                if nav.arrived {
+                    Text(L10n.text("Arrived"))
+                        .font(KiteText.digits(24, weight: .heavy))
+                        .foregroundColor(KiteColor.accentText)
+                } else {
+                    let arrive = TripBar.arrivalParts(remaining)
+                    let left = TripBar.timeParts(remaining)
+                    let dist = TripBar.distanceParts(meters)
+                    let color = TripBody.delayColor(nav.route, scheme)
+                    HStack(alignment: .firstTextBaseline, spacing: 7) {
+                        (Text(arrive.time).font(KiteText.digits(25, weight: .heavy))
+                            + Text(arrive.suffix).font(KiteText.label(13)))
+                            .foregroundColor(color)
+                        Text("\(left.value) \(left.unit) · \(dist.value) \(dist.unit)")
+                            .font(KiteText.label(15))
+                            .foregroundColor(KiteColor.ink)
+                            .lineLimit(1).minimumScaleFactor(0.7)
                     }
-                    HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    (Text(arrive.time).font(.system(size: 26, weight: .heavy))
-                        + Text(arrive.suffix).font(.system(size: 15, weight: .bold)))
-                        .foregroundColor(color)
-                    Text("\(left.value) \(left.unit) · \(dist.value) \(dist.unit)")
-                        .font(.system(size: 19, weight: .semibold))
+                    .monospacedDigit()
+                    HStack(spacing: 5) {
+                        Image(systemName: "mappin.circle.fill").font(.system(size: 12, weight: .semibold))
+                        Text(nav.destination.name).lineLimit(1)
+                        if let stop = nav.stops.first {
+                            Text("·").foregroundColor(KiteColor.inkSecondary)
+                            Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
+                                .font(.system(size: 11, weight: .semibold))
+                            Text(stop.name).lineLimit(1)
+                        }
                     }
+                    .font(KiteText.caption())
+                    .foregroundColor(KiteColor.inkSecondary)
                 }
-                .monospacedDigit()
-                .lineLimit(1).minimumScaleFactor(0.65)
-                .frame(maxWidth: .infinity)
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(L10n.format("Arrive at %@, %@, %@ to go", String(describing: Fmt.arrival(remaining)), String(describing: Fmt.duration(remaining)), String(describing: Fmt.distance(meters))))
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(nav.arrived ? L10n.text("Arrived") : L10n.format("Arrive at %@, %@, %@ to go",
+                String(describing: Fmt.arrival(remaining)),
+                String(describing: Fmt.duration(remaining)),
+                String(describing: Fmt.distance(meters))))
+
+            if !nav.arrived {
+                Button(action: onAddStop) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundColor(KiteColor.accentText)
+                        .frame(width: 42, height: 42)
+                        .background(Circle().fill(KiteColor.accentSoft))
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Add stop")
+            }
+
             Button(action: onSteps) {
                 Image(systemName: "list.bullet")
-                    .font(.system(size: 21, weight: .bold))
-                    .frame(width: 56, height: 56)
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundColor(KiteColor.ink)
+                    .frame(width: 42, height: 42)
+                    .background(Circle().fill(KiteColor.fill))
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Trip and steps")
         }
-        .foregroundColor(.primary)
-        .padding(.horizontal, 6)
-        .frame(height: 64)
-        .glass(Capsule())
+        .padding(.leading, 6)
+        .padding(.trailing, 10)
+        .padding(.vertical, 7)
+        .frame(minHeight: 68)
+        .background(
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 26, style: .continuous)
+                        .fill(KiteColor.surface.opacity(scheme == .dark ? 0.88 : 0.95))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 26, style: .continuous)
+                        .strokeBorder(KiteColor.strokeStrong, lineWidth: 0.75)
+                )
+                .shadow(color: KiteElevation.high.color, radius: 16, y: 6)
+        )
         .padding(.horizontal, 12)
         .padding(.bottom, 4)
     }

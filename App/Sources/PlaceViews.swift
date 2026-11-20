@@ -11,87 +11,115 @@ struct PlaceHeader: View {
     @State private var showGallery = false
     @Environment(\.colorScheme) private var scheme
 
+    private var canShowReviews: Bool {
+        !settings.noGoogle && (place.source == "google" || (place.reviewCount ?? 0) > 0 || place.featuredReview != nil)
+    }
+
+    private var canShowPhotos: Bool {
+        place.photoUrls.contains(where: { !settings.noGoogle || !PhotoStrip.isGoogle($0) })
+            || (!settings.noGoogle && place.source == "google")
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .top, spacing: 8) {
-                Text(place.name)
-                    .font(.system(size: 26, weight: .heavy))
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .copyable(place.name, below: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                CircleIconButton(icon: settings.isSaved(place) ? "bookmark.fill" : "bookmark") { settings.toggleSaved(place) }
+        VStack(alignment: .leading, spacing: KiteSpace.s) {
+            HStack(alignment: .top, spacing: KiteSpace.xs) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(place.name)
+                        .font(KiteText.title(26))
+                        .foregroundColor(KiteColor.ink)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .copyable(place.name, below: true)
+                    PlaceMetaLine(place: place, here: model.userLatLng)
+                    StatusText(place: place).font(KiteText.caption())
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                KiteCircleButton(icon: "xmark", size: 38, label: "Close") {
+                    withAnimation(KiteMotion.gentle) { model.closePlace() }
+                }
+            }
+
+            HStack(spacing: KiteSpace.xs) {
+                action(icon: settings.isSaved(place) ? "bookmark.fill" : "bookmark",
+                       title: settings.isSaved(place) ? "Saved" : "Save",
+                       tint: settings.isSaved(place) ? KiteColor.accentText : KiteColor.ink) {
+                    settings.toggleSaved(place)
+                }
                 if let url = place.shareURL {
                     ShareLink(item: url) {
-                        Image(systemName: "square.and.arrow.up")
-                            .font(.system(size: 17, weight: .bold))
-                            .foregroundColor(.primary)
-                            .frame(width: 44, height: 44)
-                            .background(Circle().fill(Color.secondary.opacity(0.18)))
+                        actionLabel(icon: "square.and.arrow.up", title: "Share", tint: KiteColor.ink)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Share")
                 }
-                CircleIconButton(icon: "xmark") { withAnimation { model.closePlace() } }
-            }
-            PlaceMetaLine(place: place, here: model.userLatLng)
-            StatusText(place: place).font(.subheadline)
-            HStack(spacing: 8) {
-                if !settings.noGoogle, place.source == "google" || (place.reviewCount ?? 0) > 0 || place.featuredReview != nil {
-                    Button { showReviews = true } label: {
-                        Label("Reviews", systemImage: "star.bubble").font(.subheadline.weight(.semibold))
-                    }
-                    .buttonStyle(.bordered)
+                if canShowReviews {
+                    action(icon: "star.bubble", title: "Reviews", tint: KiteColor.ink) { showReviews = true }
                 }
-                if place.photoUrls.contains(where: { !settings.noGoogle || !PhotoStrip.isGoogle($0) })
-                    || (!settings.noGoogle && place.source == "google") {
-                    Button { showGallery = true } label: {
-                        Label("Photos", systemImage: "photo.on.rectangle.angled").font(.subheadline.weight(.semibold))
-                    }
-                    .buttonStyle(.bordered)
+                if canShowPhotos {
+                    action(icon: "photo.on.rectangle.angled", title: "Photos", tint: KiteColor.ink) { showGallery = true }
                 }
             }
             .sheet(isPresented: $showReviews) { PlaceMediaSheet(place: place).kiteType() }
             .sheet(isPresented: $showGallery) { PlaceMediaSheet(place: place, photos: true).kiteType() }
+
             if journey {
-                PillButton(title: "Add stop", icon: "plus.circle.fill", filled: true) { model.addJourneyStop(place) }
-                    .disabled(model.addingJourneyStop)
+                Button { model.addJourneyStop(place) } label: {
+                    Label("Add stop", systemImage: "plus.circle.fill")
+                }
+                .buttonStyle(KitePrimaryButtonStyle(height: 54))
+                .disabled(model.addingJourneyStop)
             } else {
                 directions
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.bottom, 10)
+        .padding(.horizontal, KiteSpace.m)
+        .padding(.bottom, KiteSpace.xs)
     }
 
     private var directions: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: KiteSpace.xs) {
             Button { model.openDirections(to: place) } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "arrow.triangle.turn.up.right.diamond.fill").font(.system(size: 20, weight: .bold))
-                    Text("Directions").font(.system(size: 20, weight: .heavy))
-                }
-                .foregroundColor(Vela.onAccent(scheme))
-                .frame(maxWidth: .infinity, minHeight: 56)
-                .background(Capsule().fill(Vela.accent(scheme)))
+                Label("Directions", systemImage: "arrow.triangle.turn.up.right.diamond.fill")
             }
-            .buttonStyle(.plain)
+            .buttonStyle(KitePrimaryButtonStyle(height: 54))
             Button {
                 model.openDirections(to: place)
                 model.autoStart = true
             } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "location.north.fill").font(.system(size: 18, weight: .bold))
-                    Text("Go").font(.system(size: 20, weight: .heavy))
-                }
-                .foregroundColor(Vela.onTonal(scheme))
-                .padding(.horizontal, 24)
-                .frame(minHeight: 56)
-                .background(Capsule().fill(Vela.tonal(scheme)))
+                Label("Go", systemImage: "location.north.fill")
+                    .font(KiteText.headline(18))
+                    .foregroundColor(KiteColor.accentText)
+                    .frame(minWidth: 92, minHeight: 54)
+                    .background(
+                        RoundedRectangle(cornerRadius: KiteRadius.button, style: .continuous)
+                            .fill(KiteColor.accentSoft)
+                    )
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Start driving now")
         }
-        .padding(.top, 8)
+        .padding(.top, 2)
+    }
+
+    private func action(icon: String, title: String, tint: Color, run: @escaping () -> Void) -> some View {
+        Button(action: run) { actionLabel(icon: icon, title: title, tint: tint) }
+            .buttonStyle(.plain)
+            .accessibilityLabel(L10n.text(title))
+    }
+
+    private func actionLabel(icon: String, title: String, tint: Color) -> some View {
+        VStack(spacing: 4) {
+            Image(systemName: icon).font(.system(size: 17, weight: .semibold))
+            Text(L10n.text(title)).font(.system(size: 11.5, weight: .semibold))
+                .lineLimit(1).minimumScaleFactor(0.8)
+        }
+        .foregroundColor(tint)
+        .frame(maxWidth: .infinity, minHeight: 50)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(KiteColor.fill)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
 

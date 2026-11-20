@@ -29,6 +29,10 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The build number is derived from the commit count, so the history
+          # must be complete (a shallow clone gives every build the same number).
+          fetch-depth: 0
       - name: Verify the versioned customization sources
         run: |
           test -f App/Sources/GoogleMapsPage.swift

@@ -147,6 +147,8 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Make the Xcode project
