@@ -3,6 +3,20 @@ import Foundation
 import FoundationNetworking
 #endif
 
+/** A vehicle position from GTFS-Realtime, when the feed sends one. */
+public struct TransitVehicle: Hashable, Sendable {
+    public var location: LatLng
+    public var bearing: Double?
+    public var speedMps: Double?
+    public var updated: Date?
+    public init(location: LatLng, bearing: Double? = nil, speedMps: Double? = nil, updated: Date? = nil) {
+        self.location = location
+        self.bearing = bearing
+        self.speedMps = speedMps
+        self.updated = updated
+    }
+}
+
 /** One part of a transit trip: a walk, or a ride on one line between two stops. */
 public struct TransitLeg: Hashable, Sendable {
     public var isWalk: Bool
@@ -33,6 +47,14 @@ public struct TransitLeg: Hashable, Sendable {
     public var arrivalDelayMinutes: Int?
     public var serviceAlerts: [String] = []
     public var destinationStop: LatLng?
+    /** The planner's trip identifier, used to join an optional GTFS-Realtime feed. */
+    public var tripId: String?
+    /** The planner's route identifier, for route-wide live alerts. */
+    public var routeId: String?
+    /** True when departure/arrival come from a live feed rather than the timetable. */
+    public var isRealtime = false
+    /** The vehicle's last reported position, when the live feed provides one. */
+    public var liveVehicle: TransitVehicle?
     public var arrivalPoint: LatLng? { destinationStop ?? path.last }
 
     public init(isWalk: Bool, mode: String, line: String = "", color: UInt32? = nil, textColor: UInt32? = nil,
@@ -295,6 +317,9 @@ public enum Transitous {
         out.exitStop = call(to)
         out.agency = string(l["agencyName"])
         out.serviceNumber = string(l["tripShortName"])
+        out.tripId = string(l["tripId"])
+        out.routeId = string(l["routeId"])
+        out.isRealtime = l["realTime"] as? Bool == true
         out.serviceAlerts = alerts([l, from, to])
         let intermediate = l["intermediateStops"] as? [[String: Any]] ?? []
         out.intermediateStops = intermediate.compactMap(call)
@@ -317,10 +342,12 @@ public enum Transitous {
 
     private static func call(_ value: [String: Any]) -> TransitCall? {
         guard let name = string(value["name"]) else { return nil }
-        return TransitCall(name: name, timeZone: string(value["tz"]), arrival: date(value["arrival"]),
-                           departure: date(value["departure"]), track: string(value["track"]) ?? string(value["scheduledTrack"]),
-                           scheduledTrack: string(value["scheduledTrack"]), stopCode: string(value["stopCode"]),
-                           detail: string(value["description"]), skipped: value["cancelled"] as? Bool == true)
+        var call = TransitCall(name: name, timeZone: string(value["tz"]), arrival: date(value["arrival"]),
+                               departure: date(value["departure"]), track: string(value["track"]) ?? string(value["scheduledTrack"]),
+                               scheduledTrack: string(value["scheduledTrack"]), stopCode: string(value["stopCode"]),
+                               detail: string(value["description"]), skipped: value["cancelled"] as? Bool == true)
+        call.stopId = string(value["stopId"]) ?? string(value["parentId"])
+        return call
     }
 
     private static func walkStep(_ value: [String: Any]) -> TransitWalkStep? {

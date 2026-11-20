@@ -63,7 +63,8 @@ struct WazeMapChips: View {
         if settings.wazeOn {
             VStack(alignment: .leading, spacing: 8) {
                 if legend, settings.wazeHeatmap, settings.wazePolice { HeatLegend().transition(.opacity) }
-                if settings.policeRisk, let risk = model.areaRisk, PoliceRisk.level(risk) != .low {
+                if settings.wazeOn, settings.policeRisk, settings.wazePolice,
+                   let risk = model.areaRisk, PoliceRisk.level(risk) != .low {
                     let level = PoliceRisk.level(risk)
                     HStack(spacing: 8) {
                         Image(systemName: "shield.lefthalf.filled").font(.system(size: 17, weight: .bold))

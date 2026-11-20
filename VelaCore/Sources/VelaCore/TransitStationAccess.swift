@@ -9,7 +9,9 @@ public struct TransitCall: Hashable, Sendable {
     public let scheduledTrack: String?
     public let stopCode: String?
     public let detail: String?
-    public let skipped: Bool
+    public var skipped: Bool
+    /** The feed's own stop id, when it provides one, for joining GTFS-Realtime updates. */
+    public var stopId: String? = nil
 }
 
 public struct TransitWalkStep: Hashable, Sendable {
