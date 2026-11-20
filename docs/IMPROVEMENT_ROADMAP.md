@@ -5,6 +5,9 @@ marked **done**; everything else needs code and tests.
 
 ## Navigation core
 
+- **Done (v27)**: departure evidence separated from match confidence; weak-but-usable GPS can
+  confirm a real departure; dead-reckoned positions cannot trigger arrival; GPS modes for browse,
+  drive, walk/bike, transit and background.
 - **Done (v26)**: accuracy/heading/history-aware map matching, parallel-road protection,
   confidence/precision reporting, dead reckoning for short GPS gaps.
 - **Done (v26)**: guarded reroute policy and stale traffic-request cancellation.
@@ -32,6 +35,9 @@ marked **done**; everything else needs code and tests.
 ## Worldwide providers
 
 - **Done**: keyless Google web search, OSM/Photon fallback, OSRM/Valhalla fallback, Transitous.
+- **Done (v27)**: GTFS-Realtime identity matching by feed/trip/route/direction/service date,
+  overnight service days, freshness levels and stale vehicle filtering.
+- **Done (v27)**: keyless Mobility Database discovery of public GTFS-Realtime feeds by coverage.
 - **Done (v26)**: optional GTFS-Realtime feed for any region.
 - Next: one shared HTTP client with per-provider timeout, cancellation, cache, freshness and
   circuit breaker; surface provider health in diagnostics.

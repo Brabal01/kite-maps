@@ -36,7 +36,7 @@ final class TransitRealtimeTests: XCTestCase {
 
         // VehiclePosition: Prague, pointing north at 12 m/s.
         let position = float(1, 50.08) + float(2, 14.42) + float(3, 0) + float(5, 12)
-        let vehicle = length(1, tripDescriptor) + length(2, position) + integer(5, 1_800_000_000)
+        let vehicle = length(1, tripDescriptor) + length(2, position) + integer(4, 1_800_000_000)
         let vehicleEntity = text(1, "vehicle") + length(4, vehicle)
 
         // Alert: a translated header, informed about the trip.

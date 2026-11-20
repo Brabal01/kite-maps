@@ -54,4 +54,40 @@ final class RouteTrackerV26Tests: XCTestCase {
         XCTAssertFalse(p.isPrecise)
         XCTAssertFalse(p.offRoute)
     }
+
+    func testWeakAccuracyStillConfirmsDepartureWithoutMatchConfidence() {
+        let line = [LatLng(0, 0), LatLng(0.01, 0)]
+        let tracker = RouteTracker(route: route(line))
+        let start = Date()
+        var progress: RouteTracker.Progress?
+        // 111 m east of the road: well outside the 40 m accuracy corridor, but its map-match
+        // confidence is zero because no candidate road is close.
+        for i in 0..<4 {
+            progress = tracker.update(LatLng(0.005, 0.001), accuracy: 40, heading: 0, speed: 10,
+                                      now: start.addingTimeInterval(Double(i)))
+        }
+        let p = try! XCTUnwrap(progress)
+        XCTAssertTrue(p.offRoute)
+        XCTAssertGreaterThanOrEqual(p.offRouteFixes, 4)
+        XCTAssertLessThan(p.confidence, 0.2)
+        XCTAssertGreaterThanOrEqual(p.departureEvidence, 0.3)
+        XCTAssertTrue(ReroutePolicy.shouldReroute(offsetMeters: p.offsetMeters, accuracy: 40,
+                                                  speed: 10, offRouteFixes: p.offRouteFixes,
+                                                  joinedRoute: true, nearDestination: false,
+                                                  secondsSinceLast: 10,
+                                                  departureEvidence: p.departureEvidence))
+    }
+
+    func testDeadReckoningNeverClaimsArrival() {
+        let line = [LatLng(0, 0), LatLng(0.01, 0)]
+        let tracker = RouteTracker(route: route(line))
+        let t0 = Date()
+        _ = tracker.update(LatLng(0.0098, 0), accuracy: 5, heading: 0, speed: 10, now: t0)
+        // A large jump while moving: the tracker carries the last good match forward instead of
+        // trusting the fix. That estimate must not be allowed to finish the trip.
+        let p = tracker.update(LatLng(0.008, 0.0018), accuracy: 30, heading: 0, speed: 30,
+                               now: t0.addingTimeInterval(1))
+        XCTAssertTrue(p.isEstimated)
+        XCTAssertFalse(p.arrived)
+    }
 }

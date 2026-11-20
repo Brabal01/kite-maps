@@ -29,8 +29,16 @@ public final class RouteTracker {
         public var confidence: Double
         /** True when the fix itself is good enough to present as a measured position. */
         public var isPrecise: Bool
-        /** Consecutive measured fixes outside the corridor (0…3), for a guarded reroute decision. */
+        /** Consecutive measured fixes outside the corridor, for a guarded reroute decision. */
         public var offRouteFixes: Int
+        /**
+         How strongly the fix itself is outside the route corridor, 0…1. This is deliberately
+         separate from [confidence]: a poor match far from the road still proves a departure,
+         while a poor match close to a parallel road does not.
+         */
+        public var departureEvidence: Double
+        /** True when the reported position was carried forward by dead reckoning, not measured. */
+        public var isEstimated: Bool
     }
 
     public let route: Route
@@ -71,7 +79,8 @@ public final class RouteTracker {
             return Progress(snapped: fix, alongMeters: 0, offsetMeters: .greatestFiniteMagnitude,
                             routeBearing: 0, nextIndex: nil, distanceToNext: 0, remainingMeters: 0,
                             remainingSeconds: 0, offRoute: false, arrived: false,
-                            confidence: 0, isPrecise: false, offRouteFixes: 0)
+                            confidence: 0, isPrecise: false, offRouteFixes: 0,
+                            departureEvidence: 0, isEstimated: false)
         }
         let dt = lastUpdate.map { max(0, min(5, now.timeIntervalSince($0))) } ?? 0
         let expected = max(0, speed) * dt
@@ -95,17 +104,16 @@ public final class RouteTracker {
         let floor = route.mode == .drive ? 24.0 : route.mode == .bike ? 18.0 : 14.0
         let limit = max(floor, accuracy * 1.6 + min(max(speed, 0) * 0.35, 12))
 
-        // A precise fix far outside the corridor is enough; near the edge require confirmation.
+        // Consecutive measured fixes outside the corridor. The counter is deliberately not capped
+        // at 3: a weak-but-usable fix needs one more confirmation than a precise one, and the old
+        // cap made that impossible.
         if measured {
             if accuracy > 60 {
                 offCount = 0 // A very poor fix is no evidence at all.
             } else if offset > max(limit * 2, 35) {
-                // A precise fix clearly outside the corridor is evidence enough for the tracker;
-                // the reroute decision still needs the confidence check in ReroutePolicy. A noisier
-                // fix increments one step at a time.
-                offCount = accuracy <= 25 ? 3 : min(3, offCount + 1)
+                offCount = accuracy <= 25 ? max(offCount, 3) : min(6, offCount + 1)
             } else if offset > limit {
-                offCount = min(3, offCount + 1)
+                offCount = min(6, offCount + 1)
             } else {
                 offCount = 0
             }
@@ -116,6 +124,7 @@ public final class RouteTracker {
         let recentMatch = now.timeIntervalSince(lastMatchedAt) < 6 && dt < 4
         let jump = lastAlong.map { abs(along - $0) } ?? 0
         let uncertain = offset > limit || (lastAlong != nil && jump > max(250, expected * 3 + 80))
+        var isEstimated = false
         if measured, recentMatch, let previous = lastAlong, uncertain, speed > 1 {
             let advanced = min(total, previous + expected)
             if advanced >= previous {
@@ -123,9 +132,16 @@ public final class RouteTracker {
                 snapped = Geo.point(along: line, meters: along, cumulative: cum)
                 offset = fix.distance(to: snapped)
                 confidence = 0.15
+                isEstimated = true
                 segment = segment(near: along)
             }
         }
+
+        // Departure evidence is about the road, not about how well the fix matched a candidate.
+        // A 40 m fix 100 m off the road is a real departure even though its match confidence is low.
+        let excess = max(0, offset - limit)
+        let accuracyBonus = accuracy <= 25 ? 0.15 : accuracy <= 40 ? 0.08 : 0
+        let departureEvidence = min(1, excess / max(40, limit) + accuracyBonus)
 
         let routeBearing = segmentBearings.isEmpty ? 0 : segmentBearings[min(segment, segmentBearings.count - 1)]
         // The road's way over about 30 m, so a tiny kink or doubled point in the line isn't "backwards".
@@ -158,11 +174,14 @@ public final class RouteTracker {
             remainingMeters: remaining,
             remainingSeconds: route.remainingSeconds(from: along),
             offRoute: offCount >= 3 || wrongWayCount >= 4,
-            // Only on the road to it: passing close by on a parallel street isn't arriving.
-            arrived: remaining < 25 && offset < limit,
+            // Only on the road to it, and only from a real fix: an estimated position must not end
+            // navigation while GPS is missing.
+            arrived: !isEstimated && remaining < 25 && offset < limit,
             confidence: confidence,
             isPrecise: precise,
-            offRouteFixes: offCount
+            offRouteFixes: offCount,
+            departureEvidence: departureEvidence,
+            isEstimated: isEstimated
         )
     }
 

@@ -8,15 +8,17 @@ import Foundation
 public enum ReroutePolicy {
     public static func shouldReroute(offsetMeters: Double, accuracy: Double, speed: Double,
                                      offRouteFixes: Int, joinedRoute: Bool, nearDestination: Bool,
-                                     secondsSinceLast: Double, confidence: Double) -> Bool {
+                                     secondsSinceLast: Double, departureEvidence: Double) -> Bool {
         guard joinedRoute || offsetMeters > max(100, accuracy * 3) else { return false }
-        guard !nearDestination, secondsSinceLast > 3, confidence >= 0.2 else { return false }
+        guard !nearDestination, secondsSinceLast > 3 else { return false }
         guard accuracy >= 0, accuracy <= 60 else { return false }
         let corridor = max(24, accuracy * 1.6 + min(max(speed, 0) * 0.35, 12))
         guard offsetMeters > corridor else { return false }
-        // A noisier fix must be confirmed more often; four precise-looking fixes in a row can still
-        // be a car park or a bridge, so keep the same guard for both.
-        let required = accuracy <= 30 ? 3 : 4
+        // Evidence is about the fix being off the road, not about the map match confidence. A weak
+        // match far off the road is still a departure; a weak match near a parallel road is not.
+        guard departureEvidence >= 0.3 else { return false }
+        // More confirmation as accuracy gets worse, but the tracker counter keeps counting past 3.
+        let required = accuracy <= 45 ? 3 : 4
         return offRouteFixes >= required
     }
 }

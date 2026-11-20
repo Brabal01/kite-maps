@@ -831,8 +831,12 @@ struct TripRow: View {
                         .foregroundColor(late > 1 ? Vela.closed : Vela.open)
                 }
                 if let first = trip.rides.first {
-                    Text(first.isRealtime ? "Live" : "Scheduled")
-                        .foregroundColor(first.isRealtime ? Vela.open : .secondary)
+                    Text(liveLabel(first))
+                        .foregroundColor(first.liveFreshness == .live || first.liveFreshness == .recent ? Vela.open : .secondary)
+                }
+                if trip.tightTransfer {
+                    Label("Tight transfer", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundColor(Vela.closed)
                 }
             }
             .font(.caption).foregroundColor(.secondary)
@@ -842,6 +846,25 @@ struct TripRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 12).fill(picked ? Color.secondary.opacity(0.14) : Color.clear))
         .contentShape(Rectangle())
+    }
+
+    /// Freshness matters more than the bare "live" flag: a feed can be live but a few minutes old.
+    private func liveLabel(_ leg: TransitLeg) -> String {
+        switch leg.liveFreshness {
+        case .live:
+            return "Live"
+        case .recent:
+            if let age = leg.liveAgeSeconds {
+                return age >= 120 ? "Live · \(age / 60) min old" : "Live · \(age) s old"
+            }
+            return "Live · recent"
+        case .stale:
+            return "Live data stale"
+        case .scheduled:
+            return "Scheduled"
+        case .unavailable:
+            return "Live unavailable"
+        }
     }
 }
 
@@ -962,6 +985,10 @@ struct TransitSteps: View {
             }
             let operatorDetails = [leg.agency, leg.serviceNumber].compactMap { $0 }.joined(separator: " · ")
             if !operatorDetails.isEmpty { Text(operatorDetails).font(.caption).foregroundStyle(.secondary) }
+            if let provider = leg.liveProvider, let host = URL(string: provider)?.host,
+               leg.liveFreshness == .live || leg.liveFreshness == .recent {
+                Text(L10n.format("Live feed: %@", host)).font(.caption2).foregroundStyle(.secondary)
+            }
             TransitCallRow(role: "Board at %@", name: leg.fromName, stop: leg.boardStop, time: leg.depart,
                            delay: leg.delayMinutes)
             if !leg.intermediateStops.isEmpty {

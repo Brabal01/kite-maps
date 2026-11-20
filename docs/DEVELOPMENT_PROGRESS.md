@@ -2,6 +2,57 @@
 
 Updated: 2026-11-20
 
+## v27 (verified build 1043)
+
+Base: `iphone-custom-v26` (verified build 1036/1037).
+
+### Route abandonment and GPS reliability
+
+- `RouteTracker` now keeps counting outside-corridor fixes past 3, so a weak-but-usable 40–60 m
+  accuracy can actually reach the confirmation needed by the reroute policy.
+- Departure evidence is separate from map-match confidence. A fix 100 m off the road can have
+  confidence 0 and still prove a departure; a poor fix close to a parallel road cannot.
+- `ReroutePolicy` uses that evidence, requires 3 confirmations up to 45 m accuracy and 4 above it,
+  and keeps the cooldown/destination/car-park guards.
+- Estimated positions (dead reckoning or a GPS gap) can no longer trigger arrival. The UI shows
+  the GPS state instead of ending the trip on a guessed point.
+- `LocationService` has explicit GPS modes: browse (10 m accuracy, 15 m filter, no background),
+  Just drive (best, 5 m), driving navigation (best-for-navigation, no filter), walking/cycling
+  (best, 2 m) and transit. Browse stops location/compass in the background; navigation keeps going.
+
+### Live transit
+
+- GTFS-Realtime matching now uses provider feed, trip id, route id, direction id, start date and
+  start time. Ambiguous updates are skipped instead of being attached to a random trip.
+- Overnight trips are matched against the previous service day (24:xx start times).
+- Live freshness is explicit: `live`, `recent`, `stale`, `scheduled`, `unavailable`, with the age
+  in seconds. A feed older than five minutes is not applied; a vehicle older than two minutes is
+  not shown as a current position.
+- The public Mobility Database CSV catalog (`files.mobilitydatabase.org/feeds_v2.csv`) is used to
+  discover keyless, active GTFS-Realtime feeds covering the journey area. Feeds needing an API key,
+  inactive feeds and development-only feeds are skipped. The manual URL remains the override.
+- The trip sheet shows Live / recent age / stale / scheduled, the live feed host, platform
+  changes, skipped stops, service alerts and a "Tight transfer" warning when a delay consumes the
+  walking transfer.
+- The timetable is shown immediately; a slow live feed updates it afterwards without blanking the
+  screen.
+
+### Verification
+
+- GitHub Actions run `44768158140` built commit `44f6fa0` successfully in 3m27s.
+- VelaCore on CI: **214 tests, 0 failures** (208 local Linux + the Darwin-only fixture).
+- Artifact `Kite-custom-ipa` downloaded and checked: clean `unzip -t`, arm64 app and widget,
+  bundle IDs `app.vela.ios` / `app.vela.ios.navigation`, `CFBundleVersion` 1043, `_CodeSignature`
+  on both.
+- Physical iPhone checks for locked screen, background GPS, compass and battery still need a device.
+
+### Not done in this stage
+
+- SIRI XML, offline maps/routing, CarPlay and a shared HTTP/cache layer for every provider remain
+  roadmap work.
+- Physical iPhone checks for locked screen, background GPS, compass, Live Activity and battery
+  still require a device.
+
 ## v26 (verified build 1036)
 
 Base: `iphone-custom-v25` (verified build 1035).

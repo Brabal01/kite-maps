@@ -28,19 +28,80 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     private var navigating = false
     private var requestedPreciseLocation = false
     private var headingOn = false
+    private var foreground = true
+
+    /** How much GPS the current screen actually needs. */
+    enum Mode {
+        case browse
+        case justDrive
+        case navigateDrive
+        case navigateWalkOrBike
+        case transit
+    }
 
     override init() {
         super.init()
         manager.delegate = self
-        manager.desiredAccuracy = kCLLocationAccuracyBest
-        manager.activityType = .other
+        apply(.browse)
         reducedAccuracy = manager.accuracyAuthorization == .reducedAccuracy
+    }
+
+    private func apply(_ mode: Mode) {
+        switch mode {
+        case .browse:
+            manager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+            manager.distanceFilter = 15
+            manager.activityType = .other
+            manager.pausesLocationUpdatesAutomatically = true
+            manager.allowsBackgroundLocationUpdates = false
+            manager.showsBackgroundLocationIndicator = false
+        case .justDrive:
+            manager.desiredAccuracy = kCLLocationAccuracyBest
+            manager.distanceFilter = 5
+            manager.activityType = .automotiveNavigation
+            manager.pausesLocationUpdatesAutomatically = false
+            manager.allowsBackgroundLocationUpdates = true
+            manager.showsBackgroundLocationIndicator = true
+        case .navigateDrive:
+            manager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
+            manager.distanceFilter = kCLDistanceFilterNone
+            manager.activityType = .automotiveNavigation
+            manager.pausesLocationUpdatesAutomatically = false
+            manager.allowsBackgroundLocationUpdates = true
+            manager.showsBackgroundLocationIndicator = true
+        case .navigateWalkOrBike:
+            manager.desiredAccuracy = kCLLocationAccuracyBest
+            manager.distanceFilter = 2
+            manager.activityType = .fitness
+            manager.pausesLocationUpdatesAutomatically = false
+            manager.allowsBackgroundLocationUpdates = true
+            manager.showsBackgroundLocationIndicator = true
+        case .transit:
+            manager.desiredAccuracy = kCLLocationAccuracyBest
+            manager.distanceFilter = 5
+            manager.activityType = .fitness
+            manager.pausesLocationUpdatesAutomatically = false
+            manager.allowsBackgroundLocationUpdates = true
+            manager.showsBackgroundLocationIndicator = true
+        }
     }
 
     func start() {
         if manager.authorizationStatus == .notDetermined { manager.requestWhenInUseAuthorization() }
+        guard foreground else { return }
         manager.startUpdatingLocation()
         startHeading()
+    }
+
+    /** Stop the high-rate GPS when the map is not visible; navigation keeps running in the background. */
+    func setForeground(_ on: Bool) {
+        foreground = on
+        if on {
+            start()
+        } else {
+            stopHeading()
+            if !navigating { manager.stopUpdatingLocation() }
+        }
     }
 
     /** The map turns to the compass on open; stop the compass when Kite goes to the background. */
@@ -63,14 +124,19 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     }
 
     /** Full-rate GPS that keeps running with the screen off, for a drive. */
-    func setNavigating(_ on: Bool, mode: Int = 0) {
+    func setNavigating(_ on: Bool, mode: Int = 0, transit: Bool = false, justDrive: Bool = false) {
         navigating = on
-        manager.activityType = on ? (mode == 0 ? .automotiveNavigation : .fitness) : .other
-        manager.distanceFilter = kCLDistanceFilterNone
-        manager.desiredAccuracy = on ? kCLLocationAccuracyBestForNavigation : kCLLocationAccuracyBest
-        manager.allowsBackgroundLocationUpdates = on
-        manager.pausesLocationUpdatesAutomatically = !on
-        manager.showsBackgroundLocationIndicator = on
+        if !on {
+            apply(.browse)
+        } else if justDrive {
+            apply(.justDrive)
+        } else if transit {
+            apply(.transit)
+        } else if mode == TravelMode.drive.rawValue {
+            apply(.navigateDrive)
+        } else {
+            apply(.navigateWalkOrBike)
+        }
         start()
         if on { requestPreciseLocation() }
     }
