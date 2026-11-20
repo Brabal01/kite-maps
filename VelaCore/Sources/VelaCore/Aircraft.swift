@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /**
  * A police plane or helicopter overhead, from open ADS-B flight tracking (adsb.lol, with

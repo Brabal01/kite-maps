@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 public struct RouteControl: Hashable, Sendable {
     public enum Kind: String, Hashable, Sendable {

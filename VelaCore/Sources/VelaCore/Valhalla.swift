@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /**
  * Posted speed limits along a route from the public Valhalla server (FOSSGIS, the same people as

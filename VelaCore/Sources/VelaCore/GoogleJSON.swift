@@ -60,6 +60,14 @@ func int(_ v: Any?) -> Int? {
     return nil
 }
 
+#if canImport(Darwin)
 private func isBool(_ n: NSNumber) -> Bool {
     CFGetTypeID(n) == CFBooleanGetTypeID()
 }
+#else
+private func isBool(_ n: NSNumber) -> Bool {
+    // swift-corelibs-foundation tags JSON booleans as an Objective-C `char`, while numbers keep
+    // an integer or floating-point type. Keeps VelaCore's parser testable on Linux CI.
+    String(cString: n.objCType) == "c"
+}
+#endif

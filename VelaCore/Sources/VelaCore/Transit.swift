@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /** One part of a transit trip: a walk, or a ride on one line between two stops. */
 public struct TransitLeg: Hashable, Sendable {

@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /**
  * Keyless Google Maps web search, the way Vela's Android extractor does it: warm a session

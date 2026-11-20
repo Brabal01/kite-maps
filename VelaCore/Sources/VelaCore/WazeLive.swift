@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /**
  * Live Waze reports (police, crashes, hazards...) the way the Waze app itself gets them: its

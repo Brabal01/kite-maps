@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /** A mapped camera from OpenStreetMap: a fixed speed camera, or a license plate reader (DeFlock). */
 public struct RoadCamera: Hashable, Codable, Sendable, Identifiable {

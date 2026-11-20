@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /**
  * Google Street View, keyless: the same panorama lookup Google's own map pages use, a thumbnail
