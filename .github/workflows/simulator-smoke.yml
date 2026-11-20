@@ -86,6 +86,26 @@ jobs:
           if [ -z "$PID" ] || ! ps -p "$PID" >/dev/null; then
             echo "Kite safe mode process $PID is not alive"; exit 1
           fi
+      - name: Open the new screens in sequence
+        run: |
+          set -euo pipefail
+          UDID="${{ steps.simulator.outputs.udid }}"
+          for step in home routes saved settings; do
+            echo "== -demo $step =="
+            xcrun simctl terminate "$UDID" app.vela.ios >/dev/null 2>&1 || true
+            xcrun simctl launch "$UDID" app.vela.ios -demo "$step" | tee "demo-$step.txt"
+            PID=$(sed -n 's/.*app.vela.ios: \([0-9][0-9]*\).*/\1/p' "demo-$step.txt")
+            sleep 14
+            if [ -z "$PID" ] || ! ps -p "$PID" >/dev/null; then
+              echo "Kite crashed opening $step"
+              xcrun simctl spawn "$UDID" log show --style compact --last 40s \
+                --predicate 'process == "Kite"' > "crash-$step.log" || true
+              cp ~/Library/Logs/DiagnosticReports/*Kite* . 2>/dev/null || true
+              exit 1
+            fi
+            xcrun simctl io "$UDID" screenshot "demo-$step.png" >/dev/null || true
+          done
+
       - name: Check the launched process
         if: always()
         run: |
