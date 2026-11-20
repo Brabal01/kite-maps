@@ -85,8 +85,7 @@ struct ContentView: View {
             if DemoScript.step == "wazemap" || DemoScript.step == "wazeuk" || DemoScript.step == "wazesizes" {
                 // Screenshot run only: what Waze answered, since the build's computers can't be trusted to get through.
                 TimelineView(.periodic(from: .now, by: 2)) { _ in
-                    Text((Waze.lastStatus.map { "Waze: HTTP \($0.code), \($0.count) reports\($0.viaPage ? " via page" : ""): \($0.summary)" } ?? "Waze: not asked yet")
-                         + "\n" + WazeWeb.shared.note + (DemoScript.wazeProbe.isEmpty ? "" : "\n" + DemoScript.wazeProbe))
+                    Text(wazeProbeText())
                         .font(.caption.monospaced()).padding(6).background(Color.red).foregroundColor(.white)
                         .padding(.bottom, 120)
                 }
@@ -199,6 +198,18 @@ struct ContentView: View {
         .onChange(of: settings.welcomed && !settings.needsWazeChoice) { ready in
             if ready { model.location.start() }
         }
+    }
+
+
+    private func wazeProbeText() -> String {
+        let status: String
+        if let last = Waze.lastStatus {
+            status = "Waze: HTTP \(last.code), \(last.count) reports\(last.viaPage ? " via page" : ""): \(last.summary)"
+        } else {
+            status = "Waze: not asked yet"
+        }
+        let probe = DemoScript.wazeProbe.isEmpty ? "" : "\n" + DemoScript.wazeProbe
+        return status + "\n" + WazeWeb.shared.note + probe
     }
 
     /** Kept out of the view body: the type checker struggles with a large inline array here. */
