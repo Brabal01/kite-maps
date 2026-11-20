@@ -18,4 +18,16 @@ final class PlaceMatchingTests: XCTestCase {
         let b = Place(id: "a", name: "New", location: LatLng(1, 1), source: "osm")
         XCTAssertTrue(a.matchesNearby(b))
     }
+
+    func testSameNameButDifferentGooglePlacesStayApart() {
+        var first = Place(id: "google:first", name: "Starbucks", location: LatLng(51.5000, -0.1200), source: "google")
+        first.placeId = "ChIJfirst"
+        var second = Place(id: "google:second", name: "Starbucks", location: LatLng(51.5002, -0.1201), source: "google")
+        second.placeId = "ChIJsecond"
+        XCTAssertFalse(first.matchesNearby(second), "two nearby shops of one chain are not the same place")
+        XCTAssertTrue(first.matchesNearby(first))
+        XCTAssertTrue(first.matchesNearby(Place(id: "osm", name: "Starbucks",
+                                                location: LatLng(51.5001, -0.1200), source: "osm")),
+                      "an OSM result may still enrich the Google place")
+    }
 }

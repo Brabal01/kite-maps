@@ -73,8 +73,15 @@ public struct Place: Identifiable, Hashable, Codable, Sendable {
     }
 
     /// Identify the same nearby named feature across map and search providers.
+    ///
+    /// A name and a radius alone are not enough: two branches of the same chain, or two units in
+    /// one shopping centre, can sit within 150 m of each other. When both sides carry Google's
+    /// stable place ID, different IDs mean different businesses even if the names are identical.
     public func matchesNearby(_ other: Place) -> Bool {
         if id == other.id { return true }
+        if let mine = placeId, !mine.isEmpty, let theirs = other.placeId, !theirs.isEmpty {
+            return mine == theirs
+        }
         let a = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let b = other.name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !a.isEmpty, a.compare(b, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame else { return false }
