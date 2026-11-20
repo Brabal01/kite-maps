@@ -267,7 +267,7 @@ index 00157a7..f28176e 100644
             let exit = text.range(of: #"\b(?:exit|junction)\s+[0-9]+[A-Z]?\b"#, options: [.regularExpression, .caseInsensitive]) {
              let number = text[exit].split(separator: " ").last.map(String.init)
 diff --git a/VelaCore/Sources/VelaCore/OSRM.swift b/VelaCore/Sources/VelaCore/OSRM.swift
-index a66eadc..4cf9ec6 100644
+index a66eadc..51f26c6 100644
 --- a/VelaCore/Sources/VelaCore/OSRM.swift
 +++ b/VelaCore/Sources/VelaCore/OSRM.swift
 @@ -154,12 +154,12 @@ public enum OSRM {
@@ -286,7 +286,7 @@ index a66eadc..4cf9ec6 100644
                      if type == "roundabout" || type == "rotary" {
                          // The lanes for a roundabout are sometimes mapped on the road leading up to it.
                          if man.lanes.isEmpty, si > 0, let last = (steps[si - 1]["intersections"] as? [[String: Any]])?.last {
-@@ -173,14 +173,44 @@ public enum OSRM {
+@@ -173,14 +173,39 @@ public enum OSRM {
                          // Still going round: keep the roundabout's exit number until off it.
                          man.leavesRoundabout = true
                          man.lanes = []
@@ -312,14 +312,9 @@ index a66eadc..4cf9ec6 100644
 +                    if mode == .drive, mt != .roundabout,
 +                       let intersections = step["intersections"] as? [[String: Any]] {
 +                        for junction in intersections.dropFirst() {
-+                            guard let xy = junction["location"] as? [Double], xy.count >= 2,
-+                                  let bearings = junction["bearings"] as? [Double],
-+                                  let incoming = junction["in"] as? Int, let outgoing = junction["out"] as? Int,
-+                                  bearings.indices.contains(incoming), bearings.indices.contains(outgoing),
-+                                  abs((bearings[outgoing] - bearings[incoming] + 360).truncatingRemainder(dividingBy: 360) - 180) < 25 else { continue }
-+                            let mapped = lanes(["intersections": [junction]])
-+                            guard mapped.contains(where: { $0.valid && $0.indications.contains("straight") }),
-+                                  mapped.contains(where: { !$0.valid }) else { continue }
++                            guard let xy = junction["location"] as? [Double], xy.count >= 2 else { continue }
++                            let mapped = throughLanes(junction)
++                            guard !mapped.isEmpty else { continue }
 +                            let junctionPoint = LatLng(xy[1], xy[0])
 +                            let match = Geo.project(junctionPoint, on: line, cumulative: cum)
 +                            guard let previous = maneuvers.last, match.offset < 8,
@@ -335,10 +330,21 @@ index a66eadc..4cf9ec6 100644
                      along += dist
                  }
              }
-@@ -262,6 +292,13 @@ public enum OSRM {
+@@ -262,6 +287,24 @@ public enum OSRM {
      }
  
      /** The turn lanes at a step's maneuver point (its first intersection), left to right. */
++    static func throughLanes(_ junction: [String: Any]) -> [Lane] {
++        guard let bearings = junction["bearings"] as? [Double],
++              let incoming = junction["in"] as? Int, let outgoing = junction["out"] as? Int,
++              bearings.indices.contains(incoming), bearings.indices.contains(outgoing),
++              abs((bearings[outgoing] - bearings[incoming] + 360).truncatingRemainder(dividingBy: 360) - 180) < 25 else { return [] }
++        let mapped = lanes(["intersections": [junction]])
++        guard mapped.contains(where: { $0.valid && $0.indications.contains("straight") }),
++              mapped.contains(where: { !$0.valid }) else { return [] }
++        return mapped
++    }
++
 +    static func confirmedExit(entry: Int?, leaving: Int?) -> Int? {
 +        let a = entry.flatMap { $0 > 0 ? $0 : nil }
 +        let b = leaving.flatMap { $0 > 0 ? $0 : nil }
@@ -349,7 +355,7 @@ index a66eadc..4cf9ec6 100644
      static func lanes(_ step: [String: Any]) -> [Lane] {
          guard let first = (step["intersections"] as? [[String: Any]])?.first,
                let raw = first["lanes"] as? [[String: Any]], raw.count > 1 else { return [] }
-@@ -429,6 +466,7 @@ public enum OSRM {
+@@ -429,6 +472,7 @@ public enum OSRM {
      static func instruction(type: String, modifier: String?, road: String?, exit: Int?, mode: TravelMode,
                              signs: Signs = Signs()) -> String {
          let onto = road.map { " onto \($0)" } ?? ""
@@ -357,7 +363,7 @@ index a66eadc..4cf9ec6 100644
          let dir = modifier ?? "straight"
          // A slip road often carries the motorway's name: don't say "onto M27" while leaving the M27.
          let newRoad = road.flatMap { $0 == signs.from ? nil : $0 }
-@@ -444,9 +482,9 @@ public enum OSRM {
+@@ -444,9 +488,9 @@ public enum OSRM {
          case "roundabout", "rotary", "roundabout turn":
              // A named roundabout ("Millbrook Roundabout") is where you are, not a road to go onto.
              if let r = road, r.lowercased().contains("roundabout") {
@@ -369,7 +375,7 @@ index a66eadc..4cf9ec6 100644
              return "At the roundabout, \(n)" + onto
          case "exit roundabout", "exit rotary": return "Exit the roundabout" + onto
          case "merge": return "Merge" + onto
-@@ -470,11 +508,12 @@ public enum OSRM {
+@@ -470,11 +514,12 @@ public enum OSRM {
                  let turn = "Turn \(dir)"
                  return turn + (type == "continue" ? stay : onto)
              }
@@ -383,7 +389,7 @@ index a66eadc..4cf9ec6 100644
              default: return "Turn \(dir)" + onto
              }
          }
-@@ -504,7 +543,45 @@ public enum Directions {
+@@ -504,7 +549,45 @@ public enum Directions {
      public static func routes(from a: LatLng, to b: LatLng, mode: TravelMode,
                                avoidHighways: Bool = false, avoidTolls: Bool = false,
                                useGoogle: Bool = true, via: [LatLng] = [], heading: Double? = nil,
@@ -430,7 +436,7 @@ index a66eadc..4cf9ec6 100644
          if mode != .drive {
              let points = [a] + via + [b]
              async let preferred = Valhalla.activeRoutes(points, mode: mode, alternatives: alternatives)
-@@ -589,7 +666,6 @@ public enum Directions {
+@@ -589,7 +672,6 @@ public enum Directions {
                          StepMerge.dropFalseUTurns(&steps, line: g[i].polyline)
                          if complete {
                              StepMerge.addGoogleLaneHints(&steps, from: g[i].maneuvers)
@@ -438,7 +444,7 @@ index a66eadc..4cf9ec6 100644
                              StepMerge.addGoogleKinds(&steps, from: g[i].maneuvers, line: g[i].polyline)
                              StepMerge.addGoogleMissing(&steps, from: g[i].maneuvers, line: g[i].polyline)
                              StepMerge.addGoogleSigns(&steps, from: g[i].maneuvers)
-@@ -605,10 +681,6 @@ public enum Directions {
+@@ -605,10 +687,6 @@ public enum Directions {
                      }
                  }
                  for i in g.indices {
@@ -449,7 +455,7 @@ index a66eadc..4cf9ec6 100644
                      StepMerge.tidy(&g[i].maneuvers)
                      g[i] = Roundabouts.settle(g[i])
                      // Britain and Ireland ("slip road" is British; Australia says "ramp" too).
-@@ -753,23 +825,6 @@ public enum StepMerge {
+@@ -753,23 +831,6 @@ public enum StepMerge {
       * Google's own lane advice ("Use the right lane to merge onto Redbridge Rd") on the step at the
       * same place, where the open map has no lanes mapped.
       */
@@ -473,6 +479,21 @@ index a66eadc..4cf9ec6 100644
      public static func addGoogleLaneHints(_ steps: inout [Maneuver], from google: [Maneuver]) {
          // Each of Google's hints goes to one step only, and only when they're each other's nearest:
          // a left turn 80 m before a right one mustn't take the right turn's lanes.
+diff --git a/VelaCore/Sources/VelaCore/RouteControls.swift b/VelaCore/Sources/VelaCore/RouteControls.swift
+index 856156d..6a82d09 100644
+--- a/VelaCore/Sources/VelaCore/RouteControls.swift
++++ b/VelaCore/Sources/VelaCore/RouteControls.swift
+@@ -248,8 +248,8 @@ public enum RouteControls {
+                     return (forwardAllowed && aligned(way.before, with: point, bearing: incoming)) ||
+                            (reverseAllowed && aligned(way.after, with: point, bearing: incoming))
+                 }
+-                guard matches || (at.offset <= 4 && direction == nil && ways.allSatisfy({ $0.oneway == nil })) else { continue }
+-            } else if !walking && !crossing && (direction != nil || at.offset > 8) {
++                guard matches else { continue }
++            } else if !walking && !crossing && (direction != nil || at.offset > 4) {
+                 continue
+             }
+             candidates.append((at.along, at.offset, kind))
 diff --git a/VelaCore/Sources/VelaCore/RouteTracker.swift b/VelaCore/Sources/VelaCore/RouteTracker.swift
 index e84fda4..900bd3f 100644
 --- a/VelaCore/Sources/VelaCore/RouteTracker.swift
@@ -527,9 +548,18 @@ index e84fda4..900bd3f 100644
          }
          let next = route.maneuvers.firstIndex { !$0.silent && $0.alongMeters > along + 8 }
 diff --git a/VelaCore/Tests/VelaCoreTests/RoutingTests.swift b/VelaCore/Tests/VelaCoreTests/RoutingTests.swift
-index 0542585..7d4db4f 100644
+index 0542585..76051b3 100644
 --- a/VelaCore/Tests/VelaCoreTests/RoutingTests.swift
 +++ b/VelaCore/Tests/VelaCoreTests/RoutingTests.swift
+@@ -510,7 +510,7 @@ final class RoutingTests: XCTestCase {
+ 
+     func testNamedRoundaboutWording() {
+         XCTAssertEqual(OSRM.instruction(type: "roundabout", modifier: nil, road: "Millbrook Roundabout", exit: nil, mode: .drive),
+-                       "Go straight through Millbrook Roundabout")
++                       "Exit Millbrook Roundabout")
+         XCTAssertEqual(OSRM.instruction(type: "roundabout", modifier: nil, road: "Redbridge Roundabout", exit: 2, mode: .drive),
+                        "At Redbridge Roundabout, take the 2nd exit")
+         XCTAssertEqual(OSRM.instruction(type: "roundabout", modifier: nil, road: "A33", exit: 3, mode: .drive),
 @@ -576,22 +576,13 @@ final class BritishWordsTests: XCTestCase {
  
  
@@ -560,7 +590,7 @@ index 0542585..7d4db4f 100644
      }
  }
  
-@@ -638,3 +629,34 @@ final class MotorwayLinkNameTests: XCTestCase {
+@@ -638,3 +629,51 @@ final class MotorwayLinkNameTests: XCTestCase {
          XCTAssertTrue(steps.contains { $0.instruction == "Exit the roundabout onto M27" })
      }
  }
@@ -585,6 +615,23 @@ index 0542585..7d4db4f 100644
 +        XCTAssertFalse(tracker.update(point, accuracy: 5, speed: 12, measured: false).offRoute)
 +        XCTAssertTrue(tracker.update(point, accuracy: 5, speed: 12).offRoute)
 +        XCTAssertFalse(tracker.update(LatLng(0.003, 0), accuracy: 5, speed: 12).offRoute)
++    }
++
++    func testCityIntersectionHighlightsOnlyMappedThroughLane() {
++        var junction: [String: Any] = [
++            "bearings": [0, 90, 180, 270], "in": 2, "out": 0,
++            "lanes": [
++                ["indications": ["left"], "valid": false],
++                ["indications": ["straight"], "valid": true],
++                ["indications": ["right"], "valid": false],
++            ],
++        ]
++        XCTAssertEqual(OSRM.throughLanes(junction).map(\.valid), [false, true, false])
++        junction["out"] = 1
++        XCTAssertTrue(OSRM.throughLanes(junction).isEmpty)
++        junction["out"] = 0
++        junction.removeValue(forKey: "lanes")
++        XCTAssertTrue(OSRM.throughLanes(junction).isEmpty)
 +    }
 +
 +    func testStraightInstructionUsesSignedDestination() {
