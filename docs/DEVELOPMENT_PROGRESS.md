@@ -2,7 +2,7 @@
 
 Updated: 2026-11-20
 
-## v26 (in progress)
+## v26 (verified build 1036)
 
 Base: `iphone-custom-v25` (verified build 1035).
 
@@ -26,6 +26,16 @@ Base: `iphone-custom-v25` (verified build 1035).
   answers cannot overwrite a newer route. Transit requests are cancelled the same way.
 - **Rendering**: `NavGlide` skips identical puck/camera frames, so a parked car does not redraw
   the map at 60 Hz.
+
+### Verification
+
+- GitHub Actions run `44758806622` built commit `48178b7` successfully in 5m39s.
+- VelaCore on the CI runner: **200 tests, 0 failures**.
+- Artifact `Kite-custom-ipa` downloaded and checked: `Kite.ipa` opens cleanly, `Payload/Kite.app`
+  and `Payload/Kite.app/PlugIns/NavigationWidget.appex` contain arm64 Mach-O binaries,
+  `CFBundleVersion` is 1036, bundle identifiers are `app.vela.ios` and
+  `app.vela.ios.navigation`, and both app and widget carry `_CodeSignature`.
+- Physical iPhone checks for locked-screen, background GPS and compass still need a device.
 
 ### Not in this stage
 
