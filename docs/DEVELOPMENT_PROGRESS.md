@@ -2,7 +2,7 @@
 
 Updated: 2026-11-20
 
-## v25 (in progress)
+## v25 (verified build 1034)
 
 Base: `iphone-custom-v24` (verified build 1033).
 
@@ -43,11 +43,18 @@ Base: `iphone-custom-v24` (verified build 1033).
 - The same instruction string feeds the banner and the spoken voice; the map's next-road pill
   prefers the signed destination too. Missing sign data keeps the normal street instruction.
 
-### To verify in CI
+### Verification
 
 - VelaCore tests pass locally on Linux: 186 tests, 0 failures, 1 skipped.
-- iOS build, MapLibre/MapKit arrow rendering, widget embedding and IPA packaging must be checked
-  in GitHub Actions; no physical iPhone is available here.
+- GitHub Actions run
+  [44751600117](https://github.com/Brabal01/kite-maps/actions/runs/44751600117) — success,
+  4m41s, on commit `134c1ab7810c3b77288c8e6829da3ac31e9eb37f`.
+- Artifact `Kite-custom-ipa` was downloaded and inspected: `Payload/Kite.app/Kite` and
+  `NavigationWidget.appex/NavigationWidget` are arm64; app identifier `app.vela.ios`, widget
+  `app.vela.ios.navigation`; `CFBundleVersion` 1034; `unzip -t` clean; ad-hoc `_CodeSignature`
+  present; MapLibre framework arm64. The new GTFS-Realtime strings are in the binary.
+- No physical iPhone is available for locked-screen, background-GPS, compass or Dynamic Island
+  checks.
 - SIRI XML feeds are not implemented; GTFS-Realtime is the supported extra live format. A SIRI
   endpoint is region-specific and no public keyless default is assumed.
 
