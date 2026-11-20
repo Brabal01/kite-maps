@@ -14,11 +14,11 @@
 
 ### Release IPA (custom workflow)
 
-- Run [`44833796423`](https://github.com/Brabal01/kite-maps/actions/runs/44833796423):
-  **success**, build **1087**, commit `19470ec`.
+- Run [`44836383104`](https://github.com/Brabal01/kite-maps/actions/runs/44836383104):
+  **success**, build **1088**, commit `77adc49`.
 - VelaCore: **222 tests, 0 failures**.
 - Both variants passed `.github/scripts/verify-ipa.sh`:
-  - Full: app + `app.vela.ios.navigation` extension, both 0.8.0 (1087),
+  - Full: app + `app.vela.ios.navigation` extension, both 0.8.0 (1088),
     both iOS ≥ 16.2, MapLibre arm64, signatures valid, Live Activities on.
   - SideStore: no extension, Live Activities off, same app binary, arm64.
 - An independent download of build 1078 (same packaging path) confirmed the
@@ -28,8 +28,8 @@
 ### Simulator and screenshots
 
 - Final smoke run
-  [`44833801261`](https://github.com/Brabal01/kite-maps/actions/runs/44833801261)
-  on commit `19470ec`: three normal launches, one denied-location launch and
+  [`44836387766`](https://github.com/Brabal01/kite-maps/actions/runs/44836387766)
+  on commit `77adc49`: three normal launches, one denied-location launch and
   one `--safe-mode` launch survived; it then opened home, routes, place,
   directions, navigation and settings, and home/navigation in dark mode.
 - The smoke uploads `Kite-v29-Simulator-Screenshots` (demo-*.png) and a

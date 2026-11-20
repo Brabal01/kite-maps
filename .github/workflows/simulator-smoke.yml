@@ -97,10 +97,13 @@ jobs:
           xcrun simctl ui "$UDID" appearance light >/dev/null 2>&1 || true
           # Navigation first warms up the simulated GPS, so the later planning
           # screen has a real origin instead of "waiting for your location".
-          for step in home routes uk directions place settings; do
+          # A place search first warms up the simulated GPS; only then is the
+          # navigation route planned. Otherwise the first request has no origin
+          # and the screen honestly shows "No route found".
+          for step in home routes place uk directions settings; do
             case "$step" in
-              home|routes) wait=16;; uk) wait=52;; directions) wait=45;;
-              place) wait=26;; *) wait=12;;
+              home|routes) wait=16;; place) wait=26;; uk) wait=52;;
+              directions) wait=45;; *) wait=12;;
             esac
             if [ "$step" = "uk" ]; then
               xcrun simctl location "$UDID" set 56.3960,-3.4300 >/dev/null 2>&1 || true
