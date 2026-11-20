@@ -46,9 +46,33 @@ private fun String.lowercasedFirst() = if (isEmpty()) this else substring(0, 1).
  * One drive, walk or ride: follows the user along the route, speaks the turns, and reroutes
  * when they leave it. The same rules as the iPhone app, line for line.
  */
-class Navigator(route0: Route, val destination: Place, stops0: List<Place>, private val scope: CoroutineScope) {
+class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private val scope: CoroutineScope) {
+    var destination by mutableStateOf(destination0); private set
+    var originalParkingDestination by mutableStateOf<Place?>(null); private set
+    var parkingOfferDismissed by mutableStateOf(false); private set
+    val offerParking: Boolean
+        get() = AppSettings.arrivalParking && !parkingOfferDismissed && !arrived && !rerouting && stops.isEmpty() &&
+            route.mode == TravelMode.DRIVE && progress?.let { !it.offRoute && it.remainingMeters in 1.0..1000.0 } == true
+
+    val roadTraffic: List<TrafficSpan>
+        get() {
+            if (!AppSettings.traffic || !AppSettings.aheadTraffic) return emptyList()
+            val measured = currentTraffic ?: route.trafficSpans
+            if (!AppSettings.aheadWaze || !AppSettings.wazeOnMap) return measured
+            // A point report identifies an approximate spot, so keep its mark short.
+            val reported = routeWaze.filter { it.alert.kind == WazeAlert.Kind.JAM && AppSettings.showsOnRoad(it.alert) }
+                .map { TrafficSpan(if (it.alert.subtype == "JAM_STAND_STILL_TRAFFIC") 3 else 2, (it.along - 70).coerceAtLeast(0.0), 140.0) }
+            return measured + reported
+        }
+
+    fun dismissParkingOffer() { parkingOfferDismissed = true }
+    fun parkAt(place: Place) {
+        val fix = lastFix ?: return
+        if (!arrived) reroute(fix, quiet = true, parking = place)
+    }
     var route by mutableStateOf(route0); private set
     var progress by mutableStateOf<RouteTracker.Progress?>(null); private set
+    private var currentTraffic by mutableStateOf<List<TrafficSpan>?>(null)
     var rerouting by mutableStateOf(false); private set
     var arrived by mutableStateOf(false); private set
     private var voiceState = mutableStateOf(
@@ -98,7 +122,7 @@ class Navigator(route0: Route, val destination: Place, stops0: List<Place>, priv
     /** Traffic lights on the route, one per junction, drawn on the map like Waze. */
     var routeSignals by mutableStateOf<List<LatLng>>(emptyList()); private set
     var roadControls by mutableStateOf<List<Overpass.RoadControl>>(emptyList()); private set
-    var routeJams by mutableStateOf<List<PlacedAlert>>(emptyList()); private set
+    var routeWaze by mutableStateOf<List<PlacedAlert>>(emptyList()); private set
     /** Stops still ahead, in trip order; each is dropped once reached. */
     var stops by mutableStateOf(stops0); private set
     /** Drivers' reports from Waze's app servers, asked every 90 seconds. */
@@ -145,7 +169,6 @@ class Navigator(route0: Route, val destination: Place, stops0: List<Place>, priv
     private data class ZoneCarry(val time: Long, val driven: Double, val rest: List<LatLng>, val at: Long, val kmh: Double?)
     private var zoneCarry: ZoneCarry? = null
     private val speeding = SpeedingAlerts()
-    private var routeWaze: List<PlacedAlert> = emptyList()
     private val spokenWaze = mutableSetOf<String>()
     private var wazeAt = 0L
     private var wazeLoading = false
@@ -579,8 +602,8 @@ class Navigator(route0: Route, val destination: Place, stops0: List<Place>, priv
             }
             val merged = linkedMapOf<String, WazeAlert>()
             for (a in closureAlerts + liveAlerts) merged[a.id] = a
-            routeWaze = Waze.project(merged.values.toList(), line)
-            routeJams = routeWaze.filter { it.alert.kind == WazeAlert.Kind.JAM }
+            val projected = withContext(Dispatchers.Default) { Waze.project(merged.values.toList(), line) }
+            if (route.id == id && !stopped) routeWaze = projected
         }
     }
 
@@ -832,6 +855,8 @@ class Navigator(route0: Route, val destination: Place, stops0: List<Place>, priv
         val from = loc.coord
         val course = heading(loc); val id = route.id; val planned = p.remainingSeconds / trafficScale
         val to = destination.location; val via = stops.map { it.location }
+        val existingRoute = route
+        val previousTraffic = currentTraffic ?: route.trafficSpans
         scope.launch {
             val r = runCatching {
                 Directions.routes(from, to, TravelMode.DRIVE, avoidHighways, avoidTolls, useGoogle, via, course, mapboxToken = mapboxToken)
@@ -849,6 +874,12 @@ class Navigator(route0: Route, val destination: Place, stops0: List<Place>, priv
                 offerFaster(fresh, saving, nowP.remainingMeters, left)
             } else if (sameWay) {
                 trafficScale = min(3.0, max(0.5, fresh.durationSeconds / planned))
+                if (fresh.source == "mapbox") {
+                    val updated = withContext(Dispatchers.Default) {
+                        MapboxDirections.refreshTraffic(existingRoute.polyline, previousTraffic, fresh, p.alongMeters)
+                    }
+                    if (updated != null && route.id == id && !stopped && !rerouting) currentTraffic = updated
+                }
             }
         }
     }
@@ -937,7 +968,7 @@ class Navigator(route0: Route, val destination: Place, stops0: List<Place>, priv
         recentFixes.removeAll { loc.timeMillis - it.timeMillis > 20_000 }
     }
 
-    private fun reroute(loc: Fix, quiet: Boolean = false, adding: Place? = null) {
+    private fun reroute(loc: Fix, quiet: Boolean = false, adding: Place? = null, parking: Place? = null) {
         Log.i("KiteTrace", "reroute from ${loc.lat},${loc.lng}")
         rerouting = true
         lastReroute = now()
@@ -953,13 +984,14 @@ class Navigator(route0: Route, val destination: Place, stops0: List<Place>, priv
         val from = loc.coord
         val course = if (route.mode == TravelMode.DRIVE) heading(loc) else null
         val mode = route.mode
-        val to = destination.location
+        val to = parking?.location ?: destination.location
+        val openWalking = AppSettings.openWalking
         rerouteRequest++
         val req = rerouteRequest
         scope.launch {
             val r = runCatching {
                 Directions.routes(from, to, mode, avoidHighways, avoidTolls, !AppSettings.noGoogle, stops.map { it.location }, course,
-                    mapboxToken = AppSettings.activeMapboxToken)
+                    mapboxToken = AppSettings.activeMapboxToken, preferOpenWalking = openWalking)
             }.getOrNull()
             if (stopped || req != rerouteRequest) return@launch
             rerouting = false
@@ -967,6 +999,10 @@ class Navigator(route0: Route, val destination: Place, stops0: List<Place>, priv
             if (arrived) return@launch
             val fresh = r?.routes?.firstOrNull()
             if (fresh == null) {
+                if (parking != null) {
+                    parkingOfferDismissed = false
+                    speak("Couldn't route to that parking area. Continuing to ${destination.name}.")
+                }
                 // The stop just added couldn't be routed to: say so, and don't keep it as if it were on the way.
                 val i = if (adding != null) stops.indexOfFirst { it.id == adding.id } else -1
                 if (adding != null && i >= 0) {
@@ -977,6 +1013,12 @@ class Navigator(route0: Route, val destination: Place, stops0: List<Place>, priv
                 return@launch
             }
             toldNoSignal = false
+            if (parking != null) {
+                originalParkingDestination = destination
+                destination = parking
+                parkingOfferDismissed = true
+                speak("Routing to ${parking.name}.")
+            }
             adopt(fresh)
             if (!quiet) sayNewRoute()
         }
@@ -993,6 +1035,7 @@ class Navigator(route0: Route, val destination: Place, stops0: List<Place>, priv
         // With none showing (a second reroute before the cameras came back), one already kept stays.
         if (e != null && p != null) zoneCarry = if (e.end - p.alongMeters > 20)
             ZoneCarry(e.time, max(0.0, p.alongMeters - e.along), Geo.slice(route.polyline, p.alongMeters, e.end), now(), e.kmh) else null
+        currentTraffic = null
         route = fresh
         tracker = RouteTracker(fresh)
         spokenStage = mutableMapOf()
@@ -1003,7 +1046,6 @@ class Navigator(route0: Route, val destination: Place, stops0: List<Place>, priv
         loadRoundabouts()
         wazeAt = 0
         routeWaze = emptyList()
-        routeJams = emptyList()
         wazeAhead = null
         loadWaze()
         lastFix?.let { handle(it, estimating) }

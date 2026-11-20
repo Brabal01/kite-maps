@@ -1,6 +1,8 @@
 package app.kite.core
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import java.util.Locale
 
 /** Photon, the OpenStreetMap geocoder: names, cities and addresses (not categories). Used when Google fails. */
@@ -9,9 +11,10 @@ object Photon {
     private val langs = setOf("en", "de", "fr", "it")
     private const val UA = "KiteMaps-Android/0.7 (+https://github.com/matteofx1/kite-maps)"
 
-    suspend fun search(query: String, near: LatLng?, limit: Int = 20): List<Place> {
+    suspend fun search(query: String, near: LatLng?, limit: Int = 20, bounds: Box? = null): List<Place> {
         var url = base + "?q=" + urlEnc(query) + "&limit=$limit"
         if (near != null) url += "&lat=${near.lat.plain()}&lon=${near.lng.plain()}"
+        if (bounds != null) url += "&bbox=${bounds.w.plain()},${bounds.s.plain()},${bounds.e.plain()},${bounds.n.plain()}"
         val lang = Locale.getDefault().language
         url += "&lang=" + if (lang in langs) lang else "en"
         return parse(Http.get(url, mapOf("User-Agent" to UA), Http.client(15)).body, near)
@@ -86,6 +89,12 @@ object PlaceSearch {
     suspend fun search(query: String, center: LatLng, spanMeters: Double?, useGoogle: Boolean = true): Result {
         val q = query.trim()
         if (q.isEmpty()) return Result(emptyList())
+        val kind = OutdoorData.kind(q)
+        if (kind != null) {
+            val open = OutdoorData.find(kind, center, ((spanMeters ?: 4500.0) / 2).coerceIn(1000.0, 6000.0)).orEmpty()
+            if (open.isNotEmpty() && (kind != OutdoorData.PARKING || !useGoogle)) return Result(open)
+            if (open.isNotEmpty()) return Result(OutdoorData.combine(namedNearby(q, center, spanMeters ?: 4500.0, true), open))
+        }
         var googleError: String? = null
         if (useGoogle) {
             try {
@@ -104,6 +113,21 @@ object PlaceSearch {
         Postcodes.lookup(q)?.let { return Result(listOf(it), googleError) }
         val osm = photonOrNothing(q, center)
         return Result(osm, googleError)
+    }
+
+    suspend fun namedNearby(query: String, center: LatLng, span: Double, useGoogle: Boolean): List<Place> = coroutineScope {
+        val radius = (span * 0.8).coerceIn(4000.0, 19_000.0)
+        val open = async {
+            try { Photon.search(query, center, limit = 35, bounds = OutdoorData.bounds(center, radius)) }
+            catch (e: CancellationException) { throw e }
+            catch (_: Exception) { emptyList() }
+        }
+        val google = if (useGoogle) {
+            try { GoogleClient.shared.search(query, center, span, pages = 1).filter { it.location.distanceTo(center) <= radius } }
+            catch (e: CancellationException) { throw e }
+            catch (_: Exception) { emptyList() }
+        } else emptyList()
+        OutdoorData.combine(google, open.await())
     }
 
     /** OpenStreetMap's answer, or nothing if it fails; being cancelled still cancels. */

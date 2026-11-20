@@ -29,6 +29,7 @@ data class MapPalette(val colors: List<String>) {
             "Alpine" to palette("EDF0F4", "A0C4E8", "BBD2CC", "D3DBE7", "FFFFFF", "C6BBED", "4763C7"),
         )
         val night = linkedMapOf(
+            "Moonlit" to palette("6C7F9C", "294363", "465C59", "C5CCE9", "70839C", "9C81B3", "67E5CB"),
             "Twilight" to palette("202B40", "132943", "24483F", "39445A", "48556E", "77658C", "57DDCA"),
             "Midnight" to palette("172330", "101F3D", "263D41", "2A3C56", "394E65", "576F9D", "75CFFF"),
             "Ember" to palette("302A35", "202635", "344841", "4E4048", "5C4B57", "946D5F", "FFC190"),

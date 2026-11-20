@@ -370,6 +370,7 @@ private fun LiveCamSettings() {
 private fun MapSettings() {
     val s = AppSettings
     var editColors by remember { mutableStateOf(false) }
+    var editRoadReports by remember { mutableStateOf(false) }
     SettingsGroup {
         PickRow("Theme", Icons.Filled.Contrast, 0x334155, s.theme, ThemeMode.entries.toList(), { it.label }) { s.theme = it }
         RowDivider()
@@ -378,7 +379,7 @@ private fun MapSettings() {
         ToggleRow("Parking button on the map", Icons.Filled.LocalParking, 0x2563EB, s.parkingButton) { s.parkingButton = it }
     }
     MapboxSettings()
-    SettingsGroup(header = "Mapbox Standard", footer = "Mapbox Standard uses your Mapbox token. Street lamps use mapped posts and lit streets at street zoom.") {
+    SettingsGroup(header = "Mapbox Standard", footer = "Mapbox Standard uses your Mapbox token. Street lamps use mapped posts and estimated placement on nearby streets at street zoom.") {
         ToggleRow("Mapbox Standard", Icons.Filled.ViewInAr, 0x0F766E, s.standardMap) { s.standardMap = it }
         RowDivider()
         Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).tap { editColors = true }.padding(horizontal = 14.dp),
@@ -397,7 +398,21 @@ private fun MapSettings() {
     }
     if (editColors) MapColorsPage { editColors = false }
     SettingsGroup(header = "Places on the map", footer = "When enabled, Kite asks Google about nearby businesses after the map stops moving. Open map places are also displayed.") {
-        ToggleRow("More place icons from Google", Icons.Filled.Place, 0x1D4ED8, s.googleMapPlaces, enabled = !s.noGoogle) { s.googleMapPlaces = it }
+        ToggleRow("Google Maps places", Icons.Filled.Place, 0x1D4ED8, s.googleMapPlaces, enabled = !s.noGoogle) { s.googleMapPlaces = it }
+        RowDivider()
+        ToggleRow("OpenStreetMap places", Icons.Outlined.Map, 0x0F766E, s.openMapPlaces) { s.openMapPlaces = it }
+    }
+    SettingsGroup(header = "Walking routes") {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            val chosen = if (s.organicWalking) "Organic Maps" else if (s.openWalking || s.noGoogle) "OpenStreetMap" else "Google Maps"
+            val providers = listOf("OpenStreetMap", "Organic Maps") + listOfNotNull("Google Maps".takeUnless { s.noGoogle })
+            Segmented(providers, chosen, { it }) {
+                s.organicWalking = it == "Organic Maps"
+                s.openWalking = it != "Google Maps"
+            }
+            Text(if (s.organicWalking) "Direct walks open in the Organic Maps app. Walks with stops stay in Kite." else "Walking navigation stays in Kite.",
+                color = secondaryText)
+        }
     }
     SettingsGroup(header = "While driving",
         footer = "Kite still zooms in for turns and out on long roads. Closer shows the streets bigger; Wider shows more road ahead. Normal is how Kite has always been.") {
@@ -406,7 +421,38 @@ private fun MapSettings() {
             Segmented(MapZoom.entries.toList(), s.mapZoom, { it.title }) { s.mapZoom = it }
         }
         RowDivider()
+        ToggleRow("Parking near destination", Icons.Filled.LocalParking, 0x2563EB, s.arrivalParking) { s.arrivalParking = it }
+        RowDivider()
         ToggleRow("Road ahead strip", Icons.Filled.Traffic, 0x0F766E, s.roadAheadStrip) { s.roadAheadStrip = it }
+    }
+    SettingsGroup(header = "Road ahead and map", footer = "Choose which events appear in the road strip and on the driving map.") {
+        ToggleRow("Traffic and jams", Icons.Filled.Traffic, 0xAD362C, s.aheadTraffic) { s.aheadTraffic = it }
+        RowDivider()
+        ToggleRow("Traffic lights", Icons.Filled.Traffic, 0x1D4ED8, s.aheadSignals) { s.aheadSignals = it }
+        RowDivider()
+        ToggleRow("Stop signs", Icons.Filled.StopCircle, 0xB91C1C, s.aheadStops) { s.aheadStops = it }
+        RowDivider()
+        ToggleRow("Railroad crossings", Icons.Filled.Train, 0x92400E, s.aheadRail) { s.aheadRail = it }
+        RowDivider()
+        ToggleRow("Waze road reports", Icons.Filled.Warning, 0x0F766E, s.aheadWaze) { s.aheadWaze = it }
+        RowDivider()
+        Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).tap { editRoadReports = true }.padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            SettingLabel("Waze report types", Icons.Filled.Tune, 0x0F766E, Modifier.weight(1f))
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = secondaryText)
+        }
+        RowDivider()
+        ToggleRow("Cameras on the route", Icons.Filled.PhotoCamera, 0x6D4EB0, s.aheadCameras) { s.aheadCameras = it }
+    }
+    if (editRoadReports) TripSheet("Waze road reports", "Done", { editRoadReports = false }) {
+        val items = listOf(WazeAlert.Kind.POLICE to "Police", WazeAlert.Kind.ACCIDENT to "Crashes",
+            WazeAlert.Kind.HAZARD to "Stopped vehicles and hazards", WazeAlert.Kind.WEATHER to "Weather",
+            WazeAlert.Kind.ROADWORKS to "Roadworks", WazeAlert.Kind.CLOSURE to "Closures", WazeAlert.Kind.JAM to "Traffic jams")
+        for ((kind, label) in items.filter { it.first in Waze.shares }) {
+            ToggleRow(label, null, 0, kind in s.roadWazeKinds, leading = { WazeBadge(kind, 26.dp) }) { on ->
+                s.roadWazeKinds = if (on) s.roadWazeKinds + kind else s.roadWazeKinds - kind
+            }
+        }
     }
 }
 
@@ -716,7 +762,7 @@ fun LayersSheet(liveCount: Int? = null, close: () -> Unit) {
     val s = AppSettings
     val dark = LocalDark.current
     ModalBottomSheet(onDismissRequest = close, containerColor = Vela.sheet(dark), dragHandle = null) {
-        Column(Modifier.padding(20.dp).navigationBarsPadding(), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+        Column(Modifier.verticalScroll(rememberScrollState()).padding(20.dp).navigationBarsPadding(), verticalArrangement = Arrangement.spacedBy(18.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Layers", fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, color = primaryText, modifier = Modifier.weight(1f))
                 CircleIconButton(Icons.Filled.Close, onClick = close)
@@ -726,10 +772,21 @@ fun LayersSheet(liveCount: Int? = null, close: () -> Unit) {
                 LayerTile("Default", !s.satellite, { Icon(Icons.Outlined.Map, null, tint = primaryText, modifier = Modifier.size(28.dp)) }) { s.satellite = false }
                 LayerTile("Satellite", s.satellite, { Icon(Icons.Filled.Public, null, tint = primaryText, modifier = Modifier.size(28.dp)) }) { s.satellite = true }
             }
+            Text("Place icons", fontSize = KType.subheadline, fontWeight = FontWeight.SemiBold, color = secondaryText)
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                if (!s.noGoogle) LayerTile("Google Maps", s.googleMapPlaces, {
+                    Icon(Icons.Filled.Place, null, tint = primaryText, modifier = Modifier.size(28.dp))
+                }) { s.googleMapPlaces = !s.googleMapPlaces }
+                LayerTile("OpenStreetMap", s.openMapPlaces, {
+                    Icon(Icons.Outlined.Map, null, tint = primaryText, modifier = Modifier.size(28.dp))
+                }) { s.openMapPlaces = !s.openMapPlaces }
+            }
             Text("Map details", fontSize = KType.subheadline, fontWeight = FontWeight.SemiBold, color = secondaryText)
             val tiles = mutableListOf<@Composable () -> Unit>()
             @Composable fun ic(v: ImageVector) = Icon(v, null, tint = primaryText, modifier = Modifier.size(28.dp))
             tiles += { LayerTile("Traffic", s.traffic, { ic(Icons.Filled.Traffic) }) { s.traffic = !s.traffic } }
+            tiles += { LayerTile("Hiking", s.hikingTrails, { ic(Icons.Filled.Hiking) }) { s.hikingTrails = !s.hikingTrails } }
+            tiles += { LayerTile("Cycling", s.bikeTrails, { ic(Icons.Filled.PedalBike) }) { s.bikeTrails = !s.bikeTrails } }
             tiles += { LayerTile("Transit", s.transitLines, { ic(Icons.Filled.Tram) }) { s.transitLines = !s.transitLines } }
             tiles += { LayerTile("Hillshade", s.terrain, { ic(Icons.Filled.Landscape) }) { s.terrain = !s.terrain } }
             if (s.standardMap && s.activeMapboxToken != null) {

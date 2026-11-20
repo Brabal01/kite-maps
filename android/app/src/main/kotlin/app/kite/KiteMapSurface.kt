@@ -2,6 +2,9 @@ package app.kite
 
 import android.content.Context
 import android.view.MotionEvent
+import android.graphics.PointF
+import android.view.HapticFeedbackConstants
+import android.os.SystemClock
 import android.widget.FrameLayout
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -11,7 +14,8 @@ import org.maplibre.android.maps.MapView
 
 /** Keeps touch delivery on the visible map while the Standard renderer loads or falls back. */
 class KiteMapSurface(
-    context: Context, private val lifecycle: Lifecycle, kite: KiteMap, private val scenery: MapboxScenery,
+    context: Context, private val lifecycle: Lifecycle, private val kite: KiteMap, private val scenery: MapboxScenery,
+    private val model: AppModel,
 ) : FrameLayout(context) {
     private val classic = MapView(context, MapLibreMapOptions.createFromAttributes(context).textureMode(true))
     private var standard: StandardMapView? = null
@@ -53,7 +57,54 @@ class KiteMapSurface(
         classic.alpha = if (useStandard) 0f else 1f
     }
 
+    private data class Hold(val id1: Int, val id2: Int, val p1: PointF, val p2: PointF, val downAt: Long)
+    private var hold: Hold? = null
+    private var measured = false
+    private val finishHold = Runnable {
+        val h = hold ?: return@Runnable
+        hold = null
+        fun at(p: PointF) = if (useStandard) scenery.pointAt(p.x, p.y) else kite.pointAt(p.x, p.y)
+        val a = at(h.p1) ?: return@Runnable
+        val b = at(h.p2) ?: return@Runnable
+        model.nav?.following = false
+        model.browseFollowing = false
+        model.measurement = a to b
+        measured = true
+        val event = MotionEvent.obtain(h.downAt, SystemClock.uptimeMillis(), MotionEvent.ACTION_CANCEL, h.p1.x, h.p1.y, 0)
+        try { deliver(event) } finally { event.recycle() }
+        performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+    }
+
+    private fun cancelHold() {
+        hold = null
+        removeCallbacks(finishHold)
+    }
+
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> measured = false
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                cancelHold()
+                if (event.pointerCount == 2 && !measured && !model.placingStop) {
+                    hold = Hold(event.getPointerId(0), event.getPointerId(1),
+                        PointF(event.getX(0), event.getY(0)), PointF(event.getX(1), event.getY(1)), event.downTime)
+                    postDelayed(finishHold, 550L)
+                }
+            }
+            MotionEvent.ACTION_MOVE -> hold?.let { h ->
+                val slop = 9f * resources.displayMetrics.density
+                fun moved(id: Int, from: PointF): Boolean {
+                    val i = event.findPointerIndex(id)
+                    return i < 0 || kotlin.math.abs(event.getX(i) - from.x) > slop || kotlin.math.abs(event.getY(i) - from.y) > slop
+                }
+                if (moved(h.id1, h.p1) || moved(h.id2, h.p2)) cancelHold()
+            }
+            MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> cancelHold()
+        }
+        return measured || deliver(event)
+    }
+
+    private fun deliver(event: MotionEvent): Boolean {
         val target = if (useStandard) standard else null
         if (target == null) return classic.dispatchTouchEvent(event)
         scenery.touch(event)
@@ -71,6 +122,7 @@ class KiteMapSurface(
     fun dispose() {
         if (destroyed) return
         destroyed = true
+        cancelHold()
         lifecycle.removeObserver(observer)
         removeStandard()
         classic.onDestroy()

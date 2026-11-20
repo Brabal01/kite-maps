@@ -161,6 +161,13 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
                         note = if (nav.wazeWarned > 0) "Waze drivers warned you about ${nav.wazeWarned} report${if (nav.wazeWarned == 1) "" else "s"} on the way" else null) {
                         model.endNavigation()
                     }
+                    nav.originalParkingDestination?.let { destination ->
+                        Button({
+                            model.saveParking()
+                            model.endNavigation()
+                            model.openDirections(destination, TravelMode.WALK)
+                        }, Modifier.align(Alignment.CenterHorizontally)) { Text("Walk to ${destination.name}") }
+                    }
                 } else if (nav.route.mode == TravelMode.DRIVE) {
                     DrivingTurns(nav, compact = h < 480.dp, previewing = turnPreview,
                         onTurn = { turn ->
@@ -228,11 +235,21 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
                     val limitDrop = nav.limitDropAhead
                     if (showRiskChip && risk != null && !((mainAlert != null || limitDrop != null) && h < 700.dp)) PoliceRiskChip(risk)
                     if (nav.route.mode == TravelMode.DRIVE && !nav.arrived) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                            MapFab(Icons.Filled.Remove, size = 48.dp,
+                                modifier = Modifier.semantics { contentDescription = "Zoom out" }) { model.zoomNavigation(-1) }
+                            MapFab(Icons.Filled.Add, size = 48.dp,
+                                modifier = Modifier.semantics { contentDescription = "Zoom in" }) { model.zoomNavigation(1) }
+                        }
                         MapFab(Icons.Filled.AddLocationAlt, modifier = Modifier.semantics { contentDescription = "Add stop" }) {
                             model.addingStop = true
                         }
                     }
-                    SpeedBadge(nav.speedMps, nav.speedLimitKmh, limitDrop)
+                    MapLookButton(AppSettings.driveLook, size = 48.dp) {
+                        model.cycleDriveLook()
+                        val look = AppSettings.driveLook
+                        buttonNote = look.title to look.detail
+                    }
                 }
                 Spacer(Modifier.weight(1f))
                 Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -244,20 +261,7 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
                             Text(detail, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Color.White)
                         }
                     }
-                    if (nav.route.mode == TravelMode.DRIVE && !nav.arrived) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                            MapFab(Icons.Filled.Remove, size = 48.dp,
-                                modifier = Modifier.semantics { contentDescription = "Zoom out" }) { model.zoomNavigation(-1) }
-                            MapFab(Icons.Filled.Add, size = 48.dp,
-                                modifier = Modifier.semantics { contentDescription = "Zoom in" }) { model.zoomNavigation(1) }
-                        }
-                    }
-                    // 3D, 2D or north up: one tap each, and the drive carries on.
-                    MapLookButton(AppSettings.driveLook, size = 52.dp) {
-                        model.cycleDriveLook()
-                        val look = AppSettings.driveLook
-                        buttonNote = look.title to look.detail
-                    }
+                    SpeedBadge(nav.speedMps, nav.speedLimitKmh, nav.limitDropAhead)
                     val icon = when (nav.voiceMode) {
                         VoiceMode.ALL -> Icons.AutoMirrored.Filled.VolumeUp
                         VoiceMode.ALERTS -> Icons.Filled.Notifications
@@ -280,7 +284,19 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
             }
             // A traffic jam ahead: small and calm over the trip bar, so the top stays for turns and cameras.
             val jam = nav.wazeAhead?.takeIf { it.alert.kind == WazeAlert.Kind.JAM && !nav.arrived && !confirmEnd }
-            if (showRoadAhead) RoadAheadStrip(nav, Modifier.padding(horizontal = 12.dp), showLabels = h >= 550.dp)
+            if (nav.offerParking && !confirmEnd) {
+                Column(Modifier.padding(horizontal = 12.dp).fillMaxWidth().glass(RoundedCornerShape(18.dp))
+                    .padding(horizontal = 12.dp, vertical = 6.dp)) {
+                    Text("Near your destination", color = primaryText, fontWeight = FontWeight.SemiBold)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        TextButton({ nav.dismissParkingOffer() }) { Text("Continue to destination") }
+                        Button({ model.searchStops("parking", parking = true) }) { Text("Find parking") }
+                    }
+                }
+            }
+            if (showRoadAhead) RoadAheadStrip(nav, Modifier.padding(horizontal = 12.dp), showLabels = h >= 550.dp) {
+                model.wazeInfo = it
+            }
             if (jam != null && !showRoadAhead) TrafficLine(jam, Modifier.align(Alignment.CenterHorizontally).tap { nav.dismissWaze() })
             // A faster way: two big buttons instead of the route just changing under you.
             // Arriving answers the end-trip question: the trip bar's Done takes over.
@@ -877,13 +893,14 @@ fun WazeCard(ahead: WazeAhead) {
 
 /** A Waze report tapped on the map: what, where, how fresh, how many drivers agree. Goes by itself after a while. */
 @Composable
-fun WazeInfoToast(model: AppModel, info: WazeAlert) {
+fun WazeInfoToast(model: AppModel, info: WazeAlert, modifier: Modifier = Modifier) {
     LaunchedEffect(info.id) {
         if (DemoScript.active) return@LaunchedEffect
         delay(9_000)
         if (model.wazeInfo?.id == info.id) model.wazeInfo = null
     }
-    Box(Modifier.fillMaxWidth().statusBarsPadding().padding(top = 64.dp)) { WazeInfoCard(info) { model.wazeInfo = null } }
+    val padding = if (model.nav == null) Modifier.statusBarsPadding().padding(top = 64.dp) else Modifier
+    Box(modifier.fillMaxWidth().then(padding)) { WazeInfoCard(info) { model.wazeInfo = null } }
 }
 
 @Composable

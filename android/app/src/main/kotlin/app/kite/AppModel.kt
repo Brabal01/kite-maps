@@ -36,6 +36,7 @@ data class Category(val label: String, val icon: ImageVector, val query: String)
         val british = listOf(
             Category("Restaurants", Icons.Filled.Restaurant, "restaurants"),
             Category("Coffee", Icons.Filled.LocalCafe, "coffee"),
+            Category("Drinking water", Icons.Filled.WaterDrop, "drinking water"),
             Category("Petrol", Icons.Filled.LocalGasStation, "petrol station"),
             Category("Supermarkets", Icons.Filled.ShoppingCart, "supermarket"),
             Category("Pubs", Icons.Filled.SportsBar, "pub"),
@@ -48,6 +49,7 @@ data class Category(val label: String, val icon: ImageVector, val query: String)
         val american = listOf(
             Category("Restaurants", Icons.Filled.Restaurant, "restaurants"),
             Category("Coffee", Icons.Filled.LocalCafe, "coffee"),
+            Category("Drinking water", Icons.Filled.WaterDrop, "drinking water"),
             Category("Gas", Icons.Filled.LocalGasStation, "gas stations"),
             Category("Groceries", Icons.Filled.ShoppingCart, "grocery stores"),
             Category("Hotels", Icons.Filled.Hotel, "hotels"),
@@ -120,6 +122,26 @@ class AppModel {
     var liveCamRoute by mutableStateOf<List<LiveCam>>(emptyList())
     /** The "Add stop" search sheet. */
     var addingStop by mutableStateOf(false)
+    var placingStop by mutableStateOf(false)
+        private set
+    var measurement by mutableStateOf<Pair<LatLng, LatLng>?>(null)
+    fun beginStopPin() {
+        addingStop = false
+        stopPinWasFollowing = stopSearch?.wasFollowing ?: (nav?.following == true)
+        closeStopSearch(restore = false)
+        nav?.following = false
+        browseFollowing = false
+        placingStop = true
+    }
+
+    private var stopPinWasFollowing = false
+    fun finishStopPin(at: LatLng? = null) {
+        placingStop = false
+        if (at != null) acceptStop(StopCandidate(Place("pin:${at.lat},${at.lng}", "Dropped pin", at, "pin"), null, 0.0))
+        if (stopPinWasFollowing && nav != null) recenterNav()
+        else if (at == null && nav == null) frameRoute()
+        stopPinWasFollowing = false
+    }
     var stopSearch by mutableStateOf<StopSearch?>(null)
         private set
     private var stopSearchJob: Job? = null
@@ -497,12 +519,12 @@ class AppModel {
 
     // Directions
 
-    fun openDirections(place: Place) {
+    fun openDirections(place: Place, mode: TravelMode = settings.defaultMode) {
         closeStopSearch(restore = false)
         addingStop = false
         if (resumeOffer != null) dismissResume()
         autoStart = false
-        directions = DirectionsState(destination = place, mode = settings.defaultMode)
+        directions = DirectionsState(destination = place, mode = mode)
         detent = SheetDetent.HALF
         loadAllModes()
     }
@@ -526,7 +548,7 @@ class AppModel {
         frameRoute()
     }
 
-    fun searchStops(query: String) {
+    fun searchStops(query: String, named: Boolean = false, parking: Boolean = false) {
         val q = query.trim()
         if (q.isEmpty()) return
         val driving = nav
@@ -541,7 +563,7 @@ class AppModel {
         val existing = driving?.stops ?: d?.stops.orEmpty()
         val destinationId = (driving?.destination ?: d?.destination)?.id
         val useGoogle = settings.welcomed && !settings.noGoogle
-        val search = StopSearch(q, wasFollowing = stopSearch?.wasFollowing ?: (driving?.following == true))
+        val search = StopSearch(q, wasFollowing = stopSearch?.wasFollowing ?: (driving?.following == true), parking = parking)
         stopSearchJob?.cancel()
         stopSearch = search
         addingStop = false
@@ -549,6 +571,16 @@ class AppModel {
         map?.cancelTransitions()
         stopSearchJob = scope.launch {
             val results = withContext(Dispatchers.Default) {
+                if (parking && driving != null) {
+                    val target = driving.destination.location
+                    val places = coroutineScope {
+                        val osm = async { OutdoorData.find(OutdoorData.PARKING, target, 1400.0).orEmpty() }
+                        val google = async { if (useGoogle) PlaceSearch.namedNearby("parking", target, 2800.0, true) else emptyList() }
+                        OutdoorData.combine(google.await(), osm.await())
+                    }
+                    return@withContext places.map { StopCandidate(it, null, target.distanceTo(it.location)) }
+                        .filter { it.offset <= 1500 && it.place.id != destinationId }.sortedBy { it.offset }.take(20)
+                }
                 val count = ceil(span / 14_000.0).toInt().coerceIn(1, 3)
                 val window = Geo.slice(line, start, end, cum)
                 val windowCum = Geo.cumulative(window)
@@ -556,7 +588,8 @@ class AppModel {
                     List(count) { i ->
                         async {
                             val center = if (span > 0) Geo.point(line, start + span * (i + 0.5) / count, cum) else origin
-                            PlaceSearch.search(q, center, max(4_000.0, span / count * 1.3), useGoogle).places
+                            if (named) PlaceSearch.namedNearby(q, center, max(4_000.0, span / count * 1.3), useGoogle)
+                            else PlaceSearch.search(q, center, max(4_000.0, span / count * 1.3), useGoogle).places
                         }
                     }.awaitAll().flatten()
                 }
@@ -567,7 +600,8 @@ class AppModel {
                         return@mapNotNull if (distance < 3500) StopCandidate(p, null, distance) else null
                     }
                     val at = Geo.project(p.location, window, windowCum)
-                    if (at.offset > 2200 || (driving != null && at.along < 40)) return@mapNotNull null
+                    val corridor = if (named) 5_000.0 else 2_200.0
+                    if (at.offset > corridor || (driving != null && at.along < 30 && !named)) return@mapNotNull null
                     StopCandidate(p, at.along, at.offset, start + at.along)
                 }.sortedBy { (it.ahead ?: 0.0) + it.offset * 3 }
                 buildList<StopCandidate> {
@@ -583,12 +617,13 @@ class AppModel {
                 return@launch
             }
             if (driving != null && driving.route.id != route?.id) {
-                searchStops(q)
+                searchStops(q, named, parking)
                 return@launch
             }
             stopSearch = search.copy(loading = false, results = results)
             if (results.isNotEmpty()) {
-                val first = if (span > 0) Geo.point(line, start, cum) else origin
+                val first = if (parking) driving?.destination?.location ?: origin
+                    else if (span > 0) Geo.point(line, start, cum) else origin
                 frame(listOf(first) + results.take(7).map { it.place.location }, bottomFraction = 0.27f, top = 125)
             }
         }
@@ -617,6 +652,11 @@ class AppModel {
 
     fun acceptStop(candidate: StopCandidate) {
         val driving = nav
+        if (driving != null && stopSearch?.parking == true) {
+            closeStopSearch()
+            driving.parkAt(candidate.place)
+            return
+        }
         val route = driving?.route ?: directions?.route
         val existing = driving?.stops ?: directions?.stops.orEmpty()
         val along = candidate.routeMeters
@@ -689,6 +729,7 @@ class AppModel {
         routesRequest++
         val req = routesRequest
         val hw = settings.avoidHighways; val tolls = settings.avoidTolls; val google = !settings.noGoogle
+        val openWalking = settings.openWalking
         // Already driving (asked at a red light, say): no route that starts with a U-turn.
         val moving = location.last?.let { l -> if (l.speed >= 4 && l.courseKnown) l.course else null }
         val heading = if (d.reversed) null else moving
@@ -698,7 +739,7 @@ class AppModel {
             scope.launch {
                 val r = runCatching {
                     Directions.routes(from, to, m, hw, tolls, google, via, if (m == TravelMode.DRIVE) heading else null,
-                        alternatives = true, mapboxToken = mapboxToken)
+                        alternatives = true, mapboxToken = mapboxToken, preferOpenWalking = openWalking)
                 }.getOrElse { Directions.Result(emptyList(), it.message) }
                 if (directions?.destination?.id != d.destination.id || routesRequest != req) return@launch
                 edit {
@@ -803,6 +844,8 @@ class AppModel {
     }
 
     fun endNavigation() {
+        placingStop = false
+        stopPinWasFollowing = false
         closeStopSearch(restore = false)
         addingStop = false
         nav?.stop()
@@ -880,7 +923,8 @@ class AppModel {
     private fun tripCheck(n: Navigator) {
         if (n.arrived) {
             if (settings.trip != null) settings.trip = null
-        } else if (System.currentTimeMillis() - tripSavedAt > 60_000 || settings.trip?.stops?.size != n.stops.size) {
+        } else if (System.currentTimeMillis() - tripSavedAt > 60_000 || settings.trip?.stops?.size != n.stops.size ||
+            settings.trip?.destination?.id != n.destination.id) {
             rememberTrip(n)
         }
     }
@@ -994,6 +1038,7 @@ data class StopSearch(
     val query: String,
     val wasFollowing: Boolean,
     val loading: Boolean = true,
+    val parking: Boolean = false,
     val results: List<StopCandidate> = emptyList(),
     val selected: StopCandidate? = null,
 ) {

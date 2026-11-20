@@ -100,6 +100,11 @@ object MapIcons {
         add("cam-plate", plateCamera())
         add("cam-surveillance", badge(c(0x22863A)) { cv, _ -> drawIcon(cv, Icons.Filled.Videocam, RectF(12f, 12f, 34f, 34f), Color.WHITE) })
         add("traffic-light", trafficLight())
+        add("road-stop", dot(Icons.Filled.StopCircle, c(0xC32E43)))
+        add("road-crossing", dot(Icons.Filled.Train, c(0x91602C)))
+        add("osm-drinking_water", dot(Icons.Filled.WaterDrop, c(0x227FA8)))
+        add("osm-transit", dot(Icons.Filled.Tram, c(0x4D66BB)))
+        add("osm-bicycle_parking", dot(Icons.Filled.PedalBike, c(0x227D6B)))
         // Live camera photos: sky blue for road cameras, violet for Windy's scenic webcams.
         add("livecam-road", dot(Icons.Filled.Videocam, c(0x0284C7)))
         add("livecam-web", dot(Icons.Filled.Landscape, c(0x7C3AED)))

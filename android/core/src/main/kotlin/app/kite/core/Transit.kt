@@ -3,10 +3,10 @@ package app.kite.core
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.util.UUID
-import kotlin.math.cos
-import kotlin.math.PI
 import kotlin.math.pow
 import kotlin.math.roundToInt
+
+data class TransitCall(val stopId: String?, val name: String, val at: LatLng, val arrival: Long?, val departure: Long?)
 
 /** One part of a transit trip: a walk, or a ride on one line between two stops. Times are epoch millis. */
 data class TransitLeg(
@@ -25,6 +25,8 @@ data class TransitLeg(
     var stops: Int = 0,
     var delayMinutes: Int? = null,
     var path: List<LatLng> = emptyList(),
+    var calls: List<TransitCall> = emptyList(),
+    var tripId: String? = null,
 ) {
     val vehicle: Vehicle get() = Vehicle.of(mode)
 
@@ -89,28 +91,39 @@ object Transitous {
 
     data class Board(val stop: String, val departures: List<Departure>)
 
-    /** The departure board for the stop nearest [point] (its parent station, so every platform is on one board). */
-    suspend fun departures(point: LatLng, radius: Double = 150.0): Board? {
-        val dLat = radius / 111_320
-        val dLng = radius / (111_320 * cos(point.lat * PI / 180))
-        val r = Http.getOrNull("$base/api/v1/map/stops?min=${(point.lat - dLat).plain()},${(point.lng - dLng).plain()}&max=${(point.lat + dLat).plain()},${(point.lng + dLng).plain()}", headers, client) ?: return null
-        val stops = Json.parse(r.body).asMaps() ?: return null
-        data class S(val name: String, val id: String, val d: Double)
-        val nearest = stops.mapNotNull { s ->
-            val id = (s["parentId"] as? String) ?: (s["stopId"] as? String) ?: return@mapNotNull null
-            val p = point(s) ?: return@mapNotNull null
-            S(s["name"] as? String ?: "", id, p.distanceTo(point))
-        }.sortedBy { it.d }
-        val first = nearest.firstOrNull() ?: return null
-        val ids = nearest.filter { it.name == first.name || it.d - first.d < 25 }.map { it.id }.distinct().take(4)
+    data class Stop(val id: String, val parentId: String?, val name: String, val at: LatLng)
+
+    suspend fun stops(box: Box, grouped: Boolean = false): List<Stop>? {
+        val r = Http.getOrNull("$base/api/v1/map/stops?min=${box.s.plain()},${box.w.plain()}&max=${box.n.plain()},${box.e.plain()}&grouped=$grouped",
+            headers, client)?.takeIf { it.ok } ?: return null
+        return Json.parse(r.body).asMaps()?.mapNotNull { s ->
+            val id = s["stopId"] as? String ?: return@mapNotNull null
+            val at = point(s) ?: return@mapNotNull null
+            Stop(id, (s["parentId"] as? String)?.takeIf(String::isNotBlank), (s["name"] as? String).orEmpty(), at)
+        }
+    }
+
+    /** Query the selected station directly, or find the nearest one for a place from another map. */
+    suspend fun departures(point: LatLng, radius: Double = 150.0, stopId: String? = null, stopName: String = ""): Board? {
+        val nearest = if (stopId != null) emptyList() else stops(OutdoorData.bounds(point, radius)).orEmpty()
+            .sortedBy { it.at.distanceTo(point) }
+        val first = nearest.firstOrNull()
+        val name = first?.name ?: stopName
+        val ids = if (stopId != null) listOf(stopId) else {
+            first ?: return null
+            val distance = first.at.distanceTo(point)
+            nearest.filter { it.name == name || it.at.distanceTo(point) - distance < 25 }.map { it.parentId ?: it.id }.distinct().take(4)
+        }
         val all = mutableListOf<Departure>()
         for (id in ids) {
-            val d = Http.getOrNull("$base/api/v1/stoptimes?stopId=${urlEnc(id)}&n=30", headers, client) ?: continue
-            all += parseStopTimes(d.body, first.name)
+            val args = "stopId=${urlEnc(id)}&n=30"
+            val d = Http.getOrNull("$base/api/v5/stoptimes?$args", headers, client)?.takeIf { it.ok }
+                ?: Http.getOrNull("$base/api/v1/stoptimes?$args", headers, client)?.takeIf { it.ok } ?: continue
+            all += parseStopTimes(d.body, name)
         }
         if (all.isEmpty()) return null
         val seen = HashSet<String>()
-        return Board(first.name, all.sortedBy { it.time }.filter { seen.add("${it.line}|${it.headsign}|${it.time}") })
+        return Board(name, all.sortedBy { it.time }.filter { seen.add("${it.line}|${it.headsign}|${it.time}") })
     }
 
     fun parseStopTimes(data: ByteArray, stopName: String = ""): List<Departure> {
@@ -209,7 +222,14 @@ object Transitous {
         out.color = hex(l["routeColor"])
         out.textColor = hex(l["routeTextColor"])
         out.headsign = (l["headsign"] as? String)?.ifEmpty { null }
-        out.stops = (l["intermediateStops"].asList()?.size ?: 0) + 1
+        val intermediate = l["intermediateStops"].asMaps().orEmpty()
+        out.stops = intermediate.size + 1
+        out.tripId = l["tripId"] as? String
+        out.calls = (listOf(from) + intermediate + listOf(to)).mapNotNull { stop ->
+            val at = point(stop) ?: return@mapNotNull null
+            TransitCall(stop["stopId"] as? String, (stop["name"] as? String).orEmpty(), at,
+                date(stop["arrival"]), date(stop["departure"]))
+        }
         if (l["realTime"] == true && start != null) date(l["scheduledStartTime"])?.let { out.delayMinutes = ((start - it) / 60_000.0).roundToInt() }
         return out
     }

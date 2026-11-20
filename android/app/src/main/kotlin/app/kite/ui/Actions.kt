@@ -24,7 +24,25 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import app.kite.core.Place
+import app.kite.core.LatLng
+import android.content.ActivityNotFoundException
 import app.kite.core.plain
+
+/** Hand a direct walking route to the installed Organic Maps app. */
+internal fun Context.openOrganicWalk(from: LatLng, to: Place): Boolean {
+    val uri = Uri.Builder().scheme("om").authority("route")
+        .appendQueryParameter("sll", "${from.lat.plain()},${from.lng.plain()}")
+        .appendQueryParameter("saddr", "Current location")
+        .appendQueryParameter("dll", "${to.location.lat.plain()},${to.location.lng.plain()}")
+        .appendQueryParameter("daddr", to.name)
+        .appendQueryParameter("type", "pedestrian").build()
+    return try {
+        startActivity(Intent(Intent.ACTION_VIEW, uri))
+        true
+    } catch (_: ActivityNotFoundException) {
+        false
+    }
+}
 
 /** Opens a link in whatever app handles it (browser, dialer, another maps app). */
 fun Context.open(url: String) {

@@ -125,19 +125,21 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
     LaunchedEffect(dark, driving, satellite, mapboxToken, standardReady) {
         kiteMap.applyBasemap(dark, driving, satellite && !standardReady, mapboxToken.takeUnless { standardReady })
     }
-    LaunchedEffect(s.googleMapPlaces, s.noGoogle, model.tab, model.nav, model.directions, model.selected, model.results) {
+    LaunchedEffect(s.googleMapPlaces, s.openMapPlaces, s.hikingTrails, s.bikeTrails, s.transitLines, s.noGoogle, model.tab, model.nav, model.directions, model.selected, model.results) {
         kiteMap.refreshGooglePlaces()
+        scenery.showTransit(s.transitLines && model.nav == null)
         LocationService.last?.let(scenery::updatePosition)
     }
 
     // Redraw the map's layers whenever anything they show changes.
     LaunchedEffect(Unit) {
         snapshotFlow {
-            listOf(model.mapTick, model.results, model.selected?.id, model.directions, model.nav, model.stopSearch, model.openNowOnly, model.rating4Only,
+            listOf(model.mapTick, model.results, model.selected?.id, model.directions, model.nav, model.stopSearch, model.measurement, model.nav?.routeWaze, model.nav?.roadControls, model.nav?.roadTraffic, model.openNowOnly, model.rating4Only,
                 s.traffic, s.satellite, s.terrain, s.transitLines, s.speedCameras, s.plateCameras, s.wazeOnMap, s.wazeHeatmap,
                 s.home, s.work, s.parking, s.saved, LocationService.authorized, model.tab,
                 s.welcomed, s.noGoogle, s.surveillanceCameras, s.wazeOn, s.wazeKinds, s.wazeMaxAge,
-                s.liveCams, s.liveRoadCams, s.liveWebcams, LiveCamStore.version)
+                s.liveCams, s.liveRoadCams, s.liveWebcams, LiveCamStore.version,
+                s.aheadSignals, s.aheadStops, s.aheadRail, s.aheadWaze, s.aheadCameras, s.aheadTraffic, s.roadWazeKinds)
         }.collect { kiteMap.render() }
     }
     // Kept on while driving; once arrived the phone goes in a pocket, so the screen may sleep (like the iPhone).
@@ -169,7 +171,7 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
         model.glide.heightDp = maxHeight.value
         AndroidView(
             modifier = Modifier.fillMaxSize(),
-            factory = { c -> KiteMapSurface(c, lifecycle, kiteMap, scenery) },
+            factory = { c -> KiteMapSurface(c, lifecycle, kiteMap, scenery, model) },
             onReset = null,
             onRelease = { it.dispose() },
             update = { it.show(usableStandardToken, standardReady, look) },
@@ -178,6 +180,7 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
         val nav = model.nav
         CompositionLocalProvider(LocalMapboxAttribution provides if (standardReady) scenery::openAttribution else null) {
             when {
+                model.placingStop -> StopPinOverlay(model, showingMapbox) { scenery.centerPoint() ?: kiteMap.centerPoint() }
                 model.stopSearch != null -> StopMapOverlay(model, showingMapbox)
                 nav != null -> NavigationOverlay(model, nav, showingMapbox)
                 model.directions != null -> DirectionsOverlay(model, showingMapbox)
@@ -188,9 +191,13 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
                 }
             }
         }
+        if (model.measurement != null && !model.placingStop && model.stopSearch == null && model.tab == AppTab.MAP) {
+            DistanceMeasure(model, Modifier.align(androidx.compose.ui.Alignment.CenterStart))
+        }
         val info = model.wazeInfo
-        if (info != null && nav == null && model.tab == AppTab.MAP) {
-            WazeInfoToast(model, info)
+        if (info != null && model.tab == AppTab.MAP && model.stopSearch == null && !model.placingStop) {
+            val placement = if (nav == null) Modifier else Modifier.align(androidx.compose.ui.Alignment.Center)
+            WazeInfoToast(model, info, placement)
         }
         val cam = model.liveCam
         if (cam != null && nav == null && model.tab == AppTab.MAP) {

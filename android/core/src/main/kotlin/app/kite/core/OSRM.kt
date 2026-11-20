@@ -437,7 +437,7 @@ object Directions {
         a: LatLng, b: LatLng, mode: TravelMode,
         avoidHighways: Boolean = false, avoidTolls: Boolean = false,
         useGoogle: Boolean = true, via: List<LatLng> = emptyList(), heading: Double? = null,
-        alternatives: Boolean = false, mapboxToken: String? = null,
+        alternatives: Boolean = false, mapboxToken: String? = null, preferOpenWalking: Boolean = false,
     ): Result = withContext(Dispatchers.Default) {
         if (mapboxToken != null && mode == TravelMode.DRIVE) {
             val primary = MapboxDirections.routes(a, b, via, heading, avoidHighways, avoidTolls, alternatives, mapboxToken)
@@ -449,6 +449,16 @@ object Directions {
         // country) is millions of sums, enough to freeze the screen for seconds.
         // Ask both at once: Google's route knows traffic, OSRM's steps read better.
         val osrmTask = async(Dispatchers.IO) { runCatching { OSRM.route(a, b, mode, via, heading) } }
+        if (mode == TravelMode.WALK && preferOpenWalking) {
+            val walk = osrmTask.await().getOrNull().orEmpty().filter {
+                it.polyline.firstOrNull()?.distanceTo(a)?.let { d -> d <= 250 } == true &&
+                    it.polyline.last().distanceTo(b) <= 250
+            }
+            if (walk.isNotEmpty()) {
+                walk.forEach { StepMerge.tidy(it.maneuvers) }
+                return@withContext Result(walk)
+            }
+        }
         var err: String? = null
         if (useGoogle) {
             try {

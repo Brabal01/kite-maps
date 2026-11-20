@@ -58,6 +58,24 @@ object AppSettings {
     var buildingShadows by bool("buildingShadows", true)
     var streetLamps by bool("streetLamps", true)
     var googleMapPlaces by bool("googleMapPlaces")
+    var openMapPlaces by bool("openMapPlaces", true)
+    var hikingTrails by bool("hikingTrails")
+    var bikeTrails by bool("bikeTrails")
+    var openWalking by bool("openWalking", true)
+    var organicWalking by bool("organicWalking")
+    var arrivalParking by bool("arrivalParking", true)
+    var aheadSignals by bool("aheadSignals", true)
+    var aheadStops by bool("aheadStops", true)
+    var aheadRail by bool("aheadRail", true)
+    var aheadWaze by bool("aheadWaze", true)
+    var aheadCameras by bool("aheadCameras", true)
+    var aheadTraffic by bool("aheadTraffic", true)
+
+    fun showsControl(kind: Overpass.ControlKind) = when (kind) {
+        Overpass.ControlKind.SIGNAL -> aheadSignals
+        Overpass.ControlKind.STOP -> aheadStops
+        Overpass.ControlKind.RAIL -> aheadRail
+    }
     var mapboxPublicToken by Pref("mapboxPublicToken", { it.getString("mapboxPublicToken", "").orEmpty() },
         { e, token -> e.putString("mapboxPublicToken", token) })
     val activeMapboxToken: String? get() = mapboxPublicToken.takeIf {
@@ -90,6 +108,10 @@ object AppSettings {
         { p -> p.getStringSet("wazeKinds", null)?.mapNotNull { k -> WazeAlert.Kind.entries.firstOrNull { it.key == k } }?.toSet()
             ?: setOf(WazeAlert.Kind.POLICE, WazeAlert.Kind.ACCIDENT, WazeAlert.Kind.HAZARD, WazeAlert.Kind.WEATHER) },
         { e, v -> e.putStringSet("wazeKinds", v.map { it.key }.toSet()) })
+    var roadWazeKinds: Set<WazeAlert.Kind> by Pref("roadWazeKinds",
+        { p -> p.getStringSet("roadWazeKinds", null)?.let { saved -> WazeAlert.Kind.entries.filter { it.key in saved }.toSet() }
+            ?: Waze.shares },
+        { e, v -> e.putStringSet("roadWazeKinds", v.map { it.key }.toSet()) })
     var wazeOnMap by bool("wazeOnMap", true)
     var wazeVoice by bool("wazeVoice", true)
     /** Reports older than this are ignored, in minutes; 0 keeps everything Waze still lists. */
@@ -139,8 +161,12 @@ object AppSettings {
     fun wants(k: WazeAlert.Kind) = wazeOn && wazeKinds.contains(k)
 
     /** Whether this report should show and warn: a wanted kind, and not too old. */
-    fun shows(a: WazeAlert): Boolean =
-        wants(a.kind) && (wazeMaxAge == 0 || (System.currentTimeMillis() - a.reportedAtMillis) <= wazeMaxAge * 60_000L)
+    private fun recent(a: WazeAlert) = wazeMaxAge == 0 || System.currentTimeMillis() - a.reportedAtMillis <= wazeMaxAge * 60_000L
+
+    fun shows(a: WazeAlert): Boolean = wants(a.kind) && recent(a)
+
+    fun showsOnRoad(a: WazeAlert): Boolean = wazeOn && wazeOnMap && aheadWaze &&
+        a.kind in roadWazeKinds && a.kind in Waze.shares && recent(a)
 
     fun isSaved(p: Place) = saved.any { it.matchesNearby(p) }
 

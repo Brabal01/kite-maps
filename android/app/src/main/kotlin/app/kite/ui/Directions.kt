@@ -4,6 +4,7 @@ package app.kite.ui
 
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
+import android.widget.Toast
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.background
@@ -174,10 +175,27 @@ private fun RouteOptionsButton(model: AppModel) {
 @Composable
 private fun GoButton(model: AppModel) {
     val dark = LocalDark.current
-    Row(Modifier.fillMaxWidth().heightIn(min = 68.dp).clip(CircleShape).background(Vela.accent(dark)).tap { model.startNavigation() },
+    val ctx = LocalContext.current
+    val destination = model.directions?.takeIf {
+        it.mode == TravelMode.WALK && AppSettings.organicWalking && it.stops.isEmpty()
+    }?.destination
+    fun start() {
+        if (destination == null) {
+            model.startNavigation()
+            return
+        }
+        val from = model.userLatLng ?: return
+        if (ctx.openOrganicWalk(from, destination)) return
+        val fallback = model.directions?.route != null
+        val message = if (fallback) "Organic Maps is unavailable. Starting the walk in Kite."
+            else "Install Organic Maps to open this walk."
+        Toast.makeText(ctx, message, Toast.LENGTH_LONG).show()
+        if (fallback) model.startNavigation()
+    }
+    Row(Modifier.fillMaxWidth().heightIn(min = 68.dp).clip(CircleShape).background(Vela.accent(dark)).tap(::start),
         horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
         Icon(Icons.Filled.Navigation, null, tint = Vela.onAccent(dark), modifier = Modifier.size(28.dp))
-        Text("Go", fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, color = Vela.onAccent(dark))
+        Text(if (destination != null) "Open Organic Maps" else "Go", fontSize = if (destination != null) 19.sp else 26.sp, fontWeight = FontWeight.ExtraBold, color = Vela.onAccent(dark))
     }
 }
 
@@ -270,7 +288,9 @@ fun TripHeader(model: AppModel) {
         }
         ModeTabs(model, d)
         ClosingLine(d)
-        if (!d.transit && !d.reversed && d.route != null) GoButton(model)
+        val canOpenOrganic = d.mode == TravelMode.WALK && AppSettings.organicWalking &&
+            d.stops.isEmpty() && model.userLatLng != null
+        if (!d.transit && !d.reversed && (d.route != null || canOpenOrganic)) GoButton(model)
     }
 }
 
@@ -351,6 +371,7 @@ fun TripBody(model: AppModel) {
                         }
                     }
                 }
+                if (r.mode != TravelMode.DRIVE) RouteElevation(r)
                 HorizontalDivider()
                 Text("Steps", fontSize = KType.headline, fontWeight = FontWeight.SemiBold, color = primaryText)
                 StepsList(r)
@@ -582,8 +603,11 @@ fun SectionTitle(text: String) {
 fun StopPicker(model: AppModel) {
     var query by remember { mutableStateOf(model.stopSearch?.query.orEmpty()) }
     val close = { model.addingStop = false }
+    fun search() { model.searchStops(query, named = OutdoorData.kind(query) == null) }
     PickerPage("Add stop", close) {
-        PickerSearchField(query, { query = it }, "Search along the route") { model.searchStops(query) }
+        PickerSearchField(query, { query = it }, "Search by name or address", ::search)
+        if (query.isNotBlank()) IconRow(Icons.Filled.Search, "Search for “${query.trim()}”") { search() }
+        IconRow(Icons.Filled.AddLocationAlt, "Choose a point on the map") { model.beginStopPin() }
         LazyColumn(Modifier.fillMaxSize()) {
             item { SectionTitle("Along the route") }
             val categories = Category.all.filter { it.icon in listOf(Icons.Filled.LocalGasStation,
@@ -612,11 +636,11 @@ fun StopMapOverlay(model: AppModel, showMapbox: Boolean) {
     val dark = LocalDark.current
     var showList by remember(search.query) { mutableStateOf(false) }
     androidx.activity.compose.BackHandler { model.closeStopSearch() }
-    if (showList) TripSheet("Stops ahead", "Map", { showList = false }) {
+    if (showList) TripSheet(if (search.parking) "Parking near destination" else "Stops ahead", "Map", { showList = false }) {
         LazyColumn {
             items(search.results, key = { it.place.id }) { candidate ->
                 IconRow(Icons.Filled.Place, candidate.place.name, candidate.place.address,
-                    candidate.ahead?.let { Fmt.distance(it) }) {
+                    if (search.parking) Fmt.distance(candidate.offset) else candidate.ahead?.let { Fmt.distance(it) }) {
                     model.showStopPin(candidate)
                     showList = false
                 }
@@ -627,9 +651,9 @@ fun StopMapOverlay(model: AppModel, showMapbox: Boolean) {
         if (showMapbox) MapboxAttribution(Modifier.align(Alignment.TopStart).padding(start = 16.dp, top = 62.dp))
         Row(Modifier.align(Alignment.TopCenter).padding(12.dp).fillMaxWidth().glass(RoundedCornerShape(22.dp))
             .padding(start = 16.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(search.query.replaceFirstChar { it.titlecase() }, modifier = Modifier.weight(1f),
+            Text(if (search.parking) "Parking near destination" else search.query.replaceFirstChar { it.titlecase() }, modifier = Modifier.weight(1f),
                 fontWeight = FontWeight.SemiBold, color = primaryText, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            TextButton({ model.addingStop = true }) { Text("Search") }
+            if (!search.parking) TextButton({ model.addingStop = true }) { Text("Search") }
             IconButton({ model.closeStopSearch() }) { Icon(Icons.Filled.Close, "Close stop search") }
         }
         val selected = search.selected
@@ -638,25 +662,59 @@ fun StopMapOverlay(model: AppModel, showMapbox: Boolean) {
             when {
                 search.loading -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                    Text("Looking along your route…", color = secondaryText)
+                    Text(if (search.parking) "Searching near the destination…" else "Looking along your route…", color = secondaryText)
                 }
                 selected != null -> {
                     Text(selected.place.name, color = primaryText, fontWeight = FontWeight.Bold,
                         maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    val sub = listOfNotNull(selected.ahead?.let { "${Fmt.distance(it)} ahead" }, selected.place.address)
+                    val distance = if (search.parking) "${Fmt.distance(selected.offset)} from the destination"
+                        else selected.ahead?.let { "${Fmt.distance(it)} ahead" }
+                    val sub = listOfNotNull(distance, selected.place.address)
                     if (sub.isNotEmpty()) Text(sub.joinToString(" · "), color = secondaryText, maxLines = 2)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically) {
                         TextButton({ showList = true }) { Text("All results") }
-                        Button({ model.acceptStop(selected) }) { Text("Add stop") }
+                        Button({ model.acceptStop(selected) }) { Text(if (search.parking) "Drive here" else "Add stop") }
                     }
                 }
-                search.results.isEmpty() -> Text("No stops found near the road ahead.", color = primaryText, modifier = Modifier.padding(vertical = 8.dp))
+                search.results.isEmpty() -> Text(if (search.parking) "No parking found nearby." else "No stops found near the road ahead.", color = primaryText, modifier = Modifier.padding(vertical = 8.dp))
                 else -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("Choose a pin on the map", Modifier.weight(1f), color = primaryText)
                     TextButton({ showList = true }) { Text("List (${search.results.size})", color = Vela.accentText(dark)) }
                 }
             }
         }
+    }
+}
+
+@Composable
+fun StopPinOverlay(model: AppModel, showMapbox: Boolean, center: () -> LatLng?) {
+    androidx.activity.compose.BackHandler { model.finishStopPin() }
+    Box(Modifier.fillMaxSize()) {
+        Icon(Icons.Filled.AddLocationAlt, "Pin position", tint = Vela.accentText(LocalDark.current),
+            modifier = Modifier.align(Alignment.Center).offset(y = (-15).dp).size(38.dp))
+        if (showMapbox) MapboxAttribution(Modifier.align(Alignment.TopStart).statusBarsPadding().padding(start = 12.dp, top = 74.dp))
+        Row(Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(12.dp).glass(RoundedCornerShape(22.dp))
+            .padding(start = 16.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Move the map to place the pin", Modifier.weight(1f), color = primaryText)
+            IconButton({ model.finishStopPin() }) { Icon(Icons.Filled.Close, "Cancel") }
+        }
+        Button({ center()?.let { model.finishStopPin(it) } }, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(18.dp)) {
+            Text("Add this stop")
+        }
+    }
+}
+
+@Composable
+fun DistanceMeasure(model: AppModel, modifier: Modifier = Modifier) {
+    val (a, b) = model.measurement ?: return
+    Row(modifier.padding(12.dp).glass(RoundedCornerShape(16.dp)).padding(start = 12.dp, end = 2.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Icon(Icons.Filled.Straighten, null, tint = Vela.accentText(LocalDark.current))
+        Column(Modifier.padding(start = 8.dp)) {
+            Text(Fmt.distance(a.distanceTo(b)), fontWeight = FontWeight.Bold, color = primaryText)
+            Text("Straight-line distance", fontSize = KType.caption, color = secondaryText)
+        }
+        IconButton({ model.measurement = null }) { Icon(Icons.Filled.Close, "Clear measurement") }
     }
 }

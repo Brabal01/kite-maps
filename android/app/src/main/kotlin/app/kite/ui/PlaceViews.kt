@@ -80,7 +80,12 @@ fun PlaceHeader(model: AppModel, place: Place) {
                 Text("Directions", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = Vela.onAccent(dark))
             }
             Row(Modifier.heightIn(min = 56.dp).clip(CircleShape).background(Vela.tonal(dark))
-                .clickable { model.openDirections(place); model.autoStart = true }.padding(horizontal = 24.dp),
+                .clickable {
+                    val organic = AppSettings.defaultMode == TravelMode.WALK && AppSettings.organicWalking
+                    if (organic && model.userLatLng?.let { ctx.openOrganicWalk(it, place) } == true) return@clickable
+                    model.openDirections(place)
+                    model.autoStart = !organic
+                }.padding(horizontal = 24.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Filled.Navigation, null, tint = Vela.onTonal(dark), modifier = Modifier.size(22.dp))
                 Text("Go", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = Vela.onTonal(dark))
@@ -91,6 +96,12 @@ fun PlaceHeader(model: AppModel, place: Place) {
 
 @Composable
 fun PlaceBody(model: AppModel, place: Place) {
+    if (place.id.startsWith("transit:")) {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 72.dp)) {
+            DepartureBoard(place)
+        }
+        return
+    }
     val ctx = LocalContext.current
     var tab by remember(place.id) { mutableIntStateOf(0) }
     var driveSeconds by remember(place.id) { mutableStateOf<Double?>(null) }
@@ -274,7 +285,9 @@ private fun PlaceActions(model: AppModel, place: Place, driveSeconds: Double?) {
 
 /** A bus stop or a station, which gets a live departure board. */
 private fun isStop(p: Place): Boolean {
+    if (p.id.startsWith("transit:")) return true
     val text = ((p.category ?: "") + " " + p.name).lowercase()
+    if (text.contains("gas station") || text.contains("charging station") || text.contains("petrol station")) return false
     return listOf("station", "bus stop", "stop ", "transit", "subway", "metro", "tram", "light rail", "terminal", "depot").any { text.contains(it) }
 }
 
@@ -355,7 +368,9 @@ fun DepartureBoard(place: Place) {
     var loaded by remember(place.id) { mutableStateOf(false) }
     LaunchedEffect(place.id) {
         while (true) {
-            val b = runCatching { Transitous.departures(place.location) }.getOrNull()
+            val b = runCatching { Transitous.departures(place.location,
+                stopId = place.id.removePrefix("transit:").takeIf { place.id.startsWith("transit:") },
+                stopName = place.name) }.getOrNull()
             if (b != null || !loaded) board = b
             loaded = true
             delay(30_000)
