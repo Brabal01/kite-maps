@@ -14,28 +14,29 @@
 
 ### Release IPA (custom workflow)
 
-- Run [`44808484156`](https://github.com/Brabal01/kite-maps/actions/runs/44808484156):
-  **success**, 3m57s, build **1078**.
+- Run [`44830587696`](https://github.com/Brabal01/kite-maps/actions/runs/44830587696):
+  **success**, build **1086**, commit `4de8f39`.
+- VelaCore: **222 tests, 0 failures**.
 - Both variants passed `.github/scripts/verify-ipa.sh`:
-  - Full: app + `app.vela.ios.navigation` extension, both 0.8.0 (1078),
+  - Full: app + `app.vela.ios.navigation` extension, both 0.8.0 (1086),
     both iOS ≥ 16.2, MapLibre arm64, signatures valid, Live Activities on.
   - SideStore: no extension, Live Activities off, same app binary, arm64.
-- Independent download check on this machine: arm64 Mach-O app (14 MB), arm64
-  MapLibre, clean zip, no provisioning profile, matching versions.
+- An independent download of build 1078 (same packaging path) confirmed the
+  arm64 Mach-O app (14 MB), arm64 MapLibre, clean zip, no provisioning profile
+  and matching versions.
 
-### Simulator
+### Simulator and screenshots
 
-- iOS simulator smoke, run
-  [`44809398556`](https://github.com/Brabal01/kite-maps/actions/runs/44809398556):
-  **success**. Three normal launches, one launch with location denied, and one
-  `--safe-mode` launch all stayed alive; MapLibre initialised in the normal
-  launches and not in safe mode; no crash/fatal/uncaught-exception lines in the
-  collected logs. The same commit also passed in the push-triggered run
-  `44808481771`.
-- Screenshots: see the v29 screenshot workflow artifact
-  `Kite-v29-Simulator-Screenshots`. The workflow checks that every expected
-  frame exists and is not black/uniform; it does **not** claim a human review of
-  the layout.
+- Final smoke run
+  [`44830594283`](https://github.com/Brabal01/kite-maps/actions/runs/44830594283)
+  on commit `4de8f39`: three normal launches, one denied-location launch and
+  one `--safe-mode` launch survived; it then opened home, routes, place,
+  directions, navigation and settings, and home/navigation in dark mode.
+- The smoke uploads `Kite-v29-Simulator-Screenshots` (demo-*.png) and a
+  mechanical check that each expected frame exists, is not black and is not a
+  uniform colour. Layout quality still needs human review.
+- Earlier smoke runs on the same code base (`44809398556`, `44825115776`)
+  passed the multi-launch and safe-mode checks.
 
 
 ## v28 stability

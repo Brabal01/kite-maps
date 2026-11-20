@@ -134,6 +134,10 @@ jobs:
             xcrun simctl io "$UDID" screenshot "demo-dark-$step.png" >/dev/null || true
           done
 
+      - name: Check the screenshots
+        run: |
+          pip3 install --quiet --break-system-packages pillow || pip3 install --quiet pillow
+          python3 .github/scripts/check-screenshots.py . | tee screenshots-check.txt
       - name: Check the launched process
         if: always()
         run: |
@@ -142,6 +146,15 @@ jobs:
           xcrun simctl spawn "$UDID" launchctl print system > launchctl.txt || true
           grep -E "app.vela.ios|Kite" launchctl.txt || true
           xcrun simctl io "$UDID" screenshot simulator.png || true
+      - name: Upload the redesign screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kite-v29-Simulator-Screenshots
+          path: |
+            demo-*.png
+            screenshots-check.txt
+          if-no-files-found: warn
       - name: Upload smoke logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -153,7 +166,9 @@ jobs:
             kite-*.log
             demo-*.txt
             demo-*.png
+            demo-*.txt
             crash-*.log
+            screenshots-check.txt
             launchctl.txt
             simulator.png
           if-no-files-found: warn

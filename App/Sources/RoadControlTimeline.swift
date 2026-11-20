@@ -105,7 +105,7 @@ private extension RouteControl.Kind {
 
     var symbol: String {
         switch self {
-        case .light: return "trafficlight.fill"
+        case .light: return "trafficlight"
         case .stop: return "stop.octagon.fill"
         case .railway: return "train.side.front.car"
         case .tram: return "tram.fill"

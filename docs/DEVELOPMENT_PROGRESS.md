@@ -55,28 +55,30 @@ redesign.
 - **Accessibility:** combined banner sentence + repeat action, labelled lanes,
   dock selection traits, Reduce Motion respected by new transitions.
 
-### v29 verification (build 1078)
+### v29 verification (build 1086)
 
-- Custom IPA workflow run
-  [44808484156](https://github.com/Brabal01/kite-maps/actions/runs/44808484156):
-  **success, 3m57s** on commit `88f9080`. A second, push-triggered run for the
-  same commit (`44808481720`) also succeeded.
-- VelaCore: **220 tests, 0 failures** at build time, including six new
-  `RouteAlternativesTests`. Two regression tests for the transit entrance query
-  were added afterwards (222 total).
-- Artifacts downloaded and checked independently of CI:
-  - `Kite-v29-Full.ipa` — `Payload/Kite.app/Kite` is Mach-O arm64, 14 MB;
-    `MapLibre.framework` arm64; app `app.vela.ios` 0.8.0 (1078), iOS ≥ 16.2,
-    `NSSupportsLiveActivities = true`; extension `app.vela.ios.navigation`
-    0.8.0 (1078), iOS ≥ 16.2, `com.apple.widgetkit-extension`, signed.
-  - `Kite-v29-SideStore.ipa` — same app binary and MapLibre, **no PlugIns**,
-    `NSSupportsLiveActivities = false`.
-  - Both: `unzip -tq` clean, no `embedded.mobileprovision`.
-- `verify-ipa.sh` passed both variants in CI (`OK: full variant passed structure
-  checks`, `OK: sidestore variant passed structure checks`).
+- Final IPA workflow run
+  [44830587696](https://github.com/Brabal01/kite-maps/actions/runs/44830587696):
+  **success** on commit `4de8f39`. Both variants passed the structure checks.
+- VelaCore: **222 tests, 0 failures**, including six `RouteAlternativesTests`
+  and two regression tests for the transit entrance query.
+- Artifacts (from the same source commit):
+  - `Kite-v29-Full.ipa` — arm64 app and MapLibre, `app.vela.ios` 0.8.0 (1086),
+    iOS ≥ 16.2, Live Activities on, `app.vela.ios.navigation` extension 0.8.0
+    (1086), signed.
+  - `Kite-v29-SideStore.ipa` — the same app with no PlugIns and Live Activities
+    switched off.
+  - Both unpack cleanly, contain no provisioning profile, and have matching
+    app/extension versions and minimum OS.
+- Simulator smoke with screenshots: run
+  [`44830594283`](https://github.com/Brabal01/kite-maps/actions/runs/44830594283)
+  on the same commit. It launches the app three times, once without location,
+  once in safe mode, then opens home, routes, place, directions, navigation and
+  settings, plus home/navigation in dark mode, and uploads the frames.
+- The earlier build 1078/1081 runs verified the same packaging path while the
+  final UI changes were still landing.
 
-Simulator smoke and screenshot results are recorded in
-`docs/TEST_RESULTS.md`; physical SideStore installation remains unverified.
+Physical SideStore installation remains unverified; that needs the phone.
 
 ## v28 stability
 

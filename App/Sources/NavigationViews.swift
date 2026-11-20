@@ -518,6 +518,13 @@ struct InstructionBanner: View {
                             .font(KiteText.digits(40, weight: .heavy))
                             .foregroundColor(KiteColor.ink)
                             .lineLimit(1).minimumScaleFactor(0.55)
+                    } else if let step = m?.distanceMeters, step > 0 {
+                        // Before the first matched fix there is no "distance to the
+                        // turn" yet; the length of this step is the honest number.
+                        Text(Fmt.distance(step))
+                            .font(KiteText.digits(40, weight: .heavy))
+                            .foregroundColor(KiteColor.ink)
+                            .lineLimit(1).minimumScaleFactor(0.55)
                     }
                     if let parts = Self.split(Self.headline(m)) {
                         // "At the end of the road, turn left" small, the road you turn onto big.
@@ -1201,7 +1208,9 @@ struct CameraCard: View {
 
     var body: some View {
         let over = alert.limitKmh.map { speedKmh > $0 + 3 } ?? false
-        let fill: Color = over ? Vela.closed : (alert.kind == .speed ? Vela.camera : Color(hex: 0x8E44AD))
+        // A fixed deep red in both appearances: the adaptive "danger" red is
+        // pale in dark mode, and white on pale red is not readable at a glance.
+        let fill: Color = over ? Color(hex: 0xB91C1C) : (alert.kind == .speed ? Vela.camera : Color(hex: 0x8E44AD))
         // Dark words on the orange, the way a road sign does it; white on the red and the purple.
         let ink: Color = (!over && alert.kind == .speed) ? Color(hex: 0x1F1300) : .white
         // The limit by the speed badge isn't shown twice.
