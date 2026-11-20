@@ -193,7 +193,7 @@ index b4b4398..05f6405 100644
              let r = await PlaceSearch.search(query, center: mid, spanMeters: span, useGoogle: useGoogle)
              guard !Task.isCancelled else { return }
 diff --git a/App/Sources/Navigator.swift b/App/Sources/Navigator.swift
-index 248b23b..6cd332a 100644
+index 248b23b..aeb81cd 100644
 --- a/App/Sources/Navigator.swift
 +++ b/App/Sources/Navigator.swift
 @@ -53,7 +53,7 @@ final class Navigator: ObservableObject {
@@ -327,25 +327,37 @@ index 248b23b..6cd332a 100644
          trafficLoading = true
          trafficAt = Date()
          let from = LatLng(loc.coordinate.latitude, loc.coordinate.longitude)
-@@ -1061,7 +1053,7 @@ final class Navigator: ObservableObject {
+@@ -1060,20 +1052,19 @@ final class Navigator: ObservableObject {
+             let r = await Directions.routes(from: from, to: to, mode: .drive, avoidHighways: hw, avoidTolls: tolls, via: via, heading: course)
              self.trafficLoading = false
              // Arrived (or ended) while asking: no new route, and no "Found a faster route" in the car park.
-             guard !self.stopped, !self.arrived,
+-            guard !self.stopped, !self.arrived,
 -                  let fresh = r.routes.first(where: { self.exclusion?.allows($0) ?? true }), self.route.id == id, !self.rerouting, let now = self.progress,
-+                  let fresh = r.routes.filter({ $0.trafficSeconds != nil && (self.exclusion?.allows($0) ?? true) }).min(by: { $0.durationSeconds < $1.durationSeconds }), self.route.id == id, !self.rerouting, let now = self.progress,
-                   !now.offRoute, planned > 0, fresh.trafficSeconds != nil else { return }
-             let current = now.remainingSeconds
-             let saving = current - fresh.durationSeconds
-@@ -1069,7 +1061,7 @@ final class Navigator: ObservableObject {
+-                  !now.offRoute, planned > 0, fresh.trafficSeconds != nil else { return }
+-            let current = now.remainingSeconds
+-            let saving = current - fresh.durationSeconds
++            guard !self.stopped, !self.arrived, self.route.id == id, !self.rerouting,
++                  let now = self.progress, !now.offRoute, planned > 0 else { return }
+             let line = self.route.polyline
              let length = Geo.length(line)
              let original = Geo.slice(line, from: p.alongMeters, to: length)
-             let sameWay = Geo.isNearRoute(fresh.polyline, reference: original)
+-            let sameWay = Geo.isNearRoute(fresh.polyline, reference: original)
 -            if !sameWay, AppSettings.shared.suggestFasterRoutes, saving > max(120, current * 0.12) {
-+            if !sameWay, AppSettings.shared.suggestFasterRoutes, saving > max(60, current * 0.05) {
++            let allowed = r.routes.filter { self.exclusion?.allows($0) ?? true }
++            let comparison = TrafficAlternatives.compare(allowed, on: original, previousETA: p.remainingSeconds)
++            if let baseline = comparison.currentETA {
++                self.trafficScale = min(3, max(0.5, baseline / planned))
++            }
++            if let alternative = comparison.alternative, AppSettings.shared.suggestFasterRoutes {
                  let left = Geo.slice(line, from: now.alongMeters, to: length)
-                 self.offerFaster(fresh, saving: saving, remainingMeters: now.remainingMeters, remainingLine: left)
-             } else if sameWay {
-@@ -1242,7 +1234,7 @@ final class Navigator: ObservableObject {
+-                self.offerFaster(fresh, saving: saving, remainingMeters: now.remainingMeters, remainingLine: left)
+-            } else if sameWay {
+-                self.trafficScale = min(3, max(0.5, fresh.durationSeconds / planned))
++                self.offerFaster(alternative, saving: comparison.saving, remainingMeters: now.remainingMeters, remainingLine: left)
+             }
+         }
+     }
+@@ -1242,7 +1233,7 @@ final class Navigator: ObservableObject {
              self.rerouting = false
              // Parked at the destination while the new route was loading: the trip is over, keep it that way.
              if self.arrived { return }
@@ -354,7 +366,7 @@ index 248b23b..6cd332a 100644
                  if let adding {
                      self.stopFailed = true
                      self.speakTemplate("Couldn't add a stop at %@. Carrying on to %@.", adding.name, self.stops.first?.name ?? self.destination.name)
-@@ -1276,13 +1268,8 @@ final class Navigator: ObservableObject {
+@@ -1276,13 +1267,8 @@ final class Navigator: ObservableObject {
          route = fresh
          spokenLimitDrop = nil
          routeControls = nil
@@ -637,6 +649,60 @@ index db6a604..856156d 100644
                  continue
              }
              candidates.append((at.along, at.offset, kind))
+diff --git a/VelaCore/Sources/VelaCore/TrafficAlternatives.swift b/VelaCore/Sources/VelaCore/TrafficAlternatives.swift
+new file mode 100644
+index 0000000..50a88fc
+--- /dev/null
++++ b/VelaCore/Sources/VelaCore/TrafficAlternatives.swift
+@@ -0,0 +1,21 @@
++import Foundation
++
++public enum TrafficAlternatives {
++    /// Both durations refer to the same departure position, even if the car moves during the request.
++    public static func compare(_ routes: [Route], on original: [LatLng], previousETA: Double)
++        -> (currentETA: Double?, alternative: Route?, saving: Double) {
++        var current: Double?
++        var alternative: Route?
++        for route in routes {
++            guard let seconds = route.trafficSeconds, seconds.isFinite, seconds > 0, route.polyline.count > 1 else { continue }
++            if Geo.isNearRoute(route.polyline, reference: original) && Geo.isNearRoute(original, reference: route.polyline) {
++                current = min(current ?? seconds, seconds)
++            } else if seconds < (alternative?.durationSeconds ?? .infinity) {
++                alternative = route
++            }
++        }
++        let baseline = current ?? previousETA
++        let saving = baseline - (alternative?.durationSeconds ?? baseline)
++        return (current, saving > max(60, baseline * 0.05) ? alternative : nil, saving)
++    }
++}
+diff --git a/VelaCore/Tests/VelaCoreTests/RoutingTests.swift b/VelaCore/Tests/VelaCoreTests/RoutingTests.swift
+index 119f0f2..0542585 100644
+--- a/VelaCore/Tests/VelaCoreTests/RoutingTests.swift
++++ b/VelaCore/Tests/VelaCoreTests/RoutingTests.swift
+@@ -2,6 +2,22 @@ import XCTest
+ @testable import VelaCore
+ 
+ final class RoutingTests: XCTestCase {
++    func testNewTrafficDelayTriggersAlternativeDespitePreviouslyShortETA() {
++        let original = [LatLng(0, 0), LatLng(0, 0.02)]
++        let detour = [original[0], LatLng(0.005, 0.01), original[1]]
++        func route(_ path: [LatLng], _ live: Double?) -> Route {
++            Route(mode: .drive, polyline: path, distanceMeters: Geo.length(path), typicalSeconds: 300,
++                  trafficSeconds: live, summary: nil, maneuvers: [], source: "google")
++        }
++        let better = route(detour, 480)
++        let comparison = TrafficAlternatives.compare([route(detour, nil), better, route(original, 660)],
++                                                     on: original, previousETA: 300)
++        XCTAssertEqual(comparison.currentETA, 660)
++        XCTAssertEqual(comparison.alternative?.id, better.id)
++        XCTAssertEqual(comparison.saving, 180)
++        XCTAssertNil(TrafficAlternatives.compare([route(original, 490), better], on: original, previousETA: 700).alternative)
++    }
++
+     func testPostpassCrossingRemainsAvailableWithoutOverpassGeometry() throws {
+         let response = """
+         {
 diff --git a/VelaCore/Tests/VelaCoreTests/WalkEventsTests.swift b/VelaCore/Tests/VelaCoreTests/WalkEventsTests.swift
 new file mode 100644
 index 0000000..af7ed94
