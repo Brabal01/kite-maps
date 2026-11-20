@@ -5,12 +5,21 @@ struct ResultsHeader: View {
     @ObservedObject var model: AppModel
     @Environment(\.colorScheme) private var scheme
 
+    private var provider: String? {
+        guard let source = model.results.first?.source, model.results.allSatisfy({ $0.source == source }) else { return nil }
+        switch source {
+        case "google": return "Google Maps"
+        case "osm": return "OpenStreetMap"
+        default: return nil
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(model.resultsTitle.capitalizedFirst).font(.system(size: 24, weight: .heavy))
-                    Text("\(model.visibleResults.count) results").font(.subheadline).foregroundColor(.secondary)
+                    Text(L10n.text(model.resultsTitle.capitalizedFirst)).font(.system(size: 24, weight: .heavy))
+                    Text([L10n.format("%@ results", String(describing: model.visibleResults.count)), provider].compactMap { $0 }.joined(separator: " · ")).font(.subheadline).foregroundColor(.secondary)
                 }
                 Spacer()
                 CircleIconButton(icon: model.detent == .full ? "chevron.down" : "chevron.up") {
@@ -57,7 +66,7 @@ struct FilterChipLabel: View {
     var body: some View {
         HStack(spacing: 4) {
             if on && !menu { Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)) }
-            Text(title).font(.body.weight(.semibold))
+            Text(L10n.text(title)).font(.body.weight(.semibold))
             if menu { Image(systemName: "chevron.down").font(.system(size: 12, weight: .bold)) }
         }
         .padding(.horizontal, 16)
@@ -175,7 +184,7 @@ struct PhotoStrip: View {
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
+            LazyHStack(spacing: 6) {
                 if let p = streetView { StreetViewTile(place: p, height: height) }
                 ForEach(Array(urls.enumerated()), id: \.offset) { i, u in
                     AsyncImage(url: URL(string: u)) { phase in
@@ -202,7 +211,14 @@ struct PhotoStrip: View {
 struct PhotoViewer: View {
     let urls: [String]
     let start: Int
-    @State private var page = 0
+    @State private var page: Int
+
+    init(urls: [String], start: Int) {
+        self.urls = urls
+        self.start = start
+        _page = State(initialValue: start)
+    }
+
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -228,7 +244,6 @@ struct PhotoViewer: View {
             .padding(16)
             .accessibilityLabel("Close")
         }
-        .onAppear { page = start }
     }
 
     /** Google photo links carry their size ("=w408-h306-k-no"): ask for a bigger one. */

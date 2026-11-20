@@ -18,7 +18,7 @@ enum PickKind: String, Identifiable {
 }
 
 enum SheetDetent: Equatable {
-    case peek, half, full
+    case collapsed, peek, half, full
 }
 
 enum SortMode: String, CaseIterable, Identifiable {
@@ -61,10 +61,32 @@ struct Category: Identifiable, Hashable {
 }
 
 /** Directions to one place: routes for every mode, the one picked, and where from. */
+enum RouteEndpoint: String, Identifiable {
+    case from = "From", to = "To"
+    var id: String { rawValue }
+}
+
+struct TransitJourney {
+    let trip: TransitTrip
+    let destination: Place
+    var stops: [Place] = []
+    var stopLegs: [Int] = []
+    var index = 0
+    var loadingWalk = false
+    var boarded = false
+    var boardingProgress: Double?
+    var leg: TransitLeg { trip.legs[index] }
+}
+
 struct DirectionsState {
     var destination: Place
     /** True when the trip goes from the place back to you. */
     var reversed = false
+    var origin: Place?
+    var exclusion: RouteExclusion?
+    var fromPlace: Place? { reversed ? destination : origin }
+    var toPlace: Place? { reversed ? origin : destination }
+    var startsFromLocation: Bool { fromPlace == nil }
     var mode: TravelMode
     var routes: [TravelMode: [Route]] = [:]
     var loading: Set<TravelMode> = []
@@ -105,7 +127,15 @@ final class AppModel: ObservableObject {
     @Published var openNowOnly = false
     @Published var rating4Only = false
     @Published var sort: SortMode = .relevance
-    @Published var directions: DirectionsState?
+    private(set) var previewCoverage: RouteEventCoverage?
+    @Published var directions: DirectionsState? {
+        didSet {
+            let route = directions?.route
+            guard previewCoverage?.routeID != route?.id else { return }
+            previewCoverage = route.map { RouteEventCoverage($0) }
+            previewCoverage?.changed = { [weak self] in self?.objectWillChange.send() }
+        }
+    }
     @Published var nav: Navigator?
     @Published var showLayers = false
     /** Which page of the dock is open. */
@@ -124,6 +154,63 @@ final class AppModel: ObservableObject {
     @Published var liveCamRoute: [LiveCam] = []
     /** The "Add stop" search sheet. */
     @Published var addingStop = false
+    @Published var editingEndpoint: RouteEndpoint?
+    @Published var endpointOnMap: RouteEndpoint?
+    @Published var askingRouteExclusion = false
+    @Published var routeExclusionNotice: String?
+    private var chosenExclusion: RouteExclusion?
+    var hasRouteExclusion: Bool { nav?.exclusion != nil || directions?.exclusion != nil }
+    @Published var transitStartNotice: String?
+    @Published private(set) var transitJourney: TransitJourney?
+    @Published private(set) var justDrive = false
+    var hasActiveJourney: Bool { nav != nil || transitJourney != nil || justDrive }
+    @Published private(set) var addingJourneyStop = false
+    @Published var journeyStopError = false
+    private var journeyStopTask: Task<Void, Never>?
+    @Published private(set) var driveRoad: String?
+    @Published private(set) var driveLimit: Double?
+    @Published private(set) var nearbyControlsStatus = "Waiting for GPS to find road events"
+    @Published private(set) var nearbyControls: [RouteControl] = []
+    private var nearbyControlsTask: Task<Void, Never>?
+    private var nearbyControlsCenter: LatLng?
+    private var nearbyControlsAt = Date.distantPast
+
+    private func refreshNearbyControls(_ fix: CLLocation) {
+        guard nav == nil, justDrive || transitJourney != nil, nearbyControlsTask == nil,
+              (0...150).contains(fix.horizontalAccuracy) else { return }
+        let point = LatLng(fix.coordinate.latitude, fix.coordinate.longitude)
+        guard Date().timeIntervalSince(nearbyControlsAt) >= 20,
+              nearbyControlsCenter.map({ $0.distance(to: point) > 280 }) ?? true else { return }
+        nearbyControlsAt = Date()
+        if nearbyControlsCenter == nil { nearbyControlsStatus = "Checking the route…" }
+        let leg = transitJourney?.leg.path
+        nearbyControlsTask = Task {
+            let controls: [RouteControl]?
+            if let leg, leg.count >= 2 {
+                let at = Geo.project(point, on: leg).along
+                controls = await RouteControls.lookup(on: Geo.slice(leg, from: max(0, at - 80), to: at + 1200))
+            } else { controls = await RouteControls.nearby(point) }
+            guard !Task.isCancelled else { return }
+            nearbyControlsTask = nil
+            nearbyControlsStatus = controls == nil ? "Road data temporarily unavailable" : "No mapped road events ahead"
+            if let controls { nearbyControlsCenter = point; nearbyControls = controls }
+        }
+    }
+
+    private func clearNearbyControls() {
+        nearbyControlsTask?.cancel()
+        nearbyControlsTask = nil
+        nearbyControlsCenter = nil
+        nearbyControlsAt = .distantPast
+        nearbyControls = []
+        nearbyControlsStatus = "Waiting for GPS to find road events"
+    }
+
+    private(set) var driveCoordinate: CLLocationCoordinate2D?
+    private(set) var driveBearing = 0.0
+    @Published private(set) var driveSpeed = 0.0
+    private var driveSample: LatLng?
+    private var driveRoadTask: Task<Void, Never>?
     @Published var showSaved = false
     /** The sheet for choosing home or work by searching for it. */
     @Published var picking: PickKind?
@@ -139,13 +226,29 @@ final class AppModel: ObservableObject {
     @Published var mapHeading: Double = 0
     /**
      The browse map's 3D, 2D or north-up button. North up is the map as it always was; 3D and 2D
-     follow you round like the driving map, without a route. Starts north up each time Kite opens.
+     follow you round like the driving map, without a route.
      */
-    @Published var browseLook: MapLook = .north
+    @Published var browseLook: MapLook = .tilted
     /** Whether the browse map is following you in 3D or 2D; dragging the map stops it. */
     @Published var browseFollowing = false
 
-    weak var map: MLNMapView? { didSet { glide.map = map } }
+    private var lastMapCamera: MLNMapCamera?
+    private(set) weak var map: (any KiteMapSurface)? { didSet { glide.map = map } }
+
+    @discardableResult
+    func attachMap(_ surface: any KiteMapSurface) -> Bool {
+        let previous = map?.camera ?? lastMapCamera
+        lastMapCamera = nil
+        map = surface
+        if let previous { surface.camera = previous }
+        return previous != nil
+    }
+
+    func detachMap(_ surface: any KiteMapSurface) {
+        guard map === surface else { return }
+        lastMapCamera = surface.camera
+        map = nil
+    }
     /** How wide the side panel is on a big screen (the open iPhone Duo), so the map centres
      *  things in the part you can see; 0 on a phone. */
     var sideInset: CGFloat = 0 { didSet { glide.leftInset = sideInset } }
@@ -154,6 +257,14 @@ final class AppModel: ObservableObject {
     /** Bumped on every new route or transit request, so answers to an older one (before a
      *  reverse, a new stop or another time) are dropped instead of replacing the new ones. */
     private var routesRequest = 0
+    private var routeLoadTasks: [TravelMode: Task<Void, Never>] = [:]
+
+    private func cancelRouteLoads() {
+        routesRequest += 1
+        for task in routeLoadTasks.values { task.cancel() }
+        routeLoadTasks.removeAll()
+        walkingSettingsTask?.cancel()
+    }
     private var transitRequest = 0
     private var transitLoadedAt = Date.distantPast
     private var searchTask: Task<Void, Never>?
@@ -194,7 +305,6 @@ final class AppModel: ObservableObject {
 
     var userLatLng: LatLng? {
         location.last.map { LatLng($0.coordinate.latitude, $0.coordinate.longitude) }
-            ?? map?.userLocation?.location.map { LatLng($0.coordinate.latitude, $0.coordinate.longitude) }
     }
 
     // MARK: Search
@@ -237,10 +347,10 @@ final class AppModel: ObservableObject {
         rating4Only = false
         sort = .relevance
         let vp = viewport
-        let useGoogle = !settings.noGoogle
+        let useGoogle = settings.googleSearchEnabled
         let user = userLatLng
         searchTask = Task {
-            var r = await PlaceSearch.search(q, center: vp.center, spanMeters: vp.span, useGoogle: useGoogle)
+            var r = await PlaceSearch.search(q, center: vp.center, spanMeters: vp.span, useGoogle: useGoogle, language: L10n.isCzech ? "cs" : "en")
             guard !Task.isCancelled else { return }
             // Distances read from you, not from the middle of the map.
             if let user {
@@ -258,7 +368,7 @@ final class AppModel: ObservableObject {
                 select(r.places[0])
             } else {
                 detent = .half
-                frame(r.places.map(\.location))
+                frame(PlaceSearch.mapFocus(query: q, places: r.places, category: title != nil))
             }
         }
     }
@@ -268,14 +378,14 @@ final class AppModel: ObservableObject {
         let q = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard q.count >= 2, !MapLinks.looksLikeLink(q) else { suggestions = SuggestParser.Result(); return }
         let vp = viewport
-        let useGoogle = !settings.noGoogle
+        let useGoogle = settings.googleSearchEnabled
         let user = userLatLng
         suggestTask = Task {
             try? await Task.sleep(nanoseconds: 250_000_000)
             guard !Task.isCancelled else { return }
             var r = SuggestParser.Result()
             if useGoogle {
-                r = (try? await GoogleClient.shared.suggest(q, near: vp.center, spanMeters: vp.span ?? 20_000)) ?? r
+                r = (try? await GoogleClient.shared.suggest(q, near: vp.center, spanMeters: vp.span ?? 20_000, language: L10n.isCzech ? "cs" : "en")) ?? r
             }
             if r.places.isEmpty && r.queries.isEmpty, let pc = await Postcodes.lookup(q) {
                 // A UK postcode, like the Set home box finds: the open geocoder often misses them.
@@ -306,7 +416,7 @@ final class AppModel: ObservableObject {
         results = []
         notice = nil
         searching = true
-        query = "Opening link…"
+        query = L10n.text("Opening link…")
         searchTask = Task {
             let target = await MapLinks.resolve(text)
             guard !Task.isCancelled else { return }
@@ -361,13 +471,12 @@ final class AppModel: ObservableObject {
         if p.distanceMeters == nil, let u = userLatLng { p.distanceMeters = u.distance(to: p.location) }
         selected = p
         detent = .half
-        guard focus, let map else { return }
+        guard focus, !hasActiveJourney, let map else { return }
         browseFollowing = false
-        browseLook = .north
         let target = CLLocationCoordinate2D(latitude: p.location.lat, longitude: p.location.lng)
         let pad = sideInset > 0 ? UIEdgeInsets(top: 0, left: sideInset, bottom: 0, right: 0)
                                 : UIEdgeInsets(top: 120, left: 0, bottom: map.bounds.height * 0.45, right: 0)
-        let cam = MLNMapCamera(lookingAtCenter: target, acrossDistance: 900, pitch: 0, heading: 0)
+        let cam = MLNMapCamera(lookingAtCenter: target, acrossDistance: 900, pitch: browsePitch, heading: 0)
         if map.zoomLevel > 16 { cam.altitude = map.camera.altitude }
         map.setCamera(cam, withDuration: 0.6, animationTimingFunction: CAMediaTimingFunction(name: .easeInEaseOut),
                       edgePadding: pad, completionHandler: nil)
@@ -393,7 +502,7 @@ final class AppModel: ObservableObject {
         let q = [name, placeholder.address].compactMap { $0 }.joined(separator: " ")
         let pid = placeholder.id
         Task {
-            let found = (try? await GoogleClient.shared.search(q, center: point, spanMeters: 1_000, pages: 1)) ?? []
+            let found = (try? await GoogleClient.shared.search(q, center: point, spanMeters: 1_000, pages: 1, language: L10n.isCzech ? "cs" : "en")) ?? []
             guard selected?.id == pid else { return }
             // The same place by name too, not just the nearest: a café next door mustn't take its place.
             if let best = found.filter({ $0.location.distance(to: point) < 150 && Self.similarNames($0.name, name) })
@@ -420,7 +529,7 @@ final class AppModel: ObservableObject {
         guard !settings.noGoogle else { return }
         let q = [p.name, p.address].compactMap { $0 }.joined(separator: " ")
         Task {
-            let found = (try? await GoogleClient.shared.search(q, center: p.location, spanMeters: 1_000, pages: 1)) ?? []
+            let found = (try? await GoogleClient.shared.search(q, center: p.location, spanMeters: 1_000, pages: 1, language: L10n.isCzech ? "cs" : "en")) ?? []
             guard selected?.id == p.id, let fresh = found.first(where: {
                 $0.location.distance(to: p.location) < 150 && Self.similarNames($0.name, p.name)
             }) else { return }
@@ -498,7 +607,7 @@ final class AppModel: ObservableObject {
         let f = DateFormatter()
         f.timeStyle = .short
         f.dateStyle = .none
-        p.category = "Parked at \(f.string(from: Date()))"
+        p.category = L10n.format("Parked at %@", f.string(from: Date()))
         settings.parking = p
         notice = "Parking spot saved. Tap the P button to find your car."
         let pid = p.id
@@ -514,10 +623,10 @@ final class AppModel: ObservableObject {
     }
 
     /** Long press: a dropped pin with the address there. */
-    func dropPin(at point: LatLng, name: String = "Dropped pin") {
-        var pin = Place(id: "pin:\(point.lat),\(point.lng)", name: name, location: point, source: "osm")
+    func dropPin(at point: LatLng, name: String = "Dropped pin", focus: Bool = true) {
+        var pin = Place(id: "pin:\(point.lat),\(point.lng)", name: L10n.text(name), location: point, source: "osm")
         pin.category = String(format: "%.5f, %.5f", point.lat, point.lng)
-        select(pin)
+        select(pin, focus: focus)
         Task {
             guard let found = await Photon.reverse(point), selected?.id == pin.id else { return }
             var p = pin
@@ -538,14 +647,45 @@ final class AppModel: ObservableObject {
     }
 
     func closeDirections() {
+        cancelRouteLoads()
+        transitRequest += 1
         autoStart = false
         directions = nil
         showSteps = false
         if let p = selected { select(p) }
     }
 
+    func selectEndpoint(_ endpoint: RouteEndpoint, place: Place?) {
+        guard var state = directions else { return }
+        if (endpoint == .from) == state.reversed {
+            if let place { state.destination = place }
+            else if let here = userLatLng {
+                state.destination = Place(id: "route-here", name: "My location", location: here, source: "osm")
+            } else { return }
+        } else { state.origin = place }
+        state.routes = [:]
+        state.exclusion = nil
+        state.trips = nil
+        directions = state
+        reloadRoutes()
+    }
+
+    func confirmEndpointOnMap() {
+        guard let endpoint = endpointOnMap else { return }
+        let point = viewport.center
+        endpointOnMap = nil
+        let pin = Place(id: "route-pin-\(point.lat)-\(point.lng)", name: "Dropped pin", location: point, source: "osm")
+        selectEndpoint(endpoint, place: pin)
+    }
+
+    private func endpoints(_ d: DirectionsState) -> (LatLng, LatLng)? {
+        guard let from = d.fromPlace?.location ?? userLatLng, let to = d.toPlace?.location ?? userLatLng else { return nil }
+        return (from, to)
+    }
+
     func reverseDirections() {
         directions?.reversed.toggle()
+        directions?.exclusion = nil
         directions?.routes = [:]
         directions?.selected = 0
         directions?.trips = nil
@@ -563,13 +703,21 @@ final class AppModel: ObservableObject {
 
     func addStop(_ p: Place) {
         guard directions != nil, (directions?.stops.count ?? 0) < 8 else { return }
-        directions?.stops.append(p)
+        if directions?.reversed == true { directions?.stops.insert(p, at: 0) }
+        else { directions?.stops.append(p) }
         reloadRoutes()
     }
 
     func removeStop(_ i: Int) {
         guard let d = directions, d.stops.indices.contains(i) else { return }
         directions?.stops.remove(at: i)
+        reloadRoutes()
+    }
+
+    func moveStop(_ index: Int, by offset: Int) {
+        guard let stops = directions?.stops, stops.indices.contains(index),
+              stops.indices.contains(index + offset) else { return }
+        directions?.stops.swapAt(index, index + offset)
         reloadRoutes()
     }
 
@@ -593,6 +741,7 @@ final class AppModel: ObservableObject {
     }
 
     func selectRoute(_ i: Int) {
+        guard directions?.current.indices.contains(i) == true else { return }
         directions?.selected = i
         mapTick += 1
     }
@@ -605,9 +754,29 @@ final class AppModel: ObservableObject {
         loadAllModes()
     }
 
+    private var walkingSettingsTask: Task<Void, Never>?
+
+    func refreshWalkingRoutes() {
+        walkingSettingsTask?.cancel()
+        guard let d = directions, let (from, to) = endpoints(d) else { return }
+        let generation = routesRequest
+        let via = (d.reversed ? d.stops.reversed() : d.stops).map(\.location)
+        walkingSettingsTask = Task {
+            do { try await Task.sleep(nanoseconds: 350_000_000) } catch { return }
+            let answer = await Directions.routes(from: from, to: to, mode: .walk, via: via, alternatives: true)
+            guard !Task.isCancelled, generation == routesRequest, directions?.destination.id == d.destination.id,
+                  !answer.routes.isEmpty else { return }
+            directions?.routes[.walk] = answer.routes.sorted { $0.durationSeconds < $1.durationSeconds }
+            if directions?.mode == .walk { directions?.selected = 0; frameRoute() }
+        }
+    }
+
     private func loadAllModes() {
         guard let d = directions else { return }
-        guard let me = userLatLng else {
+        cancelRouteLoads()
+        directions?.loading = []
+        let req = routesRequest
+        guard let (from, to) = endpoints(d) else {
             // Say so on the trip card itself, not just in passing.
             let why = location.denied ? Self.locationOffText : "Waiting for your location…"
             for m in TravelMode.allCases { directions?.errors[m] = why }
@@ -617,36 +786,48 @@ final class AppModel: ObservableObject {
                 // GPS is on but hasn't answered yet: try again once it does.
                 location.start()
                 Task {
-                    for _ in 0..<40 where userLatLng == nil { try? await Task.sleep(nanoseconds: 250_000_000) }
-                    if userLatLng != nil, directions?.destination.id == d.destination.id, directions?.routes.isEmpty == true { reloadRoutes() }
+                    for _ in 0..<40 where userLatLng == nil && routesRequest == req {
+                        try? await Task.sleep(nanoseconds: 250_000_000)
+                    }
+                    if userLatLng != nil, routesRequest == req, directions?.destination.id == d.destination.id,
+                       directions?.routes.isEmpty == true { reloadRoutes() }
                 }
             }
             return
         }
-        let (from, to) = d.reversed ? (d.destination.location, me) : (me, d.destination.location)
         let via = (d.reversed ? d.stops.reversed() : d.stops).map(\.location)
-        routesRequest += 1
-        let req = routesRequest
         let hw = settings.avoidHighways, tolls = settings.avoidTolls, google = !settings.noGoogle
         // Already driving (asked at a red light, say): no route that starts with a U-turn.
         let moving = location.last.flatMap { l in l.speed >= 4 && l.course >= 0 && l.courseAccuracy >= 0 && l.courseAccuracy < 45 ? l.course : nil }
-        let heading = d.reversed ? nil : moving
+        let heading = d.startsFromLocation ? moving : nil
         for m in TravelMode.allCases {
             directions?.loading.insert(m)
-            Task {
+            routeLoadTasks[m] = Task { [weak self] in
                 let r = await Directions.routes(from: from, to: to, mode: m, avoidHighways: hw, avoidTolls: tolls, useGoogle: google, via: via,
                                                 heading: m == .drive ? heading : nil, alternatives: true)
-                guard directions?.destination.id == d.destination.id, routesRequest == req else { return }
+                guard let self, !Task.isCancelled, directions?.destination.id == d.destination.id,
+                      routesRequest == req else { return }
+                routeLoadTasks[m] = nil
                 directions?.loading.remove(m)
                 // The fastest first, so it's the one picked (Matteo, 2026-11-13: a bike route marked
                 // "Slower route" was picked while one 5 min faster sat below it).
-                directions?.routes[m] = r.routes.sorted { $0.durationSeconds < $1.durationSeconds }
-                if r.routes.isEmpty {
-                    directions?.errors[m] = Connectivity.explain(r.error == "No route found." ? "No route found." : "Couldn't get a route just now. Try again in a moment.")
+                let allowed = m == .drive ? r.routes.filter { d.exclusion?.allows($0) ?? true } : r.routes
+                directions?.routes[m] = allowed.sorted { $0.durationSeconds < $1.durationSeconds }
+                if allowed.isEmpty, m == .drive, d.exclusion != nil {
+                    directions?.errors[m] = "No alternative avoids this segment. Undo the avoidance to see all routes."
+                } else if r.routes.isEmpty {
+                    let message: String
+                    switch r.error {
+                    case "No route found.": message = "No route found."
+                    case "Couldn't check a route for tolls.": message = "Couldn't check a route for tolls."
+                    case "No verified toll-free route found.": message = "No verified toll-free route found."
+                    default: message = "Couldn't get a route just now. Try again in a moment."
+                    }
+                    directions?.errors[m] = Connectivity.explain(message)
                 }
                 if m == directions?.mode {
                     frameRoute()
-                    if autoStart, !r.routes.isEmpty {
+                    if autoStart, !allowed.isEmpty {
                         autoStart = false
                         startNavigation()
                     }
@@ -658,7 +839,7 @@ final class AppModel: ObservableObject {
 
     /** Transit trips for the current trip, leaving now or at the picked time. */
     func loadTransit() {
-        guard let d = directions, let me = userLatLng else { return }
+        guard let d = directions, let (from, to) = endpoints(d) else { return }
         transitLoadedAt = Date()
         // A new request either way, so one still loading can't put back trips without the stops.
         transitRequest += 1
@@ -668,7 +849,6 @@ final class AppModel: ObservableObject {
             directions?.tripsError = "Public transport can't go via stops. Remove the stops to see trains and buses."
             return
         }
-        let (from, to) = d.reversed ? (d.destination.location, me) : (me, d.destination.location)
         let destId = d.destination.id
         let time = d.transitTime, arriveBy = d.arriveBy
         let req = transitRequest
@@ -679,7 +859,7 @@ final class AppModel: ObservableObject {
             do {
                 let trips = try await Transitous.plan(from: from, to: to, time: time, arriveBy: arriveBy)
                 guard directions?.destination.id == destId, transitRequest == req else { return }
-                directions?.trips = trips
+                directions?.trips = trips.sorted { $0.durationSeconds < $1.durationSeconds }
                 if trips.isEmpty { directions?.tripsError = "No transit trips found here." }
             } catch {
                 guard directions?.destination.id == destId, transitRequest == req else { return }
@@ -692,12 +872,14 @@ final class AppModel: ObservableObject {
 
     func frameRoute() {
         if let t = directions?.pickedTrip {
-            if t.path.count >= 2 { frame(t.path, bottomFraction: 0.42) }
+            if t.path.count >= 2 { frame(t.path, bottomFraction: detent == .collapsed ? 0.12 : 0.42) }
             mapTick += 1
             return
         }
         guard let r = directions?.route else { mapTick += 1; return }
-        frame(r.polyline, bottomFraction: 0.42, top: 170 + CGFloat(directions?.stops.count ?? 0) * 42)
+        let collapsed = detent == .collapsed
+        let top: CGFloat = collapsed ? 32 : directions?.stops.isEmpty == false ? 250 : 205
+        frame(r.polyline, bottomFraction: collapsed ? 0.12 : 0.42, top: top)
     }
 
     /** Police risk within about a kilometre of you, from remembered and live Waze police reports. */
@@ -716,29 +898,308 @@ final class AppModel: ObservableObject {
     // MARK: Navigation
 
     func startNavigation() {
-        guard let d = directions, let route = d.route, !d.reversed else { return }
-        let n = Navigator(route: route, destination: d.destination, stops: d.stops, settings: settings)
+        guard let d = directions, let route = d.route, d.startsFromLocation, let destination = d.toPlace else { return }
+        beginNavigation(route, to: destination, stops: d.reversed ? Array(d.stops.reversed()) : d.stops, exclusion: d.exclusion)
+    }
+
+    private func beginNavigation(_ route: Route, to destination: Place, stops: [Place] = [],
+                                 exclusion: RouteExclusion? = nil, resumeFreeDrive: Bool = false) {
+        selected = nil
+        let n = Navigator(route: route, destination: destination, stops: stops, settings: settings, coverage: previewCoverage)
+        n.exclusion = exclusion
         nav = n
+        defer { refreshActivity() }
         navSub = n.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
+        let transit = transitJourney.map { ($0.trip.id, $0.index) }
         n.onFinished = { [weak self, weak n] in
             guard let self, let n, self.nav === n else { return }
-            self.endNavigation()
+            if let (id, leg) = transit { self.completeTransitLeg(tripID: id, index: leg) }
+            else { self.endNavigation() }
+        }
+        if let (id, leg) = transit {
+            n.onArrival = { [weak self, weak n] in
+                guard let self, let n, self.nav === n else { return }
+                self.completeTransitLeg(tripID: id, index: leg)
+            }
+        } else if resumeFreeDrive {
+            n.onArrival = { [weak self, weak n] in
+                guard let self, let n, self.nav === n else { return }
+                self.endNavigation()
+                self.startJustDrive()
+            }
         }
         // In a tunnel GPS stops: the navigator works out where the car should be, and it's shown like a fix.
         n.onEstimate = { [weak self, weak n] loc in
             guard let self, let n, self.nav === n else { return }
             n.handle(loc, estimated: true)
-            self.followCamera(n, loc, animated: true)
+            if self.nav === n { self.followCamera(n, loc, animated: true) }
             self.mapTick += 1
         }
         resumeOffer = nil
-        rememberTrip(n)
+        if transitJourney == nil { rememberTrip(n) }
         location.setNavigating(true, mode: route.mode.rawValue)
         map?.showsUserLocation = false
-        if let loc = location.last { n.handle(loc); followCamera(n, loc, animated: false) }
+        if let loc = location.last, loc.horizontalAccuracy <= navigationAccuracy(for: route.mode) {
+            n.handle(loc)
+            if nav === n { followCamera(n, loc, animated: false) }
+        }
+    }
+
+    @discardableResult func offerRouteExclusion(at point: LatLng) -> Bool {
+        if let nav, !nav.showingOverview { return false }
+        guard endpointOnMap == nil, let route = nav?.route ?? directions?.route, route.mode == .drive,
+              let exclusion = RouteExclusion(near: point, on: route.polyline) else { return false }
+        chosenExclusion = exclusion
+        askingRouteExclusion = true
+        return true
+    }
+
+    func applyRouteExclusion() {
+        guard let exclusion = chosenExclusion else { return }
+        chosenExclusion = nil
+        if let nav {
+            nav.avoidSegment(exclusion) { [weak self] success in
+                if !success { self?.routeExclusionNotice = "No available route avoids this segment." }
+            }
+        } else if let state = directions {
+            let allowed = state.current.filter { exclusion.allows($0) }
+            guard !allowed.isEmpty else {
+                routeExclusionNotice = "No current alternative avoids this segment."
+                return
+            }
+            routesRequest += 1
+            directions?.loading = []
+            directions?.exclusion = exclusion
+            directions?.routes[.drive] = allowed
+            directions?.selected = 0
+            frameRoute()
+        }
+    }
+
+    func undoRouteExclusion() {
+        if let nav { nav.undoAvoidance() }
+        else { directions?.exclusion = nil; reloadRoutes() }
+    }
+
+    func startTransit(_ itinerary: TransitTrip? = nil) {
+        guard let state = directions, var trip = itinerary ?? state.pickedTrip, !trip.legs.isEmpty else { return }
+        let destination = state.toPlace ?? userLatLng.map {
+            Place(id: "transit-current-location", name: L10n.text("My location"), location: $0, source: "osm")
+        }
+        guard let destination else {
+            transitStartNotice = "Your location is needed to start this trip."
+            location.start()
+            return
+        }
+        if let origin = state.fromPlace?.location ?? trip.legs.first?.path.first,
+           let here = userLatLng, here.distance(to: origin) > 100,
+           state.fromPlace != nil || trip.legs.first?.isWalk == false {
+            trip.legs.insert(TransitLeg(isWalk: true, mode: "WALK", toName: state.fromPlace?.name ?? trip.legs.first?.fromName ?? "",
+                                       path: [here, origin]), at: 0)
+        }
+        location.start()
+        showSteps = false
+        selected = nil
+        results = []
+        transitJourney = TransitJourney(trip: trip, destination: destination)
+        directions = nil
+        startTransitLeg()
+    }
+
+    func boardTransit() {
+        transitJourney?.boarded = true
+        refreshActivity()
+    }
+
+    func advanceTransit() {
+        guard let journey = transitJourney else { return }
+        completeTransitLeg(tripID: journey.trip.id, index: journey.index)
+    }
+
+    private func completeTransitLeg(tripID: UUID, index: Int) {
+        guard var journey = transitJourney, journey.trip.id == tripID, journey.index == index else { return }
+        nav?.stop()
+        nav = nil
+        navSub = nil
+        glide.stop()
+        if journey.stopLegs.first == index {
+            journey.stopLegs.removeFirst()
+            journey.stops.removeFirst()
+        }
+        if journey.index + 1 == journey.trip.legs.count {
+            endNavigation()
+            return
+        }
+        journey.index += 1
+        journey.boarded = false
+        journey.boardingProgress = nil
+        journey.loadingWalk = false
+        transitJourney = journey
+        startTransitLeg()
+    }
+
+    private func startTransitLeg() {
+        defer { refreshActivity() }
+        clearNearbyControls()
+        guard let journey = transitJourney else { return }
+        let leg = journey.leg
+        UIApplication.shared.isIdleTimerDisabled = true
+        location.setNavigating(true, mode: leg.isWalk ? TravelMode.walk.rawValue : TravelMode.drive.rawValue)
+        map?.showsUserLocation = true
+        if leg.path.count >= 2 { frame(leg.path, bottomFraction: 0.25, top: 200) }
+        mapTick += 1
+        guard leg.isWalk, let target = leg.arrivalPoint, let from = userLatLng ?? leg.path.first else { return }
+        if from.distance(to: target) < 25 { advanceTransit(); return }
+        transitJourney?.loadingWalk = true
+        Task {
+            let result = await Directions.routes(from: from, to: target, mode: .walk, useGoogle: !settings.noGoogle)
+            guard transitJourney?.trip.id == journey.trip.id, transitJourney?.index == journey.index else { return }
+            transitJourney?.loadingWalk = false
+            if let route = result.routes.first {
+                let destination = Place(id: "transit-\(journey.index)", name: leg.toName.isEmpty ? journey.destination.name : leg.toName,
+                                        location: target, source: "osm")
+                beginNavigation(route, to: destination)
+            }
+        }
+    }
+
+    func startJustDrive() {
+        selected = nil
+        directions = nil
+        justDrive = true
+        defer { refreshActivity() }
+        browseLook = .tilted
+        browseFollowing = true
+        UIApplication.shared.isIdleTimerDisabled = true
+        location.setNavigating(true, mode: TravelMode.drive.rawValue)
+        if let loc = location.last {
+            if !location.reducedAccuracy, abs(loc.timestamp.timeIntervalSinceNow) < 45 {
+                refreshNearbyControls(loc)
+            }
+            followBrowse(loc, entering: true)
+            updateDriveRoad(loc)
+        } else {
+            resetCamera()
+        }
+    }
+
+    func addJourneyStop(_ place: Place) {
+        guard hasActiveJourney, !addingJourneyStop else { return }
+        if let journey = transitJourney {
+            addTransitStop(place, to: journey)
+        } else if let nav {
+            guard !nav.arrived, !nav.rerouting, nav.lastFix != nil else { journeyStopError = true; return }
+            selected = nil
+            nav.addStop(place)
+        } else if justDrive {
+            guard let here = userLatLng else { journeyStopError = true; return }
+            addingJourneyStop = true
+            selected = nil
+            let heading = location.last.flatMap { fix in
+                fix.speed > 4 && fix.course >= 0 && (0...35).contains(fix.courseAccuracy) ? fix.course : nil
+            }
+            journeyStopTask = Task {
+                let result = await Directions.routes(from: here, to: place.location, mode: .drive,
+                                                     avoidHighways: settings.avoidHighways, avoidTolls: settings.avoidTolls,
+                                                     useGoogle: !settings.noGoogle, heading: heading)
+                guard !Task.isCancelled, justDrive else { return }
+                addingJourneyStop = false
+                guard let route = result.routes.first else { journeyStopError = true; return }
+                clearJustDrive()
+                beginNavigation(route, to: place, resumeFreeDrive: true)
+            }
+        }
+    }
+
+    private func addTransitStop(_ place: Place, to journey: TransitJourney) {
+        // Finish the ride already in progress before making the detour.
+        let retained = journey.boarded && !journey.leg.isWalk ? journey.leg : nil
+        guard let from = retained?.arrivalPoint ?? userLatLng else { journeyStopError = true; return }
+        selected = nil
+        addingJourneyStop = true
+        let stops = [place] + journey.stops.filter { $0.id != place.id }
+        journeyStopTask = Task {
+            var legs = retained.map { [$0] } ?? []
+            var stopLegs: [Int] = []
+            do {
+                var start = from
+                var departure = max(Date(), retained?.arrive ?? Date())
+                for target in stops + [journey.destination] {
+                    let trips = try await Transitous.plan(from: start, to: target.location, time: departure)
+                    guard let trip = trips.first(where: { !$0.legs.isEmpty }) else { break }
+                    legs.append(contentsOf: trip.legs)
+                    stopLegs.append(legs.count - 1)
+                    departure = (trip.arrive ?? departure.addingTimeInterval(trip.durationSeconds)).addingTimeInterval(120)
+                    start = target.location
+                }
+            } catch { }
+            guard !Task.isCancelled else { return }
+            addingJourneyStop = false
+            guard transitJourney?.trip.id == journey.trip.id,
+                  transitJourney?.index == journey.index, stopLegs.count == stops.count + 1 else {
+                if transitJourney?.trip.id == journey.trip.id { journeyStopError = true }
+                return
+            }
+            let frequency = legs.filter { !$0.isWalk }.count
+            let trip = TransitTrip(depart: legs.first?.depart, arrive: legs.last?.arrive,
+                                   durationSeconds: legs.reduce(0) { $0 + $1.durationSeconds },
+                                   transfers: max(0, frequency - 1), legs: legs)
+            nav?.stop()
+            nav = nil
+            navSub = nil
+            glide.stop()
+            transitJourney = TransitJourney(trip: trip, destination: journey.destination, stops: stops,
+                                            stopLegs: Array(stopLegs.dropLast()), boarded: retained != nil)
+            startTransitLeg()
+        }
+    }
+
+    func endJustDrive() {
+        endNavigation()
+    }
+
+    private func clearJustDrive() {
+        justDrive = false
+        driveRoadTask?.cancel()
+        driveRoadTask = nil
+        driveSample = nil
+        driveRoad = nil
+        driveLimit = nil
+        driveSpeed = 0
+        driveCoordinate = nil
+        driveBearing = 0
+    }
+
+    private func updateDriveRoad(_ loc: CLLocation) {
+        guard loc.horizontalAccuracy >= 0, loc.horizontalAccuracy <= 60 else { return }
+        if loc.course >= 0 && loc.speed > 0.8 { driveBearing = loc.course }
+        driveCoordinate = loc.coordinate
+        driveSpeed = max(0, loc.speed)
+        mapTick += 1
+        let point = LatLng(loc.coordinate.latitude, loc.coordinate.longitude)
+        guard driveSample.map({ point.distance(to: $0) > 120 }) ?? true else { return }
+        driveSample = point
+        driveRoad = nil
+        driveLimit = nil
+        driveRoadTask?.cancel()
+        driveRoadTask = Task {
+            let result = await DriveRoad.lookup(point, course: loc.course)
+            guard justDrive, !Task.isCancelled else { return }
+            driveRoad = result?.name
+            driveLimit = result?.limit
+        }
     }
 
     func endNavigation() {
+        clearNearbyControls()
+        if #available(iOS 16.2, *) { JourneyActivity.shared.finish() }
+        journeyStopTask?.cancel()
+        journeyStopTask = nil
+        addingJourneyStop = false
+        selected = nil
+        if justDrive { clearJustDrive() }
+        UIApplication.shared.isIdleTimerDisabled = false
+        transitJourney = nil
         nav?.stop()
         glide.stop()
         nav = nil
@@ -748,7 +1209,6 @@ final class AppModel: ObservableObject {
         map?.showsUserLocation = true
         directions = nil
         showSteps = false
-        browseLook = .north
         browseFollowing = false
         resetCamera()
     }
@@ -769,6 +1229,7 @@ final class AppModel: ObservableObject {
             return
         }
         guard let loc = location.last else {
+            resetCamera()
             if location.denied { LocationService.openSettings() } else { location.start() }
             return
         }
@@ -798,8 +1259,22 @@ final class AppModel: ObservableObject {
                       edgePadding: UIEdgeInsets(top: 0, left: sideInset, bottom: 0, right: 0), completionHandler: nil)
     }
 
+    func adjustNavZoom(wider: Bool) {
+        guard let n = nav, let map else { return }
+        let factor = wider ? 1.5 : 1 / 1.5
+        if n.following, location.last != nil {
+            glide.adjustZoom(by: factor)
+        } else {
+            let cam = map.camera
+            cam.altitude = min(20_000_000, max(20, cam.altitude * factor))
+            map.setCamera(cam, withDuration: 0.25, animationTimingFunction: nil)
+        }
+    }
+
     func recenterNav() {
         guard let n = nav else { return }
+        glide.resetZoom()
+        n.showingOverview = false
         n.following = true
         if let loc = location.last { followCamera(n, loc, animated: true) }
     }
@@ -807,21 +1282,135 @@ final class AppModel: ObservableObject {
     /** Show the whole remaining trip; the camera stops following until re-centered. */
     func overviewNav() {
         guard let n = nav else { return }
+        if n.showingOverview { recenterNav(); return }
+        n.showingOverview = true
         n.following = false
         let line = n.progress.map { Geo.slice(n.route.polyline, from: $0.alongMeters, to: Geo.length(n.route.polyline)) } ?? n.route.polyline
         frame(line, bottomFraction: 0.25, top: 200)
     }
 
+    private func refreshActivity() {
+        guard #available(iOS 16.2, *), hasActiveJourney else { return }
+        let title: String, detail: String, symbol: String
+        var summary: String?
+        var cue: String?
+        if let n = nav {
+            let step = n.nextManeuver
+            let progress = n.progress
+            let time = progress?.remainingSeconds ?? n.route.durationSeconds
+            let distance = progress?.remainingMeters ?? n.route.distanceMeters
+            summary = "\(Fmt.duration(time)) · \(Fmt.distance(distance)) · \(Fmt.arrival(time))"
+            if n.arrived {
+                title = L10n.isCzech ? "Jste v cíli" : "You have arrived"
+                detail = n.destination.name
+                symbol = "flag.checkered"
+                cue = "\(n.route.id)-arrival"
+            } else if n.rerouting || progress?.offRoute == true || n.gpsLost {
+                title = n.gpsLost ? L10n.text("GPS signal lost") : L10n.text("Rerouting")
+                detail = n.destination.name
+                symbol = "location.slash"
+            } else {
+                title = step.map { L10n.isCzech ? CzechNavigation.prompt($0) : $0.instruction } ?? n.destination.name
+                detail = progress.map { Fmt.distance($0.distanceToNext) } ?? n.destination.name
+                symbol = step.map { maneuverSymbol($0.type) } ?? "location.north.fill"
+                let lead = n.route.mode == .drive ? min(450, max(90, n.speedMps * 14)) : n.route.mode == .bike ? 75.0 : 35.0
+                if let progress, let index = progress.nextIndex, let step,
+                   step.type != .depart, progress.distanceToNext >= 0, progress.distanceToNext <= lead {
+                    cue = "\(n.route.id)-\(index)"
+                }
+            }
+        } else if let journey = transitJourney {
+            let leg = journey.leg
+            if leg.isWalk {
+                title = leg.toName
+                detail = L10n.text("Walk")
+            } else {
+                let action = journey.boarded ? (L10n.isCzech ? "Vystupte" : "Get off") : (L10n.isCzech ? "Nastupte" : "Board")
+                title = action + " · " + (journey.boarded ? leg.toName : leg.fromName)
+                detail = leg.line.isEmpty ? L10n.text("Transit") : leg.line
+                summary = leg.headsign
+                if !journey.boarded { cue = "\(journey.trip.id)-board-\(journey.index)" }
+            }
+            symbol = leg.isWalk ? "figure.walk" : "tram.fill"
+        } else {
+            title = L10n.text("Just drive")
+            detail = driveRoad ?? "Kite"
+            symbol = "car.fill"
+        }
+        JourneyActivity.shared.show(.init(instruction: title, detail: detail, symbol: symbol, summary: summary), cue: cue)
+    }
+
+    func suspendNavigationDisplay() {
+        if nav != nil { glide.suspend() }
+    }
+
+    func resumeNavigationDisplay() {
+        defer { refreshActivity() }
+        guard let n = nav, !n.arrived else { return }
+        if let fix = location.navigationFix(maximumError: navigationAccuracy(for: n.route.mode)) {
+            followCamera(n, fix, animated: false)
+        } else {
+            glide.suspend()
+            n.waitForFreshLocation()
+            location.start()
+        }
+        mapTick += 1
+    }
+
     private func locationChanged(_ loc: CLLocation) {
+        defer { refreshActivity() }
+        if !location.reducedAccuracy { refreshNearbyControls(loc) }
         if location.reducedAccuracy || loc.horizontalAccuracy > 200 { areaRisk = nil }
+        if let journey = transitJourney, !location.reducedAccuracy, updateTransitPosition(loc, journey: journey) { return }
         guard let n = nav else {
+            if transitJourney != nil { return }
+            if justDrive {
+                guard !location.reducedAccuracy, loc.horizontalAccuracy <= navigationAccuracy(for: .drive) else { return }
+                updateDriveRoad(loc)
+            }
             followBrowse(loc, entering: false)
             return
         }
+        guard !location.reducedAccuracy, loc.horizontalAccuracy <= navigationAccuracy(for: n.route.mode) else { return }
         n.handle(loc)
-        followCamera(n, loc, animated: true)
-        mapTick += 1
-        tripCheck(n)
+        if nav === n, UIApplication.shared.applicationState == .active {
+            followCamera(n, loc, animated: true)
+            mapTick += 1
+        }
+        if transitJourney == nil, nav === n { tripCheck(n) }
+    }
+
+    private func navigationAccuracy(for mode: TravelMode) -> Double { mode == .drive ? 60 : 40 }
+
+    private func updateTransitPosition(_ loc: CLLocation, journey: TransitJourney) -> Bool {
+        let leg = journey.leg
+        let here = LatLng(loc.coordinate.latitude, loc.coordinate.longitude)
+        guard loc.horizontalAccuracy >= 0, loc.horizontalAccuracy <= 55,
+              let end = leg.arrivalPoint else { return false }
+        if leg.isWalk {
+            let distance = here.distance(to: end)
+            let approachingOnRoute = (nav?.progress?.remainingMeters ?? .infinity) <= 80
+            guard distance <= 32 || (distance <= 65 && approachingOnRoute) else { return false }
+        } else {
+            let match = Geo.project(here, on: leg.path)
+            if !journey.boarded {
+                let departed = leg.depart.map { $0 <= loc.timestamp.addingTimeInterval(60) } ?? true
+                if leg.path.count >= 2, departed, loc.speed >= 3, match.offset <= 60, match.along >= 65 {
+                    if let earlier = journey.boardingProgress, match.along - earlier >= 30 {
+                        boardTransit()
+                    } else if journey.boardingProgress == nil {
+                        transitJourney?.boardingProgress = match.along
+                    }
+                } else {
+                    transitJourney?.boardingProgress = nil
+                }
+                return true
+            }
+            guard here.distance(to: end) <= 55,
+                  leg.path.count < 2 || Geo.length(leg.path) - match.along < 130 else { return true }
+        }
+        completeTransitLeg(tripID: journey.trip.id, index: journey.index)
+        return true
     }
 
     /** Keeps the saved trip fresh while driving, and on arriving forgets it. */
@@ -847,6 +1436,7 @@ final class AppModel: ObservableObject {
     func cycleDriveLook() {
         settings.driveLook = settings.driveLook.next
         guard let n = nav else { return }
+        n.showingOverview = false
         n.following = true
         if let loc = location.last { followCamera(n, loc, animated: true) }
     }
@@ -854,7 +1444,8 @@ final class AppModel: ObservableObject {
     // MARK: Map
 
     func centerOnUser() {
-        guard let map, let loc = location.last ?? map.userLocation?.location else {
+        location.requestPreciseLocation()
+        guard let map, let loc = location.last else {
             if location.denied { LocationService.openSettings() } else { location.start() }
             return
         }
@@ -872,7 +1463,7 @@ final class AppModel: ObservableObject {
     private func resetCamera() {
         guard let map else { return }
         let cam = map.camera
-        cam.pitch = 0
+        cam.pitch = browsePitch
         cam.heading = 0
         map.setCamera(cam, withDuration: 0.5, animationTimingFunction: nil, edgePadding: .zero, completionHandler: nil)
     }
@@ -881,10 +1472,10 @@ final class AppModel: ObservableObject {
         guard let map, !points.isEmpty else { return }
         // Showing a place or a route: stop following, or the next fix would pull the map away.
         browseFollowing = false
-        if nav == nil { browseLook = .north }
+        let pitch = nav == nil ? browsePitch : 0
         if points.count == 1 {
             let c = CLLocationCoordinate2D(latitude: points[0].lat, longitude: points[0].lng)
-            map.setCamera(MLNMapCamera(lookingAtCenter: c, acrossDistance: 1200, pitch: 0, heading: 0), withDuration: 0.3,
+            map.setCamera(MLNMapCamera(lookingAtCenter: c, acrossDistance: 1200, pitch: pitch, heading: 0), withDuration: 0.3,
                           animationTimingFunction: nil, edgePadding: UIEdgeInsets(top: 0, left: sideInset, bottom: 0, right: 0),
                           completionHandler: nil)
             return
@@ -897,9 +1488,11 @@ final class AppModel: ObservableObject {
         let pad = sideInset > 0 ? UIEdgeInsets(top: 60, left: sideInset + 40, bottom: 60, right: 40)
                                 : UIEdgeInsets(top: top, left: 40, bottom: map.bounds.height * bottomFraction + 20, right: 40)
         let cam = map.cameraThatFitsCoordinateBounds(bounds, edgePadding: pad)
-        cam.pitch = 0
+        cam.pitch = pitch
         cam.heading = 0
         if cam.altitude < 500 { cam.altitude = 500 }
         map.setCamera(cam, withDuration: 0.6, animationTimingFunction: CAMediaTimingFunction(name: .easeInEaseOut))
     }
+
+    var browsePitch: CGFloat { browseLook == .tilted ? 44 : 0 }
 }

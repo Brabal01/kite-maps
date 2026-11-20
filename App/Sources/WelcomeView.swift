@@ -57,8 +57,8 @@ struct WelcomeView: View {
                 Image(systemName: icon).font(.system(size: 20, weight: .semibold)).frame(width: 28)
                     .foregroundColor(picked ? Vela.accent(scheme) : .secondary)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(title).font(.headline)
-                    Text(detail).font(.subheadline).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Text(L10n.text(title)).font(.headline)
+                    Text(L10n.text(detail)).font(.subheadline).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
                 Image(systemName: picked ? "checkmark.circle.fill" : "circle")
@@ -104,9 +104,9 @@ struct WazeIntroView: View {
                         .foregroundColor(.white)
                         .background(Capsule().fill(Color(hex: 0xF29900)))
                 }
-                Text(Self.police
+                Text(L10n.text(Self.police
                      ? "Live police, crash and hazard reports from Waze drivers, on the map and as warnings while you drive, plus a police heat map and risk score."
-                     : "Live road closures from Waze, on the map and as warnings while you drive.")
+                     : "Live road closures from Waze, on the map and as warnings while you drive."))
                     .font(.title3).foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -143,8 +143,8 @@ struct WazeIntroView: View {
                 Image(systemName: icon).font(.system(size: 20, weight: .semibold)).frame(width: 28)
                     .foregroundColor(picked ? Vela.accent(scheme) : .secondary)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(title).font(.headline)
-                    Text(detail).font(.subheadline).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Text(L10n.text(title)).font(.headline)
+                    Text(L10n.text(detail)).font(.subheadline).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
                 Image(systemName: picked ? "checkmark.circle.fill" : "circle")

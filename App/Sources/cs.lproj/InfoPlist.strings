@@ -1,0 +1,5 @@
+"NSLocationWhenInUseUsageDescription" = "Kite vás zobrazí na mapě, najde místa v okolí a povede vás po trase.";
+"NSLocationAlwaysAndWhenInUseUsageDescription" = "Kite vás může při navigaci vést i se zhasnutým displejem.";
+"NSMicrophoneUsageDescription" = "Kite používá mikrofon, když spustíte hlasové vyhledávání.";
+"NSSpeechRecognitionUsageDescription" = "Kite převede vyslovený dotaz na text pro vyhledávání.";
+"NSAppleMusicUsageDescription" = "Kite zobrazuje a ovládá Apple Music, zatímco je na obrazovce navigace.";

@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 /** The spring the sheet settles with. */
-private let sheetSnap = Animation.spring(response: 0.32, dampingFraction: 0.85)
+private let sheetSnap = Animation.spring(response: 0.27, dampingFraction: 0.89)
 
 /**
  * Vela's draggable bottom sheet: peek, half and full heights. Drag it from anywhere: below full
@@ -13,6 +13,7 @@ struct BottomSheet<Header: View, Content: View>: View {
     @Binding var detent: SheetDetent
     let containerHeight: CGFloat
     var peekHeight: CGFloat = 150
+    var allowsCollapse = false
     /** Room to keep free above the sheet at full height, for a card that sits at the top. */
     var topClearance: CGFloat = 0
     @ViewBuilder var header: () -> Header
@@ -30,6 +31,7 @@ struct BottomSheet<Header: View, Content: View>: View {
 
     static func height(_ d: SheetDetent, container: CGFloat, peek: CGFloat) -> CGFloat {
         switch d {
+        case .collapsed: return 68
         case .peek: return peek
         case .half: return container * 0.46
         case .full: return container * 0.94
@@ -41,10 +43,12 @@ struct BottomSheet<Header: View, Content: View>: View {
         return topClearance > 0 ? min(h, containerHeight - topClearance) : h
     }
 
+    private var maxHeight: CGFloat { max(68, height(.full)) }
+
     private var current: CGFloat {
         let h = height(detent) - drag - bodyDrag
-        let top = topClearance > 0 ? containerHeight - topClearance + 20 : containerHeight * 0.96
-        return min(max(h, peekHeight * 0.8), top)
+        let top = allowsCollapse ? maxHeight : containerHeight * 0.96
+        return min(max(h, allowsCollapse ? 68 : peekHeight * 0.8), top)
     }
 
     var body: some View {
@@ -55,19 +59,30 @@ struct BottomSheet<Header: View, Content: View>: View {
                     .frame(width: 36, height: 4)
                     .padding(.top, 8)
                     .padding(.bottom, 6)
-                header()
+                if allowsCollapse && detent == .collapsed {
+                    Label(L10n.text("Show route details"), systemImage: "chevron.up").font(.subheadline.bold())
+                        .frame(maxWidth: .infinity, minHeight: 40)
+                } else { header() }
             }
             .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
             // Drags are measured on the screen, not on the sheet: the sheet moves under the
             // finger, so measuring on the sheet fed that movement back in and made it shake.
             .gesture(
-                DragGesture(minimumDistance: 6, coordinateSpace: .global)
-                    .updating($drag) { v, s, _ in s = v.translation.height }
-                    .onEnded { settle($0) }
+                DragGesture(minimumDistance: 3, coordinateSpace: .global)
+                    .updating($drag) { value, state, transaction in
+                        transaction.animation = nil
+                        if abs(value.translation.height) > abs(value.translation.width) {
+                            state = value.translation.height
+                        }
+                    }
+                    .onEnded { value in
+                        if abs(value.translation.height) > abs(value.translation.width) { settle(value) }
+                    }
             )
             .onTapGesture {
-                if detent == .peek { withAnimation(sheetSnap) { detent = .half } }
+                if detent == .collapsed { withAnimation(sheetSnap) { detent = .peek } }
+                else if detent == .peek { withAnimation(sheetSnap) { detent = .half } }
             }
             content()
                 .frame(maxHeight: .infinity, alignment: .top)
@@ -90,14 +105,17 @@ struct BottomSheet<Header: View, Content: View>: View {
                     }
                 }
                 .simultaneousGesture(
-                    DragGesture(minimumDistance: 12, coordinateSpace: .global)
+                    DragGesture(minimumDistance: allowsCollapse ? 5 : 12, coordinateSpace: .global)
                         .onChanged { v in
                             if bodyDragMode?.start != v.startLocation {
                                 bodyDragMode = (v.startLocation, follows(v))
                             }
                         }
-                        .updating($bodyDrag) { v, s, _ in
-                            if movesSheet(v) { s = v.translation.height }
+                        .updating($bodyDrag) { v, s, transaction in
+                            transaction.animation = nil
+                            if bodyDragMode?.start == v.startLocation ? movesSheet(v) : follows(v) {
+                                s = v.translation.height
+                            }
                         }
                         .onEnded { v in
                             if movesSheet(v) { settle(v) }
@@ -105,7 +123,8 @@ struct BottomSheet<Header: View, Content: View>: View {
                         }
                 )
         }
-        .frame(height: current, alignment: .top)
+        // Keep the route sheet's contents laid out once and translate the panel under the finger.
+        .frame(height: allowsCollapse ? maxHeight : current, alignment: .top)
         .frame(maxWidth: .infinity)
         .background(
             // Frosted, like iOS 26: mostly solid so text stays easy to read.
@@ -115,6 +134,7 @@ struct BottomSheet<Header: View, Content: View>: View {
                 .shadow(color: .black.opacity(0.25), radius: 14, y: -2)
         )
         .clipShape(shape)
+        .offset(y: allowsCollapse ? maxHeight - current : 0)
         // Below full height it floats just off the screen's edges, the way iOS 26 sheets do.
         .padding(.horizontal, floating ? 8 : 0)
         .padding(.bottom, floating ? 8 : 0)
@@ -143,8 +163,10 @@ extension BottomSheet {
     }
 
     private func settle(_ v: DragGesture.Value) {
-        let end = height(detent) - v.predictedEndTranslation.height
-        let options: [SheetDetent] = [.peek, .half, .full]
+        let displacement = v.translation.height
+        let momentum = (v.predictedEndTranslation.height - displacement) * 0.7
+        let end = height(detent) - displacement - momentum
+        let options: [SheetDetent] = allowsCollapse ? [.collapsed, .peek, .half, .full] : [.peek, .half, .full]
         let best = options.min { a, b in
             abs(height(a) - end) < abs(height(b) - end)
         } ?? .half

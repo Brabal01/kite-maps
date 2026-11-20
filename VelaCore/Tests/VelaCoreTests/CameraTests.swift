@@ -21,7 +21,24 @@ final class CameraTests: XCTestCase {
         XCTAssertEqual(lights.count, 4)
         let line = [LatLng(0, 0), LatLng(0.01, 0)]
         let on = Overpass.signalsOnRoute(lights, line: line)
-        XCTAssertEqual(on, [LatLng(0.0050, 0.0001), LatLng(0.0095, 0)])
+        guard on.count == 2 else { return XCTFail("Expected two intersections") }
+        XCTAssertEqual(on[0].lat, 0.0052, accuracy: 0.00001)
+        XCTAssertEqual(on[0].lng, 0, accuracy: 0.00001)
+        XCTAssertEqual(on[1].lat, 0.0095, accuracy: 0.00001)
+        XCTAssertEqual(on[1].lng, 0, accuracy: 0.00001)
+    }
+
+    func testTrafficLightsChooseNearestApproach() {
+        let line = [LatLng(50.0, 14.0), LatLng(50.01, 14.0)]
+        let lights = [
+            LatLng(50.0050, 14.00010), // opposite approach, roughly 7 m from the route
+            LatLng(50.0051, 14.00001), // on our approach, less than 1 m from it
+            LatLng(50.0052, 14.00100), // cross street: too far away
+        ]
+        let on = Overpass.signalsOnRoute(lights, line: line)
+        guard on.count == 1 else { return XCTFail("Expected one intersection") }
+        XCTAssertEqual(on[0].lat, 50.0051, accuracy: 0.00001)
+        XCTAssertEqual(on[0].lng, 14.0, accuracy: 0.00001)
     }
 
     func testQuery() {

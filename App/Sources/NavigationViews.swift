@@ -7,6 +7,8 @@ struct NavigationOverlay: View {
     @ObservedObject var nav: Navigator
     @State private var showSteps = false
     @State private var showAlong = false
+    @State private var showParking = false
+    @State private var showMedia = false
     @State private var confirmEnd = false
     @Environment(\.colorScheme) private var scheme
     @Environment(\.sidePanel) private var panel
@@ -15,7 +17,7 @@ struct NavigationOverlay: View {
     private var etaText: String {
         let left = nav.progress?.remainingSeconds ?? nav.route.durationSeconds
         let link = nav.destination.shareURL.map { "\n\($0.absoluteString)" } ?? ""
-        return "On my way to \(nav.destination.name), arriving around \(Fmt.arrival(left)) (\(Fmt.duration(left)) away).\(link)"
+        return L10n.format("On my way to %@, arriving around %@ (%@ away).", nav.destination.name, Fmt.arrival(left), Fmt.duration(left)) + link
     }
 
     /** The voice or map view just picked, shown by its button for a moment. */
@@ -46,6 +48,11 @@ struct NavigationOverlay: View {
         if nav.averageCheck != nil { list.append(.average) }
         if nav.aircraftNear != nil { list.append(.aircraft) }
         return list
+    }
+
+    private var roadEventsStatus: String {
+        if nav.controlsUnavailable { return "Road data temporarily unavailable" }
+        return nav.routeControls == nil ? "Checking the route…" : "No mapped road events ahead"
     }
 
     /** The one warning on the big card. */
@@ -79,12 +86,33 @@ struct NavigationOverlay: View {
         // One column, so however many warnings are up, they push the map buttons down rather than cover them.
         VStack(spacing: 10) {
             VStack(spacing: 10) {
+                if let journey = model.transitJourney, journey.leg.isWalk, !nav.arrived {
+                    HStack {
+                        Label("Walk to the stop", systemImage: "figure.walk").font(.caption.weight(.semibold))
+                        Spacer()
+                        Button("At the stop") { model.advanceTransit() }
+                            .font(.caption.weight(.semibold))
+                    }
+                    .padding(8)
+                    .glass(RoundedRectangle(cornerRadius: 12))
+                }
                 if nav.arrived {
+                    if nav.route.mode == .drive {
+                        HStack {
+                            if let side = nav.destinationSide { Label(L10n.format("Destination on the %@", L10n.text(side.capitalized).lowercased()), systemImage: "mappin.circle") }
+                            Spacer()
+                            Button("Find visitor parking") { showParking = true }
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .padding(12)
+                        .glass(RoundedRectangle(cornerRadius: 14))
+                    }
                     ArrivedCard(name: nav.destination.name, onPark: nav.route.mode == .drive ? { model.saveParking() } : nil,
                                 note: nav.wazeWarned > 0 ? "Waze drivers warned you about \(nav.wazeWarned) report\(nav.wazeWarned == 1 ? "" : "s") on the way" : nil) { model.endNavigation() }
                 } else {
                     InstructionBanner(nav: nav)
                         .fixedSize(horizontal: false, vertical: true)
+
                 }
                 // One warning at a time; the others wait in the pill under it.
                 switch mainAlert {
@@ -153,6 +181,16 @@ struct NavigationOverlay: View {
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { peek = nil }
             }
 
+            if !nav.arrived {
+                HStack {
+                    RoadControlTimeline(controls: nav.upcomingControls, emptyMessage: roadEventsStatus,
+                                        compactStatus: true)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 12)
+                .inSidePanel(panel)
+            }
+
             Spacer(minLength: 0)
 
             HStack(alignment: .bottom) {
@@ -162,33 +200,48 @@ struct NavigationOverlay: View {
                     // On a short phone (SE) a warning card plus lanes leaves no room: the chip gives way to the card.
                     // The same when the next speed limit is up: on a short phone the column would reach the cards.
                     if showRiskChip, !((mainAlert != nil || nav.limitDropAhead != nil) && Self.shortScreen), let risk = nav.policeRisk { PoliceRiskChip(score: risk) }
-                    SpeedBadge(mps: nav.speedMps, limitKmh: nav.speedLimitKmh, coming: nav.limitDropAhead)
+                    if settings.showNavSpeed && !settings.speedOnRight {
+                        SpeedBadge(mps: nav.speedMps, limitKmh: nav.speedLimitKmh, coming: nav.limitDropAhead)
+                    }
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 10) {
                     if let note = buttonNote {
                         // Says which of the three the speaker (or the map view) is on now, for a moment.
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(note.title).font(.system(size: 18, weight: .bold)).foregroundColor(Vela.accentText(.dark))
-                            Text(note.detail).font(.system(size: 15, weight: .medium)).foregroundColor(.white)
+                            Text(L10n.text(note.title)).font(.system(size: 18, weight: .bold)).foregroundColor(Vela.accentText(.dark))
+                            Text(L10n.text(note.detail)).font(.system(size: 15, weight: .medium)).foregroundColor(.white)
                         }
                         .padding(.horizontal, 14).padding(.vertical, 10)
                         .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color(hex: 0x0F172A).opacity(0.95)))
                         .shadow(color: .black.opacity(0.3), radius: 6, y: 2)
                         .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .bottomTrailing)))
                     }
-                    // 3D, 2D or north up: one tap each, and the drive carries on.
-                    MapLookButton(look: settings.driveLook, size: 52) {
-                        model.cycleDriveLook()
-                        let look = settings.driveLook
-                        withAnimation(.easeOut(duration: 0.2)) { buttonNote = ButtonNote(title: look.title, detail: look.detail) }
+                    HStack(spacing: 10) {
+                        if !nav.arrived {
+                            MapFab(icon: nav.showingOverview ? "location.north.fill" : "arrow.up.left.and.arrow.down.right", size: 52) {
+                                model.overviewNav()
+                            }
+                            .accessibilityLabel(nav.showingOverview ? "Follow your location" : "Show remaining route")
+                        }
+                        MapLookButton(look: settings.driveLook, size: 52) {
+                            model.cycleDriveLook()
+                            let look = settings.driveLook
+                            withAnimation(.easeOut(duration: 0.2)) { buttonNote = ButtonNote(title: look.title, detail: look.detail) }
+                        }
+                    }
+                    HStack(spacing: 6) {
+                        MapFab(icon: "minus", size: 44) { model.adjustNavZoom(wider: true) }
+                            .accessibilityLabel("Zoom out")
+                        MapFab(icon: "plus", size: 44) { model.adjustNavZoom(wider: false) }
+                            .accessibilityLabel("Zoom in")
                     }
                     MapFab(icon: nav.voiceMode.icon, tint: nav.voiceMode == .alerts ? Vela.accentText(scheme) : .primary, size: 52) {
                         nav.voiceMode = nav.voiceMode.next
                         let v = nav.voiceMode
                         withAnimation(.easeOut(duration: 0.2)) { buttonNote = ButtonNote(title: v.title, detail: v.detail) }
                     }
-                    .accessibilityLabel("Voice: \(nav.voiceMode.title)")
+                    .accessibilityLabel(L10n.format("Voice: %@", L10n.text(nav.voiceMode.title)))
                     .accessibilityHint("Switches between voice on, alerts only and voice off")
                 }
                 .task(id: buttonNote) {
@@ -196,9 +249,15 @@ struct NavigationOverlay: View {
                     try? await Task.sleep(nanoseconds: 2_500_000_000)
                     withAnimation(.easeIn(duration: 0.25)) { buttonNote = nil }
                 }
+                if settings.showNavSpeed && settings.speedOnRight {
+                    SpeedBadge(mps: nav.speedMps, limitKmh: nav.speedLimitKmh, coming: nav.limitDropAhead)
+                }
             }
             .padding(.horizontal, 16)
-            if !nav.following {
+            if settings.showMusicControls && nav.route.mode == .drive && !nav.arrived {
+                DriveMusicPanel().padding(.horizontal, 16).inSidePanel(panel)
+            }
+            if !nav.following && !nav.showingOverview {
                 Button { model.recenterNav() } label: {
                     Label("Re-centre", systemImage: "location.north.line.fill")
                         .font(.system(size: 18, weight: .bold))
@@ -246,7 +305,7 @@ struct NavigationOverlay: View {
         .background(
             // The road you're on, just under the arrow (the map keeps the arrow at this height while following).
             GeometryReader { g in
-                if nav.following, !nav.arrived, !chipShowing, let road = nav.currentRoad {
+                if settings.showNavRoad, nav.following, !nav.arrived, !chipShowing, let road = nav.currentRoad {
                     Text(road)
                         .font(.system(size: 15, weight: .semibold))
                         .lineLimit(1).minimumScaleFactor(0.7)
@@ -266,6 +325,14 @@ struct NavigationOverlay: View {
                 try? await Task.sleep(nanoseconds: 4_000_000_000)
                 withAnimation { confirmEnd = true }
             }
+        }
+        .alert("Couldn’t add the stop", isPresented: Binding(
+            get: { nav.stopFailed }, set: { if !$0 { nav.stopFailed = false } }
+        )) {
+            Button("OK", role: .cancel) { nav.stopFailed = false }
+        }
+        .sheet(isPresented: $showParking) {
+            ArrivalParkingSheet(model: model, destination: nav.destination).kiteType()
         }
         .sheet(isPresented: $showAlong) {
             AlongRouteSheet(nav: nav).kiteType()
@@ -287,6 +354,19 @@ struct NavigationOverlay: View {
                                 model.overviewNav()
                             }
                         }
+                        if nav.route.mode == .drive {
+                            Button {
+                                showMedia.toggle()
+                            } label: {
+                                Label("Media controls", systemImage: "play.rectangle")
+                                    .font(.subheadline.weight(.semibold))
+                                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            }
+                            if showMedia { DriveMusicPanel(initiallyExpanded: true) }
+                        }
+                        tripSummary
+                        RoadEventsList(controls: nav.allUpcomingControls, emptyMessage: roadEventsStatus)
+                        Text("Steps").font(.headline)
                         StepsList(route: nav.route, from: nav.progress?.nextIndex ?? 0)
                     }
                     .padding(.horizontal, 16)
@@ -299,6 +379,24 @@ struct NavigationOverlay: View {
         }
     }
 
+    private var tripSummary: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(nav.destination.name, systemImage: "mappin.circle.fill")
+                .font(.headline).lineLimit(2)
+            let seconds = nav.progress?.remainingSeconds ?? nav.route.durationSeconds
+            let meters = nav.progress?.remainingMeters ?? nav.route.distanceMeters
+            Text(L10n.format("%@ · arrive %@", Fmt.distance(meters), Fmt.arrival(seconds)))
+                .font(.subheadline.monospacedDigit()).foregroundStyle(.secondary)
+            if let next = nav.stops.first {
+                Label(L10n.format("Next stop: %@", next.name), systemImage: "point.topleft.down.to.point.bottomright.curvepath")
+                    .font(.subheadline).lineLimit(2)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 16).fill(Vela.chip(scheme)))
+    }
+
     private func tripAction(_ icon: String, _ title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) { tripActionLabel(icon, title) }.buttonStyle(.plain)
     }
@@ -306,7 +404,7 @@ struct NavigationOverlay: View {
     private func tripActionLabel(_ icon: String, _ title: String) -> some View {
         VStack(spacing: 6) {
             Image(systemName: icon).font(.system(size: 22, weight: .bold))
-            Text(title).font(.system(size: 15, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.8)
+            Text(L10n.text(title)).font(.system(size: 15, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.8)
         }
         .foregroundColor(.primary)
         .frame(maxWidth: .infinity, minHeight: 78)
@@ -321,8 +419,48 @@ struct NavigationOverlay: View {
 struct InstructionBanner: View {
     @ObservedObject var nav: Navigator
     @Environment(\.colorScheme) private var scheme
+    @State private var preview = 0
 
     var body: some View {
+        Group {
+            if preview > 0, nav.upcomingInstructions.indices.contains(preview) {
+                previewCard(nav.upcomingInstructions[preview])
+            } else {
+                liveBanner
+            }
+        }
+        .simultaneousGesture(DragGesture(minimumDistance: 24).onEnded { gesture in
+            let x = gesture.translation.width
+            guard abs(x) > abs(gesture.translation.height) * 1.5 else { return }
+            let maxIndex = max(0, nav.upcomingInstructions.count - 1)
+            preview = max(0, min(maxIndex, preview + (x < 0 ? 1 : -1)))
+        })
+        .onChange(of: nav.progress?.nextIndex) { _ in preview = 0 }
+        .onChange(of: nav.route.id) { _ in preview = 0 }
+        .accessibilityAction(named: Text("Repeat instruction")) { nav.repeatInstruction() }
+    }
+
+    private func previewCard(_ step: Maneuver) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("Upcoming turn", systemImage: maneuverSymbol(step.type)).font(.headline)
+                Spacer()
+                Button("Back to navigation") { preview = 0 }.font(.subheadline.weight(.semibold))
+            }
+            Text(Self.headline(step)).font(.title3.weight(.bold)).lineLimit(2)
+            let distance = max(0, step.alongMeters - (nav.progress?.alongMeters ?? 0))
+            Text(Fmt.distance(distance)).font(.subheadline.monospacedDigit())
+            if let lanes = LaneGuide.lanes(for: step, leftTraffic: Geo.drivesOnLeft(step.location)),
+               !lanes.lanes.isEmpty {
+                LaneStrip(lanes: lanes.lanes, turn: step.type)
+            }
+        }
+        .padding(14)
+        .glass(RoundedRectangle(cornerRadius: 18))
+    }
+
+    @ViewBuilder
+    private var liveBanner: some View {
         let m = nav.nextManeuver
         let leftTraffic = Geo.drivesOnLeft(m?.location ?? LatLng(0, 0))
         let refs = RoadRefs.find(m?.instruction ?? "")
@@ -345,7 +483,7 @@ struct InstructionBanner: View {
             .glass(Capsule())
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("In \(Fmt.distance(p.distanceToNext)), \(Self.headline(m))")
+            .accessibilityLabel(L10n.format("In %@, %@", String(describing: Fmt.distance(p.distanceToNext)), String(describing: Self.headline(m))))
         } else {
             full(m, leftTraffic: leftTraffic, refs: refs)
         }
@@ -357,7 +495,9 @@ struct InstructionBanner: View {
      */
     private func full(_ m: Maneuver?, leftTraffic: Bool, refs: [String]) -> some View {
         let lanes: (lanes: [Lane], words: String)? = {
-            guard let m, let p = nav.progress, p.distanceToNext < 1_500 else { return nil }
+            guard let m, nav.route.mode == .drive, let p = nav.progress,
+                  LaneApproach.showsStrip(distance: p.distanceToNext, speed: nav.speedMps,
+                                          laneCount: m.lanes.count, offRoute: p.offRoute) else { return nil }
             return LaneGuide.lanes(for: m, leftTraffic: leftTraffic)
         }()
         return VStack(alignment: .leading, spacing: 10) {
@@ -392,11 +532,11 @@ struct InstructionBanner: View {
                             .lineLimit(2)
                             .minimumScaleFactor(0.75)
                     }
-                    if !refs.isEmpty {
+                    if m?.exitSign == nil && !refs.isEmpty {
                         HStack(spacing: 6) { ForEach(refs, id: \.self) { RoadShield(ref: $0) } }
                             .padding(.top, 2)
                     } else if m?.type == .roundabout, let road = m?.road {
-                        Text("onto \(road)").font(.system(size: 16, weight: .medium)).foregroundColor(Vela.muted(scheme)).lineLimit(1)
+                        Text(L10n.format("onto %@", String(describing: road))).font(.system(size: 16, weight: .medium)).foregroundColor(Vela.muted(scheme)).lineLimit(1)
                     }
                 }
                 Spacer(minLength: 0)
@@ -405,12 +545,40 @@ struct InstructionBanner: View {
                     VStack { Spacer(minLength: 0); thenView }
                 }
             }
+            if let sign = m?.exitSign {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        if let number = sign.number {
+                            Text(L10n.format("Exit %@", number)).font(.subheadline.weight(.heavy))
+                                .padding(.horizontal, 8).padding(.vertical, 3)
+                                .foregroundColor(Color(hex: 0x114333))
+                                .background(RoundedRectangle(cornerRadius: 4).fill(Color.white))
+                        }
+                        ForEach(Array((sign.references.isEmpty ? refs : sign.references).prefix(3).enumerated()), id: \.offset) { _, reference in
+                            RoadShield(ref: reference)
+                        }
+                    }
+                    if !sign.destinations.isEmpty {
+                        Text(sign.destinations.joined(separator: " · "))
+                            .font(.subheadline.weight(.semibold)).lineLimit(2)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8).foregroundColor(.white)
+                .background(RoundedRectangle(cornerRadius: 9).fill(Color(hex: 0x114333)))
+            }
             if let lanes {
-                HStack(spacing: 12) {
-                    LaneStrip(lanes: lanes.lanes, turn: m?.type ?? .straight, exitAngle: (m?.roundabout).map { $0.exits[$0.taken] })
-                    Text(lanes.words).font(.system(size: 17, weight: .bold)).lineLimit(2).minimumScaleFactor(0.8)
-                    Spacer(minLength: 0)
-                    thenView
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 8) {
+                        Text(lanes.words).font(.subheadline.weight(.bold)).lineLimit(2)
+                        Spacer(minLength: 0)
+                        thenView
+                    }
+                    if !lanes.lanes.isEmpty {
+                        LaneStrip(lanes: lanes.lanes, turn: m?.type ?? .straight, exitAngle: m?.roundabout.flatMap { shape in
+                            shape.exits.indices.contains(shape.taken) ? shape.exits[shape.taken] : nil
+                        })
+                    }
                 }
             }
         }
@@ -427,6 +595,11 @@ struct InstructionBanner: View {
             HStack(spacing: 6) {
                 Text("Then").font(.system(size: 14, weight: .semibold)).foregroundColor(Vela.muted(scheme))
                 Image(systemName: maneuverSymbol(then.type)).font(.system(size: 18, weight: .heavy))
+                if let meters = nav.thenDistanceMeters, meters >= 10 {
+                    Text(L10n.format("after %@", Fmt.distance(meters)))
+                        .font(.system(size: 13, weight: .semibold))
+                        .lineLimit(1).minimumScaleFactor(0.7)
+                }
                 if then.type == .roundabout, let n = then.exit {
                     // Which exit, so the next roundabout is known before the banner changes.
                     Text("\(n)").font(.system(size: 14, weight: .heavy)).foregroundColor(.white)
@@ -455,7 +628,8 @@ struct InstructionBanner: View {
 
     /** "6th exit" for a roundabout (the picture says the rest), else the instruction. */
     static func headline(_ m: Maneuver?) -> String {
-        guard let m else { return "Follow the route" }
+        guard let m else { return L10n.text("Follow the route") }
+        if L10n.isCzech { return CzechNavigation.prompt(m) }
         if m.type == .roundabout, let n = m.exit { return "\(ordinal(n)) exit" }
         return SpokenText.forScreen(m.instruction)
     }
@@ -481,6 +655,12 @@ enum LaneGuide {
         // Google's own advice ("Use the right lane") where the open map has no lanes: words only.
         if let hint = m.laneHint, !hint.localizedCaseInsensitiveContains("any lane"), m.type != .roundabout {
             let words = hint.replacingOccurrences(of: "use the ", with: "", options: .caseInsensitive)
+            if L10n.isCzech {
+                let lower = words.lowercased()
+                if lower == "right lane" { return ([], "Pravý pruh") }
+                if lower == "left lane" { return ([], "Levý pruh") }
+                if lower == "middle lane" { return ([], "Prostřední pruh") }
+            }
             return ([], words.prefix(1).uppercased() + words.dropFirst())
         }
         // The road's painted arrows, Google's advice, or the Highway Code's lanes, as many as the road in has.
@@ -491,8 +671,22 @@ enum LaneGuide {
     /** The lanes with words for the good ones, by the edge they touch: two of three on the left are "Left 2 lanes", not "Middle". */
     static func named(_ lanes: [Lane]) -> (lanes: [Lane], words: String)? {
         let valid = lanes.enumerated().filter(\.element.valid).map(\.offset)
-        guard let first = valid.first, let last = valid.last, valid.count < lanes.count else { return nil }
+        guard lanes.count > 1 else { return nil }
+        if valid.count == lanes.count { return (lanes, L10n.text("Any marked lane")) }
+        guard let first = valid.first, let last = valid.last else { return (lanes, L10n.text("Lane recommendation unavailable")) }
         let n = lanes.count, count = valid.count, many = count > 1 ? "\(count) lanes" : "lane"
+        if last - first + 1 != count {
+            let numbers = valid.map { String($0 + 1) }.joined(separator: ", ")
+            return (lanes, L10n.format("Lanes %@ from left", numbers))
+        }
+        if L10n.isCzech {
+            if count == 1 && first == 0 { return (lanes, "Levý pruh") }
+            if count == 1 && last == n - 1 { return (lanes, "Pravý pruh") }
+            if count == 1 { return (lanes, "Pruh číslo \(first + 1) zleva") }
+            if first == 0 { return (lanes, "\(count) pruhy vlevo") }
+            if last == n - 1 { return (lanes, "\(count) pruhy vpravo") }
+            return (lanes, "Prostřední pruhy")
+        }
         let words: String
         if first == 0 { words = "Left \(many)" }
         else if last == n - 1 { words = "Right \(many)" }
@@ -618,7 +812,7 @@ struct EndTripCard: View {
         VStack(spacing: 14) {
             VStack(spacing: 2) {
                 Text("End this trip?").font(.system(size: 24, weight: .heavy))
-                Text("to \(destination)").font(.system(size: 16, weight: .medium))
+                Text(L10n.format("to %@", String(describing: destination))).font(.system(size: 16, weight: .medium))
                     .foregroundColor(Vela.muted(scheme)).lineLimit(1)
             }
             HStack(spacing: 12) {
@@ -692,18 +886,24 @@ struct TripBar: View {
                     .foregroundColor(Vela.accentText(scheme))
                     .frame(maxWidth: .infinity)
             } else {
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                VStack(spacing: 2) {
+                    if let stop = nav.stops.first {
+                        Text(L10n.format("Next stop: %@", stop.name))
+                            .font(.caption.weight(.semibold)).foregroundColor(Vela.muted(scheme))
+                    }
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
                     (Text(arrive.time).font(.system(size: 26, weight: .heavy))
                         + Text(arrive.suffix).font(.system(size: 15, weight: .bold)))
                         .foregroundColor(color)
                     Text("\(left.value) \(left.unit) · \(dist.value) \(dist.unit)")
                         .font(.system(size: 19, weight: .semibold))
+                    }
                 }
                 .monospacedDigit()
                 .lineLimit(1).minimumScaleFactor(0.65)
                 .frame(maxWidth: .infinity)
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Arrive at \(Fmt.arrival(remaining)), \(Fmt.duration(remaining)), \(Fmt.distance(meters)) to go")
+                .accessibilityLabel(L10n.format("Arrive at %@, %@, %@ to go", String(describing: Fmt.arrival(remaining)), String(describing: Fmt.duration(remaining)), String(describing: Fmt.distance(meters))))
             }
             Button(action: onSteps) {
                 Image(systemName: "list.bullet")
@@ -725,6 +925,7 @@ struct TripBar: View {
     /** "9:18" and " pm" (nothing on a 24 hour clock), so the time stays big and the pm small. */
     static func arrivalParts(_ s: Double) -> (time: String, suffix: String) {
         let f = DateFormatter()
+        f.locale = AppSettings.shared.language.locale
         f.timeStyle = .short
         let full = f.string(from: Date().addingTimeInterval(s))
         for sym in [f.amSymbol, f.pmSymbol].compactMap({ $0 }) where !sym.isEmpty && full.contains(sym) {
@@ -738,7 +939,7 @@ struct TripBar: View {
     static func timeParts(_ s: Double) -> (value: String, unit: String) {
         let mins = max(1, Int((s / 60).rounded()))
         if mins < 60 { return ("\(mins)", "min") }
-        return (String(format: "%d:%02d", mins / 60, mins % 60), "hr")
+        return (String(format: "%d:%02d", mins / 60, mins % 60), L10n.isCzech ? "h" : "hr")
     }
 
     /** "2.1" and "mi" from "2.1 mi". */
@@ -749,7 +950,7 @@ struct TripBar: View {
     }
 }
 
-/** A faster route found on the way, in place of the trip bar: keep yours or take it. Left alone, it's taken. */
+/** A faster route found on the way, in place of the trip bar: keep yours or take it. Left alone, it expires. */
 struct FasterRouteCard: View {
     /** The chips under the title: further or shorter, and any charge it adds. */
     struct Fact: Hashable {
@@ -763,8 +964,8 @@ struct FasterRouteCard: View {
         // Under a quarter of a mile either way isn't worth a word.
         if abs(o.extraMeters) >= 400 {
             let d = Fmt.distance(abs(o.extraMeters))
-            out.append(o.extraMeters > 0 ? Fact(text: "\(d) longer", icon: "arrow.left.and.right", warn: true)
-                                         : Fact(text: "\(d) shorter", icon: "arrow.left.and.right", warn: false))
+            out.append(o.extraMeters > 0 ? Fact(text: L10n.format("%@ longer", d), icon: "arrow.left.and.right", warn: true)
+                                         : Fact(text: L10n.format("%@ shorter", d), icon: "arrow.left.and.right", warn: false))
         }
         for c in o.newCharges { out.append(Fact(text: c, icon: "sterlingsign.circle.fill", warn: true)) }
         return out
@@ -780,9 +981,9 @@ struct FasterRouteCard: View {
     var body: some View {
         VStack(spacing: 12) {
             VStack(spacing: 2) {
-                Text("Faster route · saves \(offer.minutes) min").font(.system(size: 23, weight: .heavy))
+                Text(L10n.format("Faster route · saves %@ min", String(describing: offer.minutes))).font(.system(size: 23, weight: .heavy))
                     .lineLimit(1).minimumScaleFactor(0.7)
-                Text((offer.via.map { "via \($0) · " } ?? "") + "taking it in a few seconds").font(.system(size: 16, weight: .medium))
+                Text((offer.via.map { L10n.format("via %@", $0) + " · " } ?? "") + L10n.text("Choose whether to switch")).font(.system(size: 16, weight: .medium))
                     .foregroundColor(Vela.muted(scheme)).lineLimit(1).minimumScaleFactor(0.75)
             }
             // What else changes: only shown when something does, so a plain faster way looks as before.
@@ -957,8 +1158,8 @@ struct WazeCard: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(Fmt.distance(ahead.meters)).font(.system(size: 38, weight: .heavy)).monospacedDigit()
                         .lineLimit(1).minimumScaleFactor(0.7)
-                    Text(a.title).font(.system(size: 21, weight: .bold)).lineLimit(1).minimumScaleFactor(0.7)
-                    Text(detail).font(.system(size: 15, weight: .medium)).opacity(0.9).lineLimit(1)
+                    Text(L10n.text(a.title)).font(.system(size: 21, weight: .bold)).lineLimit(1).minimumScaleFactor(0.7)
+                    Text(L10n.text(detail)).font(.system(size: 15, weight: .medium)).opacity(0.9).lineLimit(1)
                 }
                 Spacer(minLength: 4)
                 Text("Waze").font(.system(size: 13, weight: .heavy)).opacity(0.8)
@@ -990,7 +1191,7 @@ struct TrafficLine: View {
     var body: some View {
         HStack(spacing: 8) {
             WazeBadge(kind: ahead.alert.kind, size: 20)
-            Text("\(ahead.alert.title) in \(Fmt.distance(ahead.meters))")
+            Text(L10n.format("%@ in %@", L10n.text(ahead.alert.title), String(describing: Fmt.distance(ahead.meters))))
                 .font(.system(size: 15, weight: .semibold)).monospacedDigit()
                 .lineLimit(1).minimumScaleFactor(0.8)
         }
@@ -1021,12 +1222,12 @@ struct WazeInfoCard: View {
         HStack(alignment: .top, spacing: 12) {
             WazeBadge(kind: alert.kind, size: 40)
             VStack(alignment: .leading, spacing: 3) {
-                Text(alert.title).font(.headline)
+                Text(L10n.text(alert.title)).font(.headline)
                 Text([alert.street, alert.reportedText].compactMap { $0 }.joined(separator: " · "))
                     .font(.subheadline).foregroundColor(.secondary)
                 HStack(spacing: 10) {
                     if alert.thumbsUp > 0 {
-                        Label("\(alert.thumbsUp) confirmed", systemImage: "hand.thumbsup.fill")
+                        Label(L10n.format("%@ confirmed", String(describing: alert.thumbsUp)), systemImage: "hand.thumbsup.fill")
                     }
                     // Waze's 0-10 trust in the report, as five dots.
                     HStack(spacing: 3) {
@@ -1035,7 +1236,7 @@ struct WazeInfoCard: View {
                                 .frame(width: 6, height: 6)
                         }
                     }
-                    .accessibilityLabel("Reliability \(alert.reliability) out of 10")
+                    .accessibilityLabel(L10n.format("Reliability %@ out of 10", String(describing: alert.reliability)))
                     Text("via Waze")
                 }
                 .font(.caption).foregroundColor(.secondary)
@@ -1148,12 +1349,12 @@ struct PoliceRiskChip: View {
         let color = Self.color(level)
         HStack(spacing: 8) {
             Image(systemName: "shield.lefthalf.filled").font(.system(size: 15, weight: .bold))
-            Text("Police risk: \(level.rawValue.capitalized)").font(.system(size: 15, weight: .bold))
+            Text(L10n.format("Police risk: %@", String(describing: level.rawValue.capitalized))).font(.system(size: 15, weight: .bold))
         }
         .foregroundColor(level == .medium ? Color(hex: 0x1F1300) : .white)
         .padding(.horizontal, 12).frame(height: 36)
         .background(Capsule().fill(color))
-        .accessibilityLabel("Police risk \(level.rawValue), \(score) out of 100")
+        .accessibilityLabel(L10n.format("Police risk %@, %@ out of 100", String(describing: level.rawValue), String(describing: score)))
     }
 }
 
@@ -1210,7 +1411,7 @@ struct AlsoAheadPill: View {
             case .average:
                 if let c = nav.averageCheck {
                     Image(systemName: "gauge.with.dots.needle.33percent").font(.system(size: 17, weight: .bold))
-                    Text("Avg \(Fmt.speed(c.averageKmh)) \(Fmt.speedUnit)")
+                    Text(L10n.format("Avg %@ %@", String(describing: Fmt.speed(c.averageKmh)), String(describing: Fmt.speedUnit)))
                 }
             case .aircraft:
                 if let air = nav.aircraftNear {
@@ -1259,9 +1460,9 @@ struct AircraftCard: View {
             VStack(alignment: .leading, spacing: 1) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(Fmt.distance(meters)).font(.system(size: 22, weight: .bold)).monospacedDigit()
-                    Text(aircraft.title).font(.headline)
+                    Text(L10n.text(aircraft.title)).font(.headline)
                 }
-                if !detail.isEmpty { Text(detail).font(.subheadline).foregroundColor(.secondary).lineLimit(1) }
+                if !detail.isEmpty { Text(L10n.text(detail)).font(.subheadline).foregroundColor(.secondary).lineLimit(1) }
             }
             Spacer(minLength: 4)
         }
@@ -1294,13 +1495,13 @@ struct AverageCheckCard: View {
                 .foregroundColor(over ? .white : Color(hex: 0xF9AB00))
             VStack(alignment: .leading, spacing: 1) {
                 Text("Average speed check").font(.subheadline.weight(.semibold))
-                Text("\(Fmt.distance(max(check.metersLeft, 0))) left").font(.caption)
+                Text(L10n.format("%@ left", String(describing: Fmt.distance(max(check.metersLeft, 0))))).font(.caption)
                     .foregroundColor(over ? .white.opacity(0.9) : .secondary)
             }
             Spacer(minLength: 4)
             VStack(spacing: -2) {
                 Text("\(Fmt.speed(check.averageKmh))").font(.system(size: 24, weight: .bold)).monospacedDigit()
-                Text("avg \(Fmt.speedUnit)").font(.system(size: 10, weight: .medium))
+                Text(L10n.format("avg %@", String(describing: Fmt.speedUnit))).font(.system(size: 10, weight: .medium))
                     .foregroundColor(over ? .white.opacity(0.9) : .secondary)
             }
             if let limit = check.limitKmh { SpeedLimitSign(kmh: limit) }
@@ -1330,6 +1531,9 @@ struct AlongRouteSheet: View {
     @ObservedObject private var settings = AppSettings.shared
     @Environment(\.dismiss) private var dismiss
     @State private var found: [(place: Place, ahead: Double)] = []
+    @State private var detours: [String: Double] = [:]
+    @State private var task: Task<Void, Never>?
+    @State private var search = ""
     @State private var searching = false
     @State private var picked: String?
 
@@ -1338,7 +1542,7 @@ struct AlongRouteSheet: View {
         ("Coffee", "cup.and.saucer.fill", "coffee"), ("Food", "fork.knife", "restaurants"),
         (Fmt.yards ? "Supermarket" : "Groceries", "cart.fill", Fmt.yards ? "supermarket" : "grocery store"),
         (Fmt.yards ? "Toilets" : "Restrooms", "toilet.fill", Fmt.yards ? "public toilets" : "public restroom"),
-        ("Parking", "parkingsign", "parking"), ("Pharmacy", "cross.case.fill", "pharmacy"),
+        ("Parking", "parkingsign", "parking"), ("Rest areas", "road.lanes", "motorway rest area"), ("Pharmacy", "cross.case.fill", "pharmacy"),
     ]
 
     var body: some View {
@@ -1382,7 +1586,11 @@ struct AlongRouteSheet: View {
                                     }
                                     Spacer()
                                     VStack(alignment: .trailing, spacing: 2) {
-                                        Text("in \(Fmt.distance(f.ahead))").font(.subheadline.weight(.medium)).foregroundColor(.primary)
+                                        Text(L10n.format("in %@", String(describing: Fmt.distance(f.ahead)))).font(.subheadline.weight(.medium)).foregroundColor(.primary)
+                                        if let extra = detours[f.place.id] {
+                                            Text(extra < 30 ? "< 1 min extra" : "+\(Fmt.duration(extra))")
+                                                .font(.caption.monospacedDigit()).foregroundColor(.secondary)
+                                        }
                                         Text("Add stop").font(.caption.weight(.semibold)).foregroundColor(Vela.routeBlue)
                                     }
                                 }
@@ -1391,6 +1599,12 @@ struct AlongRouteSheet: View {
                     }
                 }
             }
+            .searchable(text: $search, prompt: "Search along your route")
+            .onSubmit(of: .search) {
+                let term = search.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !term.isEmpty { run(term, label: term) }
+            }
+            .onDisappear { task?.cancel() }
             .navigationTitle("Search along route")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
@@ -1398,9 +1612,11 @@ struct AlongRouteSheet: View {
     }
 
     private func run(_ query: String, label: String) {
+        task?.cancel()
         picked = label
         searching = true
         found = []
+        detours = [:]
         let line = nav.route.polyline
         let cum = Geo.cumulative(line)
         let here = nav.progress?.alongMeters ?? 0
@@ -1409,9 +1625,10 @@ struct AlongRouteSheet: View {
         let end = min(total, here + 40_000)
         let mid = Geo.point(along: line, meters: (here + end) / 2, cumulative: cum)
         let span = max(end - here, 3_000)
-        let useGoogle = !settings.noGoogle
-        Task {
-            let r = await PlaceSearch.search(query, center: mid, spanMeters: span, useGoogle: useGoogle)
+        let useGoogle = settings.googleSearchEnabled
+        task = Task {
+            let r = await PlaceSearch.search(query, center: mid, spanMeters: span, useGoogle: useGoogle, language: L10n.isCzech ? "cs" : "en")
+            guard !Task.isCancelled else { return }
             var out: [(Place, Double)] = []
             for p in r.places {
                 let at = Geo.project(p.location, on: line, cumulative: cum)
@@ -1419,8 +1636,21 @@ struct AlongRouteSheet: View {
                 guard at.offset < 800, at.along > here + 100 else { continue }
                 out.append((p, at.along - here))
             }
-            found = out.sorted { $0.1 < $1.1 }.prefix(20).map { (place: $0.0, ahead: $0.1) }
+            found = out.sorted { $0.1 < $1.1 }.prefix(12).map { (place: $0.0, ahead: $0.1) }
             searching = false
+            for row in found {
+                guard !Task.isCancelled else { return }
+                let at = here + row.ahead
+                let approach = Geo.point(along: line, meters: max(here, at - 600), cumulative: cum)
+                let returnPoint = Geo.point(along: line, meters: min(total, at + 800), cumulative: cum)
+                async let direct = Directions.routes(from: approach, to: returnPoint, mode: .drive, useGoogle: false)
+                async let via = Directions.routes(from: approach, to: returnPoint, mode: .drive, useGoogle: false, via: [row.place.location])
+                let (normal, withStop) = await (direct, via)
+                guard !Task.isCancelled else { return }
+                if let a = normal.routes.first, let b = withStop.routes.first {
+                    detours[row.place.id] = max(0, b.durationSeconds - a.durationSeconds)
+                }
+            }
         }
     }
 }
@@ -1518,6 +1748,45 @@ struct InterstateShape: InsettableShape {
     }
 }
 
+struct LaneGuidancePreview: View {
+    private var examples: [(String, ManeuverType, [Lane])] {
+        [
+            ("Motorway exit", .rampRight, [
+                Lane(indications: ["straight"], valid: false),
+                Lane(indications: ["straight", "slight right"], valid: true),
+                Lane(indications: ["slight right"], valid: true),
+            ]),
+            ("Left turn at a junction", .turnLeft, [
+                Lane(indications: ["left"], valid: true),
+                Lane(indications: ["straight"], valid: false),
+                Lane(indications: ["straight", "right"], valid: false),
+            ]),
+        ]
+    }
+
+    var body: some View {
+        List {
+            ForEach(Array(examples.enumerated()), id: \.offset) { _, sample in
+                Section(L10n.text(sample.0)) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        if let lanes = LaneGuide.named(sample.2) {
+                            Text(lanes.words).font(.subheadline.weight(.bold))
+                            LaneStrip(lanes: lanes.lanes, turn: sample.1)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+            Section {
+                Text("During a drive, the highlighted lanes appear below the next turn as you approach it, where lane data is available.")
+                    .font(.subheadline).foregroundStyle(.secondary)
+            }
+        }
+        .kiteList()
+        .navigationTitle("Lane guidance preview")
+    }
+}
+
 /** Which lanes to be in, the way Waze and Google draw it: the right ones lit up, the rest dim. */
 struct LaneStrip: View {
     let lanes: [Lane]
@@ -1527,23 +1796,33 @@ struct LaneStrip: View {
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        HStack(spacing: 5) {
-            ForEach(Array(lanes.prefix(6).enumerated()), id: \.offset) { _, lane in
-                Image(systemName: Self.symbol(pick(lane)))
-                    .font(.system(size: 23, weight: .heavy))
-                    .foregroundColor(lane.valid ? Vela.onAccent(scheme) : Vela.muted(scheme).opacity(0.8))
-                    .frame(width: 42, height: 42)
-                    .background(RoundedRectangle(cornerRadius: 13, style: .continuous)
-                        .fill(lane.valid ? Vela.accent(scheme) : Color.primary.opacity(0.08)))
+        HStack(spacing: 2) {
+            ForEach(Array(lanes.enumerated()), id: \.offset) { _, lane in
+                let main = pick(lane)
+                let alternate = lane.indications.first { direction in direction != main }
+                VStack(spacing: 2) {
+                    Image(systemName: main == "none" && lane.valid ? "checkmark" : Self.symbol(main))
+                        .font(.system(size: lanes.count > 6 ? 17 : 23, weight: .heavy))
+                        .foregroundColor(lane.valid ? Vela.onAccent(scheme) : Vela.muted(scheme))
+                    if let alternate, lanes.count <= 7 {
+                        Image(systemName: Self.symbol(alternate))
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(lane.valid ? Vela.onAccent(scheme).opacity(0.78) : Vela.muted(scheme))
+                    }
+                }
+                .frame(maxWidth: .infinity, minHeight: 48)
+                .background(RoundedRectangle(cornerRadius: 8)
+                    .fill(lane.valid ? Vela.accent(scheme) : Color.primary.opacity(0.08)))
+                .accessibilityLabel(lane.valid ? Text("Recommended lane") : Text("Other lane"))
             }
         }
-        .accessibilityElement(children: .ignore)
+        .accessibilityElement(children: .contain)
         .accessibilityLabel("Use the highlighted lanes")
     }
 
     /** A lane that goes several ways shows the way this turn goes when it's a good lane. */
     private func pick(_ lane: Lane) -> String {
-        guard lane.valid, lane.indications.count > 1 else { return lane.indications.first ?? "straight" }
+        guard lane.valid, lane.indications.count > 1 else { return lane.indications.first ?? "none" }
         let want: [String]
         var t = turn
         if t == .roundabout, let a = exitAngle {
@@ -1569,6 +1848,7 @@ struct LaneStrip: View {
         case "sharp right": return "arrow.turn.right.down"
         case "slight right": return "arrow.up.right"
         case "uturn": return "arrow.uturn.down"
+        case "none": return "minus"
         default: return "arrow.up"
         }
     }
@@ -1661,6 +1941,6 @@ struct RoundaboutDiagram: View {
                 .foregroundColor(ink)
             ctx.draw(digits, at: c)
         }
-        .accessibilityLabel("Roundabout, take exit \(exit)")
+        .accessibilityLabel(L10n.format("Roundabout, take exit %@", String(describing: exit)))
     }
 }

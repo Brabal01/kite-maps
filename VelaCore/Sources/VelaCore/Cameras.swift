@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /** A mapped camera from OpenStreetMap: a fixed speed camera, or a license plate reader (DeFlock). */
 public struct RoadCamera: Hashable, Codable, Sendable, Identifiable {
@@ -192,12 +195,13 @@ public enum Overpass {
      * asked [stagger] seconds after the last, and the first good answer wins. A busy main server
      * used to hold a drive's speed limits back by two minutes or more.
      */
-    static func firstAnswer(_ q: String, stagger: Double = 8, valid: @escaping @Sendable (Data) -> Bool) async -> Data? {
+    static func firstAnswer(_ q: String, stagger: Double = 8, requestTimeout: TimeInterval? = nil,
+                            valid: @escaping @Sendable (Data) -> Bool) async -> Data? {
         await withTaskGroup(of: Data?.self) { group in
             for (i, ep) in endpoints.enumerated() {
                 group.addTask {
                     if i > 0 { try? await Task.sleep(nanoseconds: UInt64(Double(i) * stagger * 1e9)) }
-                    guard !Task.isCancelled, let (data, status) = await fetch(ep, query: q), status == 200,
+                    guard !Task.isCancelled, let (data, status) = await fetch(ep, query: q, requestTimeout: requestTimeout), status == 200,
                           !timedOut(data), valid(data) else { return nil }
                     return data
                 }
@@ -252,18 +256,30 @@ public enum Overpass {
     }
 
     /**
-     * The traffic lights on the route itself, one per junction: a junction's lights are often mapped
-     * once per road into it, so lights within 40 m of each other along the route are drawn once.
+     * Traffic lights close to the traveled route, one marker per junction. OSM often includes
+     * multiple signals for opposite approaches. Use the closest candidate in a 40 m cluster,
+     * then snap the icon to the route so it doesn't float over a neighboring lane or pavement.
+     * Without direction-specific OSM tags this is a proximity heuristic, not proof that a signal
+     * faces the driver. Never use it to make a driving or safety decision.
      */
     public static func signalsOnRoute(_ signals: [LatLng], line: [LatLng]) -> [LatLng] {
         guard line.count >= 2 else { return [] }
         let cum = Geo.cumulative(line)
-        let on = signals.map { ($0, Geo.project($0, on: line, cumulative: cum)) }
-            .filter { $0.1.offset < 20 }
-            .sorted { $0.1.along < $1.1.along }
-        var out: [(LatLng, Double)] = []
-        for (p, at) in on where out.last.map({ at.along - $0.1 >= 40 }) ?? true { out.append((p, at.along)) }
-        return out.map(\.0)
+        let near = signals.map { Geo.project($0, on: line, cumulative: cum) }
+            .filter { $0.offset <= 12 }
+            .sorted { $0.along < $1.along }
+        var junctions: [(start: Double, along: Double, offset: Double)] = []
+        for p in near {
+            if let i = junctions.indices.last, p.along - junctions[i].start < 40 {
+                if p.offset < junctions[i].offset {
+                    junctions[i].along = p.along
+                    junctions[i].offset = p.offset
+                }
+            } else {
+                junctions.append((start: p.along, along: p.along, offset: p.offset))
+            }
+        }
+        return junctions.map { Geo.point(along: line, meters: $0.along, cumulative: cum) }
     }
 
     static func parseWays(_ data: Data) -> [LimitWay] {
@@ -356,7 +372,7 @@ public enum Overpass {
     }
 
     /** One request to one mirror. A POST, since a route's query is too long for a URL. Nil on a network error. */
-    public static func fetch(_ endpoint: String, query: String) async -> (Data, Int)? {
+    public static func fetch(_ endpoint: String, query: String, requestTimeout: TimeInterval? = nil) async -> (Data, Int)? {
         var allowed = CharacterSet.alphanumerics
         allowed.insert(charactersIn: "-._~")
         guard let url = URL(string: endpoint) else { return nil }
@@ -364,7 +380,17 @@ public enum Overpass {
         r.httpMethod = "POST"
         r.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         r.httpBody = ("data=" + (query.addingPercentEncoding(withAllowedCharacters: allowed) ?? "")).data(using: .utf8)
-        guard let (data, resp) = try? await session.data(for: r) else { return nil }
+        let client: URLSession
+        if let requestTimeout {
+            let config = URLSessionConfiguration.ephemeral
+            config.timeoutIntervalForRequest = requestTimeout
+            config.timeoutIntervalForResource = requestTimeout
+            client = URLSession(configuration: config)
+        } else {
+            client = session
+        }
+        defer { if requestTimeout != nil { client.finishTasksAndInvalidate() } }
+        guard let (data, resp) = try? await client.data(for: r) else { return nil }
         return (data, (resp as? HTTPURLResponse)?.statusCode ?? 0)
     }
 

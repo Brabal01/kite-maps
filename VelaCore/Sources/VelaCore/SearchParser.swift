@@ -35,15 +35,29 @@ enum SearchParser {
         "closedFlag": [1, 23],
     ]
 
-    static func parse(root: Any, near: LatLng?) -> [Place] {
-        let entries: [Any] =
-            nonEmpty(arr(at(root, paths["results"]!)))
+    static func parse(root: Any, near: LatLng?, query: String = "") -> [Place] {
+        let list = nonEmpty(arr(at(root, paths["results"]!)))
+        let entries: [Any] = list
             ?? atThisPlaceEntries(root)
             ?? singleEntry(root)
-            ?? []
+            ?? (arr(root) ?? []).compactMap(arr).filter { group in
+                guard let first = group.first else { return false }
+                return str(field(first, "name")) != nil && dbl(field(first, "lat")) != nil
+            }.max(by: { $0.count < $1.count }) ?? []
         // Google's own order (its best match first), as Google Maps lists them; the Sort menu has Distance.
         var seen = Set<String>()
-        return entries.compactMap { toPlace($0, near: near) }.filter { seen.insert($0.featureId ?? $0.id).inserted }
+        var places = entries.compactMap { toPlace($0, near: near) }.filter { seen.insert($0.id).inserted }
+        let words = SuggestParser.words(query)
+        if list == nil, places.count == 1, let focus = places.first, words.joined().count >= 3,
+           let related = arr(at(root, 0, 1, 0, 14, 99, 0, 0, 1)) {
+            for row in related {
+                guard let place = toPlace(row, near: near), place.location.distance(to: focus.location) > 30 else { continue }
+                let name = Set(SuggestParser.words(place.name))
+                guard words.allSatisfy(name.contains), seen.insert(place.id).inserted else { continue }
+                places.append(place)
+            }
+        }
+        return places
     }
 
     private static func nonEmpty(_ a: [Any]?) -> [Any]? {
@@ -76,7 +90,7 @@ enum SearchParser {
     static func toPlace(_ entry: Any, near: LatLng?) -> Place? {
         guard let name = str(field(entry, "name")),
               let lat = dbl(field(entry, "lat")),
-              let lng = dbl(field(entry, "lng")) else { return nil }
+              let lng = dbl(field(entry, "lng")), (-90...90).contains(lat), (-180...180).contains(lng) else { return nil }
         let loc = LatLng(lat, lng)
         var p = Place(id: "g:\(str(field(entry, "featureId")) ?? "\(name)|\(Int(lat * 1e4))|\(Int(lng * 1e4))")",
                       name: name, location: loc, source: "google")
@@ -96,7 +110,7 @@ enum SearchParser {
         p.statusText = status
         p.openNow = openNow(status)
         p.permanentlyClosed = int(field(entry, "closedFlag")) == 1
-            || [rich, s118, str(field(entry, "openStatus"))].contains { $0?.localizedCaseInsensitiveContains("Permanently") == true }
+            || [rich, s118, str(field(entry, "openStatus"))].contains { $0?.localizedCaseInsensitiveContains("Permanently") == true || $0?.localizedCaseInsensitiveContains("Trvale uzavřeno") == true }
         // Hours from the same block the status came from, so the two never disagree.
         let h203 = readHours(field(entry, "hours203"))
         let h118 = readHours(field(entry, "hours118"))
@@ -105,6 +119,15 @@ enum SearchParser {
         p.featuredReview = str(field(entry, "featuredReview"))?
             .trimmingCharacters(in: CharacterSet(charactersIn: "\"“” \n"))
             .nilIfBlank
+        if let entries = arr(at(entry, 1, 142, 1)) {
+            var seen = Set<String>()
+            p.reviewExcerpts = entries.compactMap { row in
+                guard let value = str(at(row, 1, 0, 0))?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !value.isEmpty, seen.insert(value).inserted else { return nil }
+                return value
+            }
+            if p.reviewExcerpts?.isEmpty == true { p.reviewExcerpts = nil }
+        }
         p.editorialSummary = str(field(entry, "editorialSummary"))?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
         p.about = (arr(field(entry, "about")) ?? []).compactMap { s in
             guard let title = str(at(s, 1)) else { return nil }
@@ -121,8 +144,8 @@ enum SearchParser {
      *  Closed words are tested first: "Opens 5 AM" starts like "Open" but means closed. */
     static func openNow(_ status: String?) -> Bool? {
         guard let s = status?.trimmingCharacters(in: .whitespaces), !s.isEmpty else { return nil }
-        if ["Closed", "Opens", "Opening", "Temporarily", "Permanently"].contains(where: { s.hasPrefix($0) }) { return false }
-        if ["Open", "Closes", "Closing"].contains(where: { s.hasPrefix($0) }) { return true }
+        if ["Closed", "Opens", "Opening", "Temporarily", "Permanently", "Zavřeno", "Otevírá", "Dočasně", "Trvale"].contains(where: { s.hasPrefix($0) }) { return false }
+        if ["Open", "Closes", "Closing", "Otevřeno", "Zavírá"].contains(where: { s.hasPrefix($0) }) { return true }
         return nil
     }
 

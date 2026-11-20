@@ -12,30 +12,36 @@ public enum PlaceSearch {
         }
     }
 
-    public static func search(_ query: String, center: LatLng, spanMeters: Double?, useGoogle: Bool = true) async -> Result {
+    public static func search(_ query: String, center: LatLng, spanMeters: Double?, useGoogle: Bool = true, language: String = "en") async -> Result {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return Result(places: []) }
         var googleError: String?
         if useGoogle { do {
-            var places = try await GoogleClient.shared.search(q, center: center, spanMeters: spanMeters)
+            let places = try await GoogleClient.shared.search(q, center: center, spanMeters: spanMeters, language: language)
             if !places.isEmpty {
-                // Google sometimes puts a far-off namesake first ("Covent Garden Market" in Ontario,
-                // "Museo Británico" for the British Museum): one nearby goes ahead of it.
-                places = nearFirst(places, center: center)
-                if let top = places.first, top.location.distance(to: center) > farMeters {
-                    // Nothing near from Google at all: the open map may know the one down the road.
-                    let osm = (try? await Photon.search(q, near: center)) ?? []
-                    let near = osm.filter { $0.location.distance(to: center) < nearMeters }
-                    if !near.isEmpty { return Result(places: near + places) }
-                }
                 return Result(places: places)
             }
         } catch {
             googleError = error.localizedDescription
         } }
+        if useGoogle, !Task.isCancelled {
+            let suggestions = try? await GoogleClient.shared.suggest(q, near: center, spanMeters: spanMeters ?? 20_000,
+                                                                      language: language)
+            if let places = suggestions?.places, !places.isEmpty { return Result(places: places) }
+        }
+        guard !Task.isCancelled else { return Result(places: []) }
         if let pc = await Postcodes.lookup(q) { return Result(places: [pc], googleError: googleError) }
         let osm = (try? await Photon.search(q, near: center)) ?? []
         return Result(places: osm, googleError: googleError)
+    }
+
+    public static func mapFocus(query: String, places: [Place], category: Bool) -> [LatLng] {
+        let terms = SuggestParser.words(query)
+        let named = !category && !terms.isEmpty && places.filter { place in
+            let name = Set(SuggestParser.words(place.name))
+            return terms.allSatisfy(name.contains)
+        }.count * 5 >= places.count * 3
+        return places.prefix(named ? 1 : 3).map(\.location)
     }
 
     static let nearMeters = 100_000.0, farMeters = 300_000.0

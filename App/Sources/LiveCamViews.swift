@@ -43,8 +43,8 @@ struct PhotoAgePill: View {
     }
 
     private func label(_ age: TimeInterval?) -> String {
-        guard let age else { return "Latest photo" }
-        if age < 90 { return "Just now" }
+        guard let age else { return L10n.text("Latest photo") }
+        if age < 90 { return L10n.text("Just now") }
         if age < 3600 { return "\(Int(age / 60)) min ago" }
         if age < 86_400 { return "\(Int(age / 3600)) h ago" }
         return "\(Int(age / 86_400)) days ago"
@@ -146,7 +146,7 @@ struct LiveCamCard: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Show the photo full screen")
             HStack(spacing: 8) {
-                Text("Photo: \(cam.source.credit)").font(.caption).foregroundColor(.secondary).lineLimit(1)
+                Text(L10n.format("Photo: %@", String(describing: cam.source.credit))).font(.caption).foregroundColor(.secondary).lineLimit(1)
                 Spacer(minLength: 0)
                 if let more = cam.moreURL {
                     Link(destination: more) {
@@ -170,7 +170,7 @@ struct LiveCamCard: View {
                 HStack {
                     step(-1, from: i)
                     Spacer()
-                    Text("Camera \(i + 1) of \(list.count) on your route").font(.subheadline.weight(.semibold)).foregroundColor(.secondary)
+                    Text(L10n.format("Camera %@ of %@ on your route", String(describing: i + 1), String(describing: list.count))).font(.subheadline.weight(.semibold)).foregroundColor(.secondary)
                     Spacer()
                     step(1, from: i)
                 }

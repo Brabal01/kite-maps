@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /**
  * Keyless Google Maps web search, the way Vela's Android extractor does it: warm a session
@@ -11,9 +14,9 @@ public actor GoogleClient {
     static let userAgent =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36"
     static let secChUa = #""Not:A-Brand";v="8", "Chromium";v="156", "Google Chrome";v="156""#
-    static let searchEndpoint = "https://www.google.com/search?tbm=map&authuser=0&hl=en-GB&gl=gb"
+    static let searchEndpoint = "https://www.google.com/search?tbm=map&authuser=0"
     static let directionsEndpoint = "https://www.google.com/maps/preview/directions?authuser=0&hl=en-GB&gl=gb"
-    static let suggestEndpoint = "https://www.google.com/s?tbm=map&gs_ri=maps&suggest=p&authuser=0&hl=en-GB&gl=gb"
+    static let suggestEndpoint = "https://www.google.com/s?tbm=map&gs_ri=maps&suggest=p&authuser=0"
     static let suggestPb = "!2i5!4m12!1m3!1d{SPAN}!2d{LNG}!3d{LAT}!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1"
         + "!7i20!10b1!12m6!1m2!18b1!30b1!2m2!1i203!2i100!19m4!1m3!1i1!2i1!3i1!20m1!1e1"
     static let sessionWarmUrl = "https://www.google.com/maps?hl=en-GB&gl=gb"
@@ -37,14 +40,14 @@ public actor GoogleClient {
 
     /** Search Google around [center]. [spanMeters] is how wide the visible map is. A full first
      *  page (a category like "restaurants") fetches pages two and three too, as Vela does. */
-    public func search(_ query: String, center: LatLng, spanMeters: Double?, pages: Int = 3) async throws -> [Place] {
+    public func search(_ query: String, center: LatLng, spanMeters: Double?, pages: Int = 3, language: String = "en") async throws -> [Place] {
         try await warm()
-        let first = try await page(query, center: center, spanMeters: spanMeters, offset: 0)
+        let first = try await page(query, center: center, spanMeters: spanMeters, offset: 0, language: language)
         guard pages > 1, first.count >= 18 else { return first }
         var more: [Int: [Place]] = [:]
         await withTaskGroup(of: (Int, [Place]).self) { group in
             for i in 1..<pages {
-                group.addTask { (i, (try? await self.page(query, center: center, spanMeters: spanMeters, offset: 20 * i)) ?? []) }
+                group.addTask { (i, (try? await self.page(query, center: center, spanMeters: spanMeters, offset: 20 * i, language: language)) ?? []) }
             }
             for await (i, p) in group { more[i] = p }
         }
@@ -54,25 +57,25 @@ public actor GoogleClient {
         return first + extra
     }
 
-    private func page(_ query: String, center: LatLng, spanMeters: Double?, offset: Int) async throws -> [Place] {
+    private func page(_ query: String, center: LatLng, spanMeters: Double?, offset: Int, language: String) async throws -> [Place] {
         let pb = SearchPb.build(query: query, center: center, spanMeters: spanMeters, offset: offset)
-        let url = URL(string: Self.searchEndpoint + "&q=" + enc(query) + "&pb=" + enc(pb))!
+        let url = URL(string: Self.searchEndpoint + "&hl=" + enc(language) + "&q=" + enc(query) + "&pb=" + enc(pb))!
         let body = try await get(url, referer: "https://www.google.com/", xhr: true)
         guard let root = GoogleJSON.parse(body) else { throw VelaError.unexpectedResponse(String(body.prefix(200))) }
-        return SearchParser.parse(root: root, near: center)
+        return SearchParser.parse(root: root, near: center, query: query)
     }
 
     private var ech = 0
 
     /** Google's autocomplete while typing: places with a position, and suggested searches. */
-    public func suggest(_ query: String, near: LatLng, spanMeters: Double = 20_000) async throws -> SuggestParser.Result {
+    public func suggest(_ query: String, near: LatLng, spanMeters: Double = 20_000, language: String = "en") async throws -> SuggestParser.Result {
         try await warm()
         ech += 1
         let span = min(max(spanMeters, 2_000), 500_000)
         let pb = Self.suggestPb.replacingOccurrences(of: "{SPAN}", with: String(span))
             .replacingOccurrences(of: "{LNG}", with: near.lng.plain)
             .replacingOccurrences(of: "{LAT}", with: near.lat.plain)
-        let url = URL(string: Self.suggestEndpoint + "&pb=" + enc(pb) + "&q=" + enc(query) + "&tch=1&ech=\(ech)")!
+        let url = URL(string: Self.suggestEndpoint + "&hl=" + enc(language) + "&pb=" + enc(pb) + "&q=" + enc(query) + "&tch=1&ech=\(ech)")!
         let body = try await get(url, referer: "https://www.google.com/", xhr: true)
         return SuggestParser.parse(body, near: near)
     }
@@ -107,7 +110,8 @@ public actor GoogleClient {
         r.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
         r.setValue(xhr ? "*/*" : "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
                    forHTTPHeaderField: "Accept")
-        r.setValue(Self.acceptLanguage, forHTTPHeaderField: "Accept-Language")
+        let language = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "hl" }?.value
+        r.setValue(language ?? Self.acceptLanguage, forHTTPHeaderField: "Accept-Language")
         r.setValue(Self.secChUa, forHTTPHeaderField: "Sec-CH-UA")
         r.setValue("?0", forHTTPHeaderField: "Sec-CH-UA-Mobile")
         r.setValue("\"Windows\"", forHTTPHeaderField: "Sec-CH-UA-Platform")

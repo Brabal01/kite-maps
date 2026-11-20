@@ -42,7 +42,7 @@ struct KiteDock: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(title)
+        .accessibilityLabel(L10n.text(title))
         .accessibilityAddTraits(on ? .isSelected : [])
     }
 }
@@ -67,7 +67,7 @@ struct WazeMapChips: View {
                     let level = PoliceRisk.level(risk)
                     HStack(spacing: 8) {
                         Image(systemName: "shield.lefthalf.filled").font(.system(size: 17, weight: .bold))
-                        Text("Police risk: \(level.rawValue.capitalized)").font(.system(size: 16, weight: .bold))
+                        Text(L10n.format("Police risk: %@", String(describing: level.rawValue.capitalized))).font(.system(size: 16, weight: .bold))
                     }
                     .foregroundColor(level == .medium ? Color(hex: 0x1F1300) : .white)
                     .padding(.horizontal, 14).frame(height: 44)
@@ -171,7 +171,7 @@ struct SavedPage: View {
                     .background(Circle().fill(place == nil ? Color.gray : color))
                 Spacer(minLength: 8)
                 HStack(alignment: .firstTextBaseline) {
-                    Text(title).font(.system(size: 21, weight: .bold))
+                    Text(L10n.text(title)).font(.system(size: 21, weight: .bold))
                     Spacer()
                     Text(place.flatMap(distance) ?? (place == nil ? "Set" : "")).font(.system(size: 16, weight: .medium))
                         .foregroundColor(Vela.muted(scheme))
@@ -186,7 +186,7 @@ struct SavedPage: View {
         .foregroundColor(.primary)
         .contextMenu {
             if place != nil {
-                Button { model.picking = title == "Home" ? .home : .work } label: { Label("Change \(title.lowercased())", systemImage: "pencil") }
+                Button { model.picking = title == "Home" ? .home : .work } label: { Label(L10n.format("Change %@", String(describing: title.lowercased())), systemImage: "pencil") }
             }
         }
         .accessibilityLabel(place == nil ? "\(title), not set" : "Go \(title)")
@@ -217,7 +217,7 @@ struct SavedPage: View {
                     .background(Circle().fill(Vela.accent(scheme)))
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Go to \(p.name)")
+            .accessibilityLabel(L10n.format("Go to %@", String(describing: p.name)))
         }
         .foregroundColor(.primary)
         .padding(.leading, 14).padding(.trailing, 12)
@@ -307,7 +307,7 @@ struct PlacePicker: View {
                             Button(role: .destructive) {
                                 if kind == .home { model.setHome(nil) } else { model.setWork(nil) }
                                 dismiss()
-                            } label: { Label("Remove \(title.lowercased())", systemImage: "trash") }
+                            } label: { Label(L10n.format("Remove %@", String(describing: title.lowercased())), systemImage: "trash") }
                         }
                     }
                 } else if !found.isEmpty {
@@ -323,7 +323,7 @@ struct PlacePicker: View {
             .onChange(of: query) { q in lookUp(q, full: false) }
             .onSubmit(of: .search) { lookUp(query, full: true) }
             .kiteList()
-            .navigationTitle("Set \(title.lowercased())")
+            .navigationTitle(L10n.format("Set %@", String(describing: title.lowercased())))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
             // Cancelled while the address was still loading: don't save it anyway.
@@ -375,17 +375,17 @@ struct PlacePicker: View {
         guard q.count >= 2 else { found = []; searching = false; return }
         searching = true
         let center = model.userLatLng ?? model.viewport.center
-        let useGoogle = !settings.noGoogle
+        let useGoogle = settings.googleSearchEnabled
         task = Task {
             if !full { try? await Task.sleep(nanoseconds: 300_000_000) }
             guard !Task.isCancelled else { return }
             var places: [Place] = []
             if full {
-                places = await PlaceSearch.search(q, center: center, spanMeters: 50_000, useGoogle: useGoogle).places
+                places = await PlaceSearch.search(q, center: center, spanMeters: 50_000, useGoogle: useGoogle, language: L10n.isCzech ? "cs" : "en").places
             } else {
                 if let pc = await Postcodes.lookup(q) { places = [pc] }
                 if places.isEmpty, useGoogle {
-                    places = (try? await GoogleClient.shared.suggest(q, near: center, spanMeters: 50_000))?.places ?? []
+                    places = (try? await GoogleClient.shared.suggest(q, near: center, spanMeters: 50_000, language: L10n.isCzech ? "cs" : "en"))?.places ?? []
                 }
                 if places.isEmpty { places = (try? await Photon.search(q, near: center, limit: 10)) ?? [] }
             }

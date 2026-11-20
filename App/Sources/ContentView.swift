@@ -19,10 +19,23 @@ struct ContentView: View {
 
     var body: some View {
         ZStack {
-            VelaMapView(model: model, settings: settings, dark: dark)
-                .ignoresSafeArea()
+            Group {
+                if settings.useAppleMaps {
+                    KiteAppleMapView(model: model, settings: settings, dark: dark)
+                } else {
+                    VelaMapView(model: model, settings: settings, dark: dark)
+                }
+            }
+            .ignoresSafeArea()
+            .transaction { $0.animation = nil }
             if let nav = model.nav {
                 NavigationOverlay(model: model, nav: nav)
+            } else if let journey = model.transitJourney {
+                ActiveTransitView(model: model, journey: journey)
+            } else if model.justDrive {
+                JustDriveView(model: model)
+            } else if let endpoint = model.endpointOnMap {
+                MapEndpointPicker(model: model, endpoint: endpoint)
             } else if model.directions != nil {
                 DirectionsOverlay(model: model).inSidePanel(panel)
             } else {
@@ -32,7 +45,7 @@ struct ContentView: View {
                 case .settings: SettingsPage(model: model).sidePage(panel).transition(.opacity)
                 }
             }
-            if let info = model.wazeInfo, model.nav == nil, model.tab == .map {
+            if let info = model.wazeInfo, model.tab == .map {
                 VStack {
                     WazeInfoCard(alert: info) { withAnimation { model.wazeInfo = nil } }
                         .padding(.top, 64)
@@ -48,8 +61,14 @@ struct ContentView: View {
                 }
             }
         }
+        .overlay(alignment: .leading) {
+            if !settings.useAppleMaps && settings.useMapbox && !settings.satellite && model.tab == .map {
+                Image("MapboxAttribution").resizable().scaledToFit().frame(width: 88, height: 23)
+                    .accessibilityLabel("Mapbox").padding(.leading, 5).allowsHitTesting(false)
+            }
+        }
         .overlay(alignment: .top) {
-            if let cam = model.liveCam, model.nav == nil, model.tab == .map {
+            if let cam = model.liveCam, model.tab == .map {
                 LiveCamCard(model: model, cam: cam)
                     .padding(.top, 58)
                     .transition(.move(edge: .top).combined(with: .opacity))
@@ -88,6 +107,12 @@ struct ContentView: View {
         .kiteType()
         .preferredColorScheme(settings.colorScheme)
         .task { await DemoScript.run(model) }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
+            model.suspendNavigationDisplay()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            model.resumeNavigationDisplay()
+        }
         .onReceive(launch.$pending) { kind in
             guard let kind else { return }
             launch.pending = nil
@@ -121,6 +146,45 @@ struct ContentView: View {
                 if settings.welcomed { WazeIntroView(settings: settings) } else { WelcomeView(settings: settings) }
             }
             .kiteType()
+        }
+        .confirmationDialog("Avoid this road segment?", isPresented: $model.askingRouteExclusion, titleVisibility: .visible) {
+            Button("Avoid this segment") { model.applyRouteExclusion() }
+            Button("Cancel", role: .cancel) {}
+        }
+        .alert("Route avoidance", isPresented: Binding(get: { model.routeExclusionNotice != nil },
+                                                        set: { if !$0 { model.routeExclusionNotice = nil } })) {
+            Button("OK") { model.routeExclusionNotice = nil }
+        } message: { Text(L10n.text(model.routeExclusionNotice ?? "")) }
+        .overlay(alignment: .topTrailing) {
+            if model.hasRouteExclusion && (model.nav?.showingOverview ?? (model.directions != nil)) {
+                Button { model.undoRouteExclusion() } label: {
+                    Label("Undo avoidance", systemImage: "arrow.uturn.backward")
+                        .font(.caption.weight(.semibold)).padding(8).glass(Capsule())
+                }
+                .padding(.top, 198).padding(.trailing, 16)
+            }
+        }
+        .sheet(item: $model.editingEndpoint) { endpoint in
+            RouteEndpointPicker(model: model, endpoint: endpoint).kiteType()
+        }
+        .sheet(isPresented: Binding(get: { model.hasActiveJourney && model.selected != nil },
+                                   set: { if !$0 { model.closePlace() } })) {
+            JourneyPlaceSheet(model: model)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .kiteType()
+        }
+        .alert("Couldn’t add the stop", isPresented: $model.journeyStopError) {
+            Button("OK") {}
+        } message: {
+            Text("Keep following the current journey and try again when your location and a route are available.")
+        }
+        .overlay(alignment: .center) {
+            if model.addingJourneyStop {
+                ProgressView("Adding a stop…")
+                    .padding(14).glass(Capsule())
+                    .allowsHitTesting(false)
+            }
         }
         .sheet(isPresented: $model.addingStop) {
             StopPicker(model: model).kiteType()
@@ -161,6 +225,10 @@ struct BrowseOverlay: View {
                         VStack(spacing: 10) {
                             MapFab(icon: "square.3.layers.3d", size: 48) { model.showLayers = true }
                                 .accessibilityLabel("Map layers")
+                            if idle {
+                                MapFab(icon: "car.fill", size: 48) { model.startJustDrive() }
+                                    .accessibilityLabel("Just drive")
+                            }
                             if settings.parkingButton || settings.parking != nil {
                                 MapFab(icon: "parkingsign", tint: settings.parking != nil ? Vela.routeBlue : .primary, size: 48) {
                                     if let p = settings.parking { model.select(p) } else { model.saveParking() }
@@ -464,7 +532,7 @@ struct SuggestionsPanel: View {
         Button(action: action) {
             HStack(spacing: 16) {
                 Image(systemName: icon).frame(width: 22).foregroundColor(.secondary)
-                Text(text).foregroundColor(.primary)
+                Text(L10n.text(text)).foregroundColor(.primary)
                 Spacer()
             }
             .padding(.horizontal, 18)
@@ -483,7 +551,7 @@ struct NoticeBanner: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "info.circle").foregroundColor(.secondary)
-            Text(text).font(.footnote).frame(maxWidth: .infinity, alignment: .leading)
+            Text(L10n.text(text)).font(.footnote).frame(maxWidth: .infinity, alignment: .leading)
             Button(action: dismiss) { Image(systemName: "xmark").font(.footnote) }.buttonStyle(.plain)
         }
         .padding(12)
@@ -668,7 +736,7 @@ enum DemoScript {
             }
             model.map?.setCenter(CLLocationCoordinate2D(latitude: c.lat, longitude: c.lng), zoomLevel: 13.6, animated: false)
             await wait(2)
-            if let map = model.map { (map.delegate as? VelaMapView.Coordinator)?.showDemoWaze(list, map: map) }
+            if let map = model.map as? MLNMapView { (map.delegate as? VelaMapView.Coordinator)?.showDemoWaze(list, map: map) }
             if step == "wazetap" {
                 await wait(1)
                 var picked = list[list.count - 6]
@@ -923,7 +991,7 @@ struct PlaceTile: View {
                     .frame(width: 46, height: 46)
                     .background(Circle().fill(place == nil ? Color.gray : color))
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(title).font(.system(size: 19, weight: .bold)).lineLimit(1)
+                    Text(L10n.text(title)).font(.system(size: 19, weight: .bold)).lineLimit(1)
                     Text(place.flatMap { p in model.userLatLng.map { $0.distance(to: p.location) } }.map(Fmt.distance) ?? (place == nil ? "Tap to set" : "Tap to go"))
                         .font(.system(size: 15, weight: .medium)).foregroundColor(Vela.muted(scheme)).lineLimit(1)
                 }
@@ -938,7 +1006,7 @@ struct PlaceTile: View {
         .foregroundColor(.primary)
         .contextMenu {
             if place != nil, title == "Home" || title == "Work" {
-                Button { model.picking = title == "Home" ? .home : .work } label: { Label("Change \(title.lowercased())", systemImage: "pencil") }
+                Button { model.picking = title == "Home" ? .home : .work } label: { Label(L10n.format("Change %@", String(describing: title.lowercased())), systemImage: "pencil") }
             }
         }
         .accessibilityLabel(place == nil ? "\(title), not set" : "Go to \(title)")
@@ -980,7 +1048,7 @@ struct ResumeCard: View {
                     Text("Carry on to").font(.system(size: 16, weight: .semibold)).foregroundColor(Vela.muted(scheme))
                     Text(trip.destination.name + "?").font(.system(size: 22, weight: .heavy)).lineLimit(2).minimumScaleFactor(0.8)
                     if !trip.stops.isEmpty {
-                        Text("via \(trip.stops.map(\.name).joined(separator: ", "))").font(.system(size: 15))
+                        Text(L10n.format("via %@", String(describing: trip.stops.map(\.name).joined(separator: ", ")))).font(.system(size: 15))
                             .foregroundColor(Vela.muted(scheme)).lineLimit(1)
                     }
                 }
@@ -1019,7 +1087,7 @@ struct StatusCards: View {
                  detail: "Turn on Precise Location for Kite in Settings to improve your position.", button: "Settings") { LocationService.openSettings() }
         } else if location.authorized, let fix = location.last, fix.horizontalAccuracy > 200 {
             card(icon: "location.circle.fill", color: Color(hex: 0xF59E0B), title: "Location is uncertain",
-                 detail: "GPS accuracy is about \(Int(fix.horizontalAccuracy)) m. Move outdoors for a better fix.", button: nil) {}
+                 detail: L10n.format("GPS accuracy is about %@ m. Move outdoors for a better fix.", String(Int(fix.horizontalAccuracy))), button: nil) {}
         } else if !net.online {
             card(icon: "wifi.slash", color: Color(hex: 0xF59E0B), title: "No internet connection",
                  detail: "Search, routes and live traffic need one. The map you've already seen still works.", button: nil) {}
@@ -1031,13 +1099,13 @@ struct StatusCards: View {
             Image(systemName: icon).font(.system(size: 20, weight: .bold)).foregroundColor(.white)
                 .frame(width: 44, height: 44).background(Circle().fill(color))
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 18, weight: .bold))
-                Text(detail).font(.system(size: 15)).foregroundColor(Vela.muted(scheme)).fixedSize(horizontal: false, vertical: true)
+                Text(L10n.text(title)).font(.system(size: 18, weight: .bold))
+                Text(L10n.text(detail)).font(.system(size: 15)).foregroundColor(Vela.muted(scheme)).fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
             if let button {
                 Button(action: action) {
-                    Text(button).font(.system(size: 17, weight: .bold)).foregroundColor(Vela.onAccent(scheme))
+                    Text(L10n.text(button)).font(.system(size: 17, weight: .bold)).foregroundColor(Vela.onAccent(scheme))
                         .padding(.horizontal, 16).frame(height: 44).background(Capsule().fill(Vela.accent(scheme)))
                 }
                 .buttonStyle(.plain)

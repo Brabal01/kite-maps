@@ -1,54 +1,53 @@
 import MapLibre
 import UIKit
 
-/**
- * Paints OpenFreeMap Liberty in Kite's colors: a quiet night palette (near-black land,
- * grey roads with no dark edges, deep green parks) and the classic day look (white
- * streets, yellow motorways). While driving, [drive] strips the map down to roads and names.
- * Layer ids are Liberty's; anything not named here keeps Liberty's own style.
- */
+/** Restyles the Liberty basemap while preserving its layers and zoom ranges. */
 enum MapStyler {
     struct Palette {
-        var land, water, park, pitch, landuse: UIColor
-        var landuseOpacity: Double
+        var land, water, park, woodland, meadow, wetland, sand, ice: UIColor
+        var pitch, landuse, residential, civic, hospital, cemetery: UIColor
         var building, buildingOutline: UIColor
-        var minor, major, motorway, service, path: UIColor
-        var casing, motorwayCasing: UIColor
-        var rail: UIColor
-        var airport, runway: UIColor
-        var label: UIColor?, halo: UIColor?
-        var roadLabel: UIColor, roadHalo: UIColor
-        var border: UIColor
+        var minor, secondary, major, motorway, service, path: UIColor
+        var casing, majorCasing, motorwayCasing: UIColor
+        var rail, airport, runway, border: UIColor
+        var label, minorLabel, waterLabel, roadLabel, halo: UIColor
     }
 
-    // Night: near-black land with quiet roads, so the teal route and the warnings are what you see.
-    // Motorways a soft blue and A roads a soft green, like British road signs; smaller roads grey.
     static let dark = Palette(
-        land: UIColor(hex: 0x12161D), water: UIColor(hex: 0x15273B), park: UIColor(hex: 0x15291F),
-        pitch: UIColor(hex: 0x15291F), landuse: UIColor(hex: 0x161B23), landuseOpacity: 0.5,
-        building: UIColor(hex: 0x1A2029), buildingOutline: UIColor(hex: 0x202733),
-        minor: UIColor(hex: 0x29313D), major: UIColor(hex: 0x2F4C3D), motorway: UIColor(hex: 0x34507C),
-        service: UIColor(hex: 0x1F2630), path: UIColor(hex: 0x1C222B),
-        casing: UIColor(hex: 0x12161D), motorwayCasing: UIColor(hex: 0x12161D),
-        rail: UIColor(hex: 0x252C37),
-        airport: UIColor(hex: 0x161B23), runway: UIColor(hex: 0x29313D),
-        label: UIColor(hex: 0xAEB7C4), halo: UIColor(hex: 0x12161D),
-        roadLabel: UIColor(hex: 0xD5DBE5), roadHalo: UIColor(hex: 0x12161D),
-        border: UIColor(hex: 0x5F6977))
+        land: UIColor(hex: 0x141C28), water: UIColor(hex: 0x133046),
+        park: UIColor(hex: 0x213A30), woodland: UIColor(hex: 0x1B342D),
+        meadow: UIColor(hex: 0x243B35), wetland: UIColor(hex: 0x203943),
+        sand: UIColor(hex: 0x35352F), ice: UIColor(hex: 0x2C4756),
+        pitch: UIColor(hex: 0x2B493E), landuse: UIColor(hex: 0x18222F),
+        residential: UIColor(hex: 0x1B2634), civic: UIColor(hex: 0x293247),
+        hospital: UIColor(hex: 0x372D41), cemetery: UIColor(hex: 0x253631),
+        building: UIColor(hex: 0x2F3B4D), buildingOutline: UIColor(hex: 0x354357),
+        minor: UIColor(hex: 0x37465A), secondary: UIColor(hex: 0x485568),
+        major: UIColor(hex: 0x66604F), motorway: UIColor(hex: 0x8A7250),
+        service: UIColor(hex: 0x303D4F), path: UIColor(hex: 0x4D5A64),
+        casing: UIColor(hex: 0x15202B), majorCasing: UIColor(hex: 0x363744), motorwayCasing: UIColor(hex: 0x5A4938),
+        rail: UIColor(hex: 0x667487), airport: UIColor(hex: 0x222E3D),
+        runway: UIColor(hex: 0x3C4D60), border: UIColor(hex: 0x556579),
+        label: UIColor(hex: 0xE0E8F3), minorLabel: UIColor(hex: 0xB7C5D8),
+        waterLabel: UIColor(hex: 0x8EC5E2), roadLabel: UIColor(hex: 0xD4DEEC), halo: UIColor(hex: 0x172130))
 
-    // Day: white streets, with motorways and A roads tinted blue and green like the road signs.
     static let light = Palette(
-        land: UIColor(hex: 0xF2F1EE), water: UIColor(hex: 0x90DAEE), park: UIColor(hex: 0xCFECCD),
-        pitch: UIColor(hex: 0xD3F8E2), landuse: UIColor(hex: 0xF2F1EE), landuseOpacity: 1,
-        building: UIColor(hex: 0xDDE1E7), buildingOutline: UIColor(hex: 0xC4C9D1),
-        minor: .white, major: UIColor(hex: 0xD3EDCF), motorway: UIColor(hex: 0xA9C5EE),
-        service: .white, path: UIColor(hex: 0xDCDFE4),
-        casing: UIColor(hex: 0xDADDE2), motorwayCasing: UIColor(hex: 0x86A9DD),
-        rail: UIColor(hex: 0xC4C9D1),
-        airport: UIColor(hex: 0xE6E8EC), runway: UIColor(hex: 0xD0D4DA),
-        label: nil, halo: nil,
-        roadLabel: UIColor(hex: 0x5F6368), roadHalo: .white,
-        border: UIColor(hex: 0x9AA0A6))
+        land: UIColor(hex: 0xF4F1E9), water: UIColor(hex: 0xB9DCE8),
+        park: UIColor(hex: 0xD7E7CE), woodland: UIColor(hex: 0xC4DBBF),
+        meadow: UIColor(hex: 0xDFEAD4), wetland: UIColor(hex: 0xCFE3DB),
+        sand: UIColor(hex: 0xF0E3C4), ice: UIColor(hex: 0xE9F2F6),
+        pitch: UIColor(hex: 0xCDE3CA), landuse: UIColor(hex: 0xEDEAE3),
+        residential: UIColor(hex: 0xEAE7DE), civic: UIColor(hex: 0xE5E6F0),
+        hospital: UIColor(hex: 0xF1E3E6), cemetery: UIColor(hex: 0xDCE5D3),
+        building: UIColor(hex: 0xD7D0C6), buildingOutline: UIColor(hex: 0xC7BFB4),
+        minor: UIColor(hex: 0xFFFEFA), secondary: UIColor(hex: 0xFAF4E7),
+        major: UIColor(hex: 0xF7E5C2), motorway: UIColor(hex: 0xF1CC91),
+        service: UIColor(hex: 0xF9F7F1), path: UIColor(hex: 0xC8BFAE),
+        casing: UIColor(hex: 0xD6D0C2), majorCasing: UIColor(hex: 0xD5BD97), motorwayCasing: UIColor(hex: 0xCFA86C),
+        rail: UIColor(hex: 0x9A9FA9), airport: UIColor(hex: 0xE3E3E3),
+        runway: UIColor(hex: 0xC2C6CD), border: UIColor(hex: 0xA5A8AA),
+        label: UIColor(hex: 0x273747), minorLabel: UIColor(hex: 0x536473),
+        waterLabel: UIColor(hex: 0x296788), roadLabel: UIColor(hex: 0x4B565E), halo: UIColor(hex: 0xF9F7EF))
 
     private static func c(_ u: UIColor) -> NSExpression { NSExpression(forConstantValue: u) }
 
@@ -62,23 +61,29 @@ enum MapStyler {
             if let bg = layer as? MLNBackgroundStyleLayer {
                 bg.backgroundColor = c(p.land)
             } else if let f = layer as? MLNFillStyleLayer {
+                let color: UIColor
                 switch id {
-                case "water": f.fillColor = c(p.water)
-                case "park":
-                    f.fillColor = c(p.park); f.fillOutlineColor = c(p.park); f.fillOpacity = NSExpression(forConstantValue: 1)
-                case "landcover_grass", "landcover_wood", "landcover_wetland":
-                    // Liberty draws marshes with a bright grass pattern: plain green instead.
-                    f.fillPattern = nil
-                    f.fillColor = c(p.park); f.fillOutlineColor = c(p.park); f.fillOpacity = NSExpression(forConstantValue: 0.9)
-                case "landuse_pitch", "landuse_track": f.fillColor = c(p.pitch)
-                case "building":
-                    f.fillColor = c(p.building); f.fillOutlineColor = c(p.buildingOutline)
-                case "aeroway_fill": f.fillColor = c(p.airport)
+                case "water": color = p.water
+                case "park": color = p.park
+                case "landcover_wood": color = p.woodland
+                case "landcover_grass": color = p.meadow
+                case "landcover_wetland": color = p.wetland
+                case "landcover_sand": color = p.sand
+                case "landcover_ice": color = p.ice
+                case "landuse_pitch", "landuse_track": color = p.pitch
+                case "landuse_residential": color = p.residential
+                case "landuse_hospital": color = p.hospital
+                case "landuse_school": color = p.civic
+                case "landuse_cemetery": color = p.cemetery
+                case "aeroway_fill": color = p.airport
+                case "building": color = p.building
                 default:
-                    if id.hasPrefix("landuse") || id.hasPrefix("landcover") {
-                        f.fillColor = c(p.landuse); f.fillOpacity = NSExpression(forConstantValue: p.landuseOpacity)
-                    }
+                    guard id.hasPrefix("landuse") || id.hasPrefix("landcover") else { continue }
+                    color = p.landuse
                 }
+                if id.hasPrefix("landcover") { f.fillPattern = nil }
+                f.fillColor = c(color)
+                f.fillOutlineColor = c(id == "building" ? p.buildingOutline : color)
             } else if let e = layer as? MLNFillExtrusionStyleLayer, id == "building-3d" {
                 e.fillExtrusionColor = c(p.building)
             } else if let l = layer as? MLNLineStyleLayer {
@@ -88,12 +93,16 @@ enum MapStyler {
                 if id.hasPrefix("boundary") { l.lineColor = c(p.border); continue }
                 if id.contains("rail") { l.lineColor = c(p.rail); continue }
                 guard id.hasPrefix("road_") || id.hasPrefix("bridge_") || id.hasPrefix("tunnel_") else { continue }
+                let isMotorway = id.contains("motorway")
+                let isMajor = id.contains("trunk_primary") || id.contains("secondary_tertiary")
                 if id.contains("casing") {
-                    l.lineColor = c(id.contains("motorway") ? p.motorwayCasing : p.casing)
-                } else if id.contains("motorway") {
+                    l.lineColor = c(isMotorway ? p.motorwayCasing : isMajor ? p.majorCasing : p.casing)
+                } else if isMotorway {
                     l.lineColor = c(p.motorway)
                 } else if id.contains("trunk_primary") {
                     l.lineColor = c(p.major)
+                } else if id.contains("secondary_tertiary") {
+                    l.lineColor = c(p.secondary)
                 } else if id.contains("service_track") {
                     l.lineColor = c(p.service)
                 } else if id.contains("path_pedestrian") {
@@ -102,26 +111,36 @@ enum MapStyler {
                     l.lineColor = c(p.minor)
                 }
             } else if let s = layer as? MLNSymbolStyleLayer {
+                let textColor: UIColor
                 if id.hasPrefix("highway-name") {
-                    s.textColor = c(p.roadLabel); s.textHaloColor = c(p.roadHalo)
-                    s.textHaloWidth = NSExpression(forConstantValue: 1.6)
-                } else if let label = p.label, let halo = p.halo, !id.hasPrefix("vela") {
-                    s.textColor = c(label); s.textHaloColor = c(halo)
-                    s.textHaloWidth = NSExpression(forConstantValue: 1.1)
+                    textColor = p.roadLabel
+                    if id == "highway-name-major" || id == "highway-name-minor" {
+                        s.textFontSize = NSExpression(forConstantValue: id == "highway-name-major" ? 13 : 11)
+                    }
+                } else if id.hasPrefix("water") {
+                    textColor = p.waterLabel
+                } else if id.hasPrefix("label_village") || id.hasPrefix("label_other") || id.hasPrefix("poi_") {
+                    textColor = p.minorLabel
+                } else if id.hasPrefix("label_") || id == "airport" {
+                    textColor = p.label
+                } else {
+                    continue
                 }
+                s.textColor = c(textColor)
+                s.textHaloColor = c(p.halo)
+                s.textHaloWidth = NSExpression(forConstantValue: id.hasPrefix("highway-name") ? 1.5 : 1.1)
             }
         }
     }
 
-    /** Layers that only get in the way while driving: shop and bin icons, footpaths, buildings, one-way arrows. */
+    /** Decorative layers that only get in the way while driving. Keep places tappable. */
     private static func clutter(_ id: String) -> Bool {
-        id.hasPrefix("poi_") || id == "building" || id == "building-3d" || id.contains("path_pedestrian")
-            || id == "highway-name-path" || id.hasPrefix("road_one_way_arrow") || id.hasSuffix("_hatching")
+        id.contains("path_pedestrian")
+            || id == "highway-name-path" || id.hasSuffix("_hatching")
             || ["landuse_pitch", "landuse_track", "landuse_cemetery", "landuse_hospital", "landuse_school",
-                "aeroway_fill", "aeroway_runway", "aeroway_taxiway", "airport"].contains(id)
+                "aeroway_fill", "aeroway_runway", "aeroway_taxiway"].contains(id)
     }
 
-    private static var savedLabelSizes: [String: NSExpression] = [:]
     private static var savedShieldSpacing: [String: NSExpression] = [:]
     private static var savedShieldPadding: [String: NSExpression] = [:]
     private static var savedLineOpacity: [String: NSExpression] = [:]
@@ -131,7 +150,7 @@ enum MapStyler {
         (id.hasPrefix("road_") || id.hasPrefix("bridge_") || id.hasPrefix("tunnel_")) && (id.contains("minor") || id.contains("service_track"))
     }
 
-    /** Strips the map to roads, water, parks and big road names while navigating, and puts it back after. */
+    /** Strips the map to roads, water, parks and road names while navigating, and puts it back after. */
     static func drive(_ style: MLNStyle, on: Bool) {
         for layer in style.layers where !layer.identifier.hasPrefix("vela") {
             let id = layer.identifier
@@ -152,10 +171,6 @@ enum MapStyler {
                 if savedLineOpacity[id] == nil { savedLineOpacity[id] = l.lineOpacity }
                 l.lineOpacity = on ? NSExpression(forConstantValue: 0.6) : savedLineOpacity[id]!
                 continue
-            }
-            if let s = layer as? MLNSymbolStyleLayer, id == "highway-name-major" || id == "highway-name-minor" {
-                if savedLabelSizes[id] == nil { savedLabelSizes[id] = s.textFontSize }
-                s.textFontSize = on ? NSExpression(forConstantValue: id == "highway-name-major" ? 17 : 15) : savedLabelSizes[id]!
             }
         }
     }

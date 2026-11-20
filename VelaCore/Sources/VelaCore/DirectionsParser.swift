@@ -227,8 +227,17 @@ enum DirectionsParser {
             m.type = .rampLeft
             m.sideUnknown = true
         }
-        // Google says the exit only in words: keep the number too, for the roundabout picture.
-        if m.type == .roundabout { m.exit = exitNumber(in: m.instruction) }
+        // Text ordinals do not establish which branches count on the selected route.
+        if m.type == .roundabout {
+            m.instruction = OSRM.instruction(type: "roundabout", modifier: nil, road: m.road, exit: nil, mode: .drive)
+        }
+        if m.type == .rampLeft || m.type == .rampRight,
+           let exit = text.range(of: #"\b(?:exit|junction)\s+[0-9]+[A-Z]?\b"#, options: [.regularExpression, .caseInsensitive]) {
+            let number = text[exit].split(separator: " ").last.map(String.init)
+            let signed = text.range(of: #"\b(?:towards?|for)\s+"#, options: [.regularExpression, .caseInsensitive], range: exit.upperBound..<text.endIndex)
+            let names = signed.map { [String(text[$0.upperBound...])] } ?? []
+            m.exitSign = ExitSign(number: number, destinations: names)
+        }
         return m
     }
 

@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /**
  * A live report from Waze drivers: police, a crash, something on the road, a closure. From the
