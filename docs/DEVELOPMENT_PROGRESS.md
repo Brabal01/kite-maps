@@ -77,6 +77,10 @@ PR #8. The v30 planning, navigation, lane, alert, map and HUD work is preserved.
 - `simulator-smoke.yml` captures `roundabout`, `roundaboutuncertain`, `signals`
   and `transitcolors` in light mode, dark mode and large Dynamic Type, and
   uploads `Kite-v31-Simulator-Screenshots`.
+- **Verified:** CI run 44911447422 built `Kite-v31-Full.ipa` and
+  `Kite-v31-SideStore.ipa` from `d88e5cb`, build 1108; both passed structure
+  checks. CI run 44911447390 ran `V31UITests` (3/3) and captured the v31
+  screenshots.
 - Linux test portability: `WazeCameras`, the `vela-probe` HTTP imports and the
   zlib fixture are guarded, so the same 336-test suite runs on Linux and macOS.
 
