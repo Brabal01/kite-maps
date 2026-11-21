@@ -28,16 +28,19 @@
 ### Simulator and screenshots
 
 - Final smoke run
-  [`44836387766`](https://github.com/Brabal01/kite-maps/actions/runs/44836387766)
+  [`44838972349`](https://github.com/Brabal01/kite-maps/actions/runs/44838972349)
   on commit `77adc49`: three normal launches, one denied-location launch and
   one `--safe-mode` launch survived; it then opened home, routes, place,
-  directions, navigation and settings, and home/navigation in dark mode.
-- The smoke uploads `Kite-v29-Simulator-Screenshots` (demo-*.png) and a
-  mechanical check that each expected frame exists, is not black and is not a
-  uniform colour. Layout quality still needs human review.
-- Earlier smoke runs on the same code base (`44809398556`, `44825115776`)
-  passed the multi-launch and safe-mode checks.
-
+  navigation and settings, plus home/navigation in dark mode.
+- Artifact `Kite-v29-Simulator-Screenshots` contains the eight full-size PNGs.
+  The workflow checks each expected frame exists, is not black and is not a
+  uniform colour. Layout quality was reviewed from these images, not asserted
+  by the script.
+- Curated, downscaled frames are committed in `docs/screenshots/v29/` with a
+  provenance note (including the one frame taken from the previous run because
+  the simulator did not deliver a fix in time).
+- An earlier smoke run on the same code base (`44836387766`, build 1088) also
+  passed the launch and safe-mode checks.
 
 ## v28 stability
 

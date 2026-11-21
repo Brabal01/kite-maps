@@ -69,7 +69,8 @@ service, or a human review).
 
 | Check | Status |
 | --- | --- |
-| Banner shows distance, instruction, exit number, destinations | M (demo `uk_roundabout`, `nextlimit`, `nav`) |
+| Banner shows distance, instruction and road | M (light/dark navigation screenshots) |
+| Exit number, signed destinations and lane row | M (code path + earlier roundabout demo; not in the final screenshot frame) |
 | Lanes shown only when data exists and close enough | M (existing `LaneApproach` path) |
 | Then-row appears for close maneuvers | M (code path) |
 | Roundabout diagram uses real exit geometry | A (existing roundabout tests) + M (demo) |
@@ -92,9 +93,10 @@ service, or a human review).
 
 | Check | Status |
 | --- | --- |
-| Dark and light palette | M (screenshots) |
-| Long names with large Dynamic Type | M (screenshots, human review) |
-| Small phone (SE) fits banner + trip bar | M (screenshots) |
+| Dark and light palette | M (screenshots in `docs/screenshots/v29/`) |
+| Long names | M (Saved page truncation reviewed) |
+| Large Dynamic Type | U (no captured frame in the final run) |
+| Small phone (SE) fits banner + trip bar | U (device-type capture not available on the final runner) |
 | Landscape | U (no automated orientation capture) |
 | Reduce Motion respected by new transitions | M (code reads the environment) |
 | VoiceOver labels for banner, lanes, dock, quick actions | M (code) |

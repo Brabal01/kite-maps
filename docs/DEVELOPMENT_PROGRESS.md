@@ -71,10 +71,12 @@ redesign.
   - Both unpack cleanly, contain no provisioning profile, and have matching
     app/extension versions and minimum OS.
 - Simulator smoke with screenshots: run
-  [`44836387766`](https://github.com/Brabal01/kite-maps/actions/runs/44836387766)
+  [`44838972349`](https://github.com/Brabal01/kite-maps/actions/runs/44838972349)
   on the same commit. It launches the app three times, once without location,
-  once in safe mode, then opens home, routes, place, directions, navigation and
-  settings, plus home/navigation in dark mode, and uploads the frames.
+  once in safe mode, then opens home, routes, place, navigation and settings,
+  plus home/navigation in dark mode, and uploads
+  `Kite-v29-Simulator-Screenshots`. Curated frames are in
+  `docs/screenshots/v29/`.
 - The earlier build 1078/1081 runs verified the same packaging path while the
   final UI changes were still landing.
 
