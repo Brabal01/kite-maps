@@ -354,7 +354,7 @@ final class AppModel: ObservableObject {
     private var navSub: AnyCancellable?
     /** A simulated GPS drive is running (developer tool). It is the only source of position while it does. */
     @Published var replayName: String?
-    var replayTask: Task<Void, Never>?
+    @Published var replaySession: ReplaySession?
     var isReplaying: Bool { replayName != nil }
 
     init() {

@@ -154,15 +154,16 @@ struct DataDiagnosticsView: View {
             }
 
             if model.nav != nil {
-                Section {
-                    if model.isReplaying {
-                        Button("Stop the simulated drive", role: .destructive) { model.stopReplay() }
-                    } else {
-                        Button("Replay this route (clean GPS)") { model.startReplay(.clean) }
-                        Button("Replay with noisy GPS and a tunnel") { model.startReplay(.rough) }
+                if let session = model.replaySession {
+                    ReplayControlsView(session: session, model: model)
+                } else {
+                    Section {
+                        ForEach(ReplaySession.Fault.allCases) { fault in
+                            Button("Replay: \(fault.title)") { model.startReplay(fault) }
+                        }
+                    } header: { Text("Developer: GPS replay") } footer: {
+                        Text("Drives the current route with a simulated GPS. Your real position is ignored meanwhile, nothing is saved, and an orange banner stays on screen until you stop it.")
                     }
-                } header: { Text("Developer: GPS replay") } footer: {
-                    Text("Drives the current route with a simulated GPS. Your real position is ignored meanwhile, nothing is saved, and an orange banner stays on screen until you stop it.")
                 }
             }
             if let nav = model.nav, !nav.roundaboutDiagnostics.isEmpty {
@@ -195,6 +196,43 @@ struct DataDiagnosticsView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("The export holds the shape of your recent movement as metres from an unknown start. It has no coordinates, but someone who knows your home, work or usual route could still recognise it. Share it only with someone you trust with that.")
+        }
+    }
+}
+
+
+/// Controls for a running replay: pause, speed, jump to a turn, and fault injection.
+struct ReplayControlsView: View {
+    @ObservedObject var session: ReplaySession
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        Section {
+            HStack {
+                Text("\(Int(session.progress * 100))%").monospacedDigit()
+                Spacer()
+                Text(session.fault.title).foregroundColor(.secondary)
+            }
+            if !session.note.isEmpty { Text(session.note).font(.caption).foregroundColor(.secondary) }
+            Button(session.paused ? "Resume" : "Pause") {
+                session.paused ? model.resumeReplay() : model.pauseReplay()
+            }
+            .accessibilityIdentifier("replay-pause")
+            Picker("Speed", selection: Binding(
+                get: { session.speed },
+                set: { session.speed = $0 })) {
+                ForEach([0.5, 1.0, 2.0, 4.0], id: \.self) { Text("\($0, specifier: "%.1f")×").tag($0) }
+            }
+            .pickerStyle(.segmented)
+            Button("Skip to next manoeuvre") { model.skipToNextManeuver() }
+                .accessibilityIdentifier("replay-skip")
+            Toggle("Simulate no internet", isOn: Binding(
+                get: { session.simulateOffline },
+                set: { model.setReplayOffline($0) }))
+            Button("Stop replay", role: .destructive) { model.stopReplay() }
+                .accessibilityIdentifier("replay-stop-detail")
+        } header: { Text("Developer: GPS replay running") } footer: {
+            Text("Simulated fixes only. Real GPS is ignored and nothing is saved while this is on.")
         }
     }
 }

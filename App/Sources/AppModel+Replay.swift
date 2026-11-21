@@ -24,48 +24,47 @@ extension AppModel {
         }
     }
 
-    func startReplay(_ profile: ReplayProfile, speedFactor: Double = 1) {
+    func startReplay(_ fault: ReplaySession.Fault) {
         guard let n = nav, !isReplaying, transitJourney == nil else { return }
         let route = n.route
-        let speed: Double = route.mode == .drive ? 13 : route.mode == .bike ? 4.5 : 1.4
-        let fixture = GPSReplayFixture.drive(along: route.polyline, speed: speed, interval: 1, accuracy: 5,
-                                             name: "Replay of the current route")
-        var options = GPSReplayOptions()
-        if profile == .rough {
-            options.noiseMeters = 4
-            let middle = fixture.duration / 2
-            options.dropouts = [middle...(middle + 8)]
-            options.lateRanges = [(middle + 20)...(middle + 21)]
-            options.lateBySeconds = 3
-        }
-        let plan = GPSReplayPlan.schedule(fixture, options: options)
-        guard !plan.isEmpty else { return }
-        replayName = L10n.text(profile.title)
-        let factor = max(1, speedFactor)
-        let started = Date()
-        replayTask = Task { [weak self] in
-            var last = 0.0
-            for step in plan {
-                let wait = (step.deliverAt - last) / factor
-                last = step.deliverAt
-                if wait > 0 { try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000)) }
-                guard !Task.isCancelled, let self, self.nav === n else { break }
-                // Timestamps follow the simulated clock, so a late fix really is older than the newest one.
-                let stamp = started.addingTimeInterval(step.fix.t / factor)
-                let fix = CLLocation(coordinate: CLLocationCoordinate2D(latitude: step.coordinate.lat, longitude: step.coordinate.lng),
-                                     altitude: 0, horizontalAccuracy: step.fix.accuracy, verticalAccuracy: 5,
-                                     course: step.fix.course, speed: step.fix.speed * factor, timestamp: stamp)
-                self.locationChanged(fix, simulated: true)
-            }
-            guard let self else { return }
-            self.replayName = nil
-            self.replayTask = nil
+        let session = ReplaySession(route: route, fault: fault, onFix: { [weak self] step in
+            guard let self, self.nav === n else { return }
+            let fix = CLLocation(coordinate: CLLocationCoordinate2D(latitude: step.coordinate.lat, longitude: step.coordinate.lng),
+                                 altitude: 0, horizontalAccuracy: step.fix.accuracy, verticalAccuracy: 5,
+                                 course: step.fix.course, speed: max(0, step.fix.speed), timestamp: Date())
+            self.locationChanged(fix, simulated: true)
+        }, onFinish: { [weak self] in
+            self?.stopReplay()
+        })
+        replaySession = session
+        replayName = L10n.text(fault.title)
+        session.start()
+    }
+
+    /// Older call sites (and the simulator smoke test) use the two named profiles.
+    func startReplay(_ profile: ReplayProfile, speedFactor: Double = 1) {
+        startReplay(profile == .clean ? .clean : .noise)
+        replaySession?.speed = max(0.25, speedFactor)
+    }
+
+    func pauseReplay() { replaySession?.pause() }
+    func resumeReplay() { replaySession?.resume() }
+    func skipToNextManeuver() {
+        guard let session = replaySession, let maneuver = session.nextManeuverAfterProgress() else { return }
+        if session.skip(to: maneuver.alongMeters) {
+            notice = L10n.format("Replay jumped to: %@", maneuver.instruction)
         }
     }
 
+    func setReplayOffline(_ offline: Bool) {
+        replaySession?.simulateOffline = offline
+        Connectivity.shared.setSimulatedOffline(offline)
+    }
+
     func stopReplay() {
-        replayTask?.cancel()
-        replayTask = nil
+        replaySession?.stop()
+        replaySession = nil
         replayName = nil
+        Connectivity.shared.setSimulatedOffline(false)
     }
 }

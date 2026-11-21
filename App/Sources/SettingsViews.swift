@@ -235,7 +235,7 @@ struct SettingsView: View {
 
     /// One index for the existing pages: search opens the same page, never a second settings system.
     private var allPages: [SettingsSearchEntry] {
-        var pages = [
+        var pages: [SettingsSearchEntry] = [
             .init(title: "Voice & driving", detail: "Voice, travel mode, avoid tolls and highways",
                   keywords: "hlas voice mode tolls motorway highway walking speed", icon: "speaker.wave.2.fill", color: 0x0F766E) { AnyView(drivingPage) },
             .init(title: "Cameras & speed", detail: "Camera warnings, speeding alert, jurisdiction",
