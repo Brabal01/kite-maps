@@ -94,8 +94,13 @@ public enum Roundabouts {
             // the "toward Eastleigh" does not.
             let signs = OSRM.Signs(destinations: m.exitSign?.destinations.joined(separator: ", "),
                                    exits: m.exitSign?.number, from: nil)
-            let words = OSRM.instruction(type: "roundabout", modifier: nil, road: m.road, exit: final,
+            var words = OSRM.instruction(type: "roundabout", modifier: nil, road: m.road, exit: final,
                                          mode: route.mode, signs: signs)
+            // A provider that put the destination only in its words keeps it.
+            if !words.contains(" toward"), !words.contains(" towards"),
+               let r = m.instruction.range(of: " toward ") ?? m.instruction.range(of: " towards ") {
+                words += String(m.instruction[r.lowerBound...])
+            }
             if r.maneuvers[i].instruction != words {
                 r.maneuvers[i].instruction = words
                 changed = true
