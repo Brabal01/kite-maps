@@ -880,22 +880,26 @@ final class AppModel: ObservableObject {
 
     func saveCurrentJourney(name: String? = nil) {
         guard let d = directions else { return }
-        let title = name?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let fallback = "\(d.fromPlace?.name ?? L10n.text("My location")) → \(d.destination.name)"
-        let journey = SavedJourney(name: (title?.isEmpty == false ? title! : fallback),
-                                   origin: d.fromPlace, destination: d.destination,
+        let title = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        // An empty name keeps following the journey's direction ("A → B" becomes "B → A" when reversed).
+        let journey = SavedJourney(name: title, origin: d.origin, destination: d.destination,
                                    stops: d.stops, mode: d.mode,
                                    avoidTolls: settings.avoidTolls,
-                                   avoidHighways: settings.avoidHighways)
+                                   avoidHighways: settings.avoidHighways,
+                                   returnTrip: d.reversed)
         settings.savedJourneys.insert(journey, at: 0)
         notice = L10n.text("Journey saved.")
     }
 
     func openSavedJourney(_ journey: SavedJourney) {
+        if let index = settings.savedJourneys.firstIndex(where: { $0.id == journey.id }) {
+            settings.savedJourneys[index].markUsed()
+        }
         settings.avoidTolls = journey.avoidTolls
         settings.avoidHighways = journey.avoidHighways
         var state = DirectionsState(destination: journey.destination, mode: journey.mode)
         state.origin = journey.origin
+        state.reversed = journey.isReturnTrip
         state.stops = journey.stops
         tab = .map
         detent = .half
@@ -905,11 +909,24 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Opens the opposite direction without touching the stored journey; saving it is a separate choice.
     func reverseSavedJourney(_ journey: SavedJourney) {
+        openSavedJourney(journey.reversed())
+    }
+
+    func toggleFavoriteJourney(_ journey: SavedJourney) {
         guard let index = settings.savedJourneys.firstIndex(where: { $0.id == journey.id }) else { return }
-        let reversed = journey.reversed()
-        settings.savedJourneys[index] = reversed
-        openSavedJourney(reversed)
+        settings.savedJourneys[index].isFavorite.toggle()
+    }
+
+    func duplicateSavedJourney(_ journey: SavedJourney) {
+        guard let index = settings.savedJourneys.firstIndex(where: { $0.id == journey.id }) else { return }
+        settings.savedJourneys.insert(journey.copy(), at: index + 1)
+    }
+
+    func renameSavedJourney(_ journey: SavedJourney, to name: String) {
+        guard let index = settings.savedJourneys.firstIndex(where: { $0.id == journey.id }) else { return }
+        settings.savedJourneys[index].name = name.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     func deleteSavedJourney(_ journey: SavedJourney) {

@@ -131,7 +131,7 @@ struct RoutesPage: View {
                     .kiteCard()
             } else {
                 VStack(spacing: 0) {
-                    ForEach(Array(settings.savedJourneys.enumerated()), id: \.element.id) { index, journey in
+                    ForEach(Array(settings.savedJourneys.sortedForDisplay().enumerated()), id: \.element.id) { index, journey in
                         if index > 0 { Divider().padding(.leading, 54) }
                         savedJourneyRow(journey)
                     }
@@ -147,13 +147,13 @@ struct RoutesPage: View {
     private func savedJourneyRow(_ journey: SavedJourney) -> some View {
         Button { model.openSavedJourney(journey) } label: {
             HStack(spacing: KiteSpace.s) {
-                Image(systemName: journey.isGPXTrack ? "point.topleft.down.to.point.bottomright.curvepath" : "bookmark.fill")
+                Image(systemName: journey.isGPXTrack ? "point.topleft.down.to.point.bottomright.curvepath" : (journey.isFavorite ? "star.fill" : "bookmark.fill"))
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(KiteColor.accentText)
                     .frame(width: 36, height: 36)
                     .background(Circle().fill(KiteColor.accentSoft))
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(journey.displayName).font(KiteText.label(16)).foregroundColor(KiteColor.ink).lineLimit(1)
+                    Text(journey.title(currentLocation: L10n.text("My location"))).font(KiteText.label(16)).foregroundColor(KiteColor.ink).lineLimit(1)
                     let details: [String?] = [
                         L10n.text(journey.mode.label),
                         journey.stops.isEmpty ? nil : L10n.format("%@ stops", String(journey.stops.count)),
@@ -173,8 +173,15 @@ struct RoutesPage: View {
         .buttonStyle(.plain)
         .accessibilityIdentifier("saved-journey-\(journey.id.uuidString)")
         .contextMenu {
+            Button { model.toggleFavoriteJourney(journey) } label: {
+                Label(journey.isFavorite ? "Remove from favourites" : "Add to favourites",
+                      systemImage: journey.isFavorite ? "star.slash" : "star")
+            }
             Button { model.reverseSavedJourney(journey) } label: {
                 Label("Reverse", systemImage: "arrow.left.arrow.right")
+            }
+            Button { model.duplicateSavedJourney(journey) } label: {
+                Label("Duplicate", systemImage: "plus.square.on.square")
             }
             Button(role: .destructive) { model.deleteSavedJourney(journey) } label: {
                 Label("Delete", systemImage: "trash")
