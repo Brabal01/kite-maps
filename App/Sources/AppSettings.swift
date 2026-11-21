@@ -120,6 +120,10 @@ final class AppSettings: ObservableObject {
     /** Hill shading, and metro/rail lines in their colors. */
     @Published var terrain: Bool { didSet { d.set(terrain, forKey: "terrain") } }
     @Published var transitLines: Bool { didSet { d.set(transitLines, forKey: "transitLines") } }
+    /** `TransitMapCategory` names the user switched off on the map; empty shows every kind in its official colours. */
+    @Published var hiddenTransitCategories: Set<String> {
+        didSet { d.set(hiddenTransitCategories.sorted(), forKey: "hiddenTransitCategories") }
+    }
     @Published var avoidTolls: Bool { didSet { d.set(avoidTolls, forKey: "avoidTolls") } }
     @Published var avoidHighways: Bool { didSet { d.set(avoidHighways, forKey: "avoidHighways") } }
     /** "Use Kite without Google": search and routes from open data only. */
@@ -234,6 +238,7 @@ final class AppSettings: ObservableObject {
         hudCustomJunction = d.object(forKey: "hudCustomJunction") as? Bool ?? true
         terrain = d.bool(forKey: "terrain")
         transitLines = d.bool(forKey: "transitLines")
+        hiddenTransitCategories = TransitMapFilter.sanitized(d.stringArray(forKey: "hiddenTransitCategories") ?? [])
         avoidTolls = d.bool(forKey: "avoidTolls")
         avoidHighways = d.bool(forKey: "avoidHighways")
         noGoogle = d.bool(forKey: "noGoogle")

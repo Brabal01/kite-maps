@@ -48,6 +48,7 @@ struct LayersSheet: View {
                     }
                 }
             }
+            if settings.transitLines { transitFilter }
             if let n = liveCount, settings.wazeOn, settings.wazeOnMap || settings.wazeHeatmap {
                 HStack(spacing: 8) {
                     Circle().fill(Color(hex: 0x22C55E)).frame(width: 10, height: 10)
@@ -60,7 +61,40 @@ struct LayersSheet: View {
         }
         .padding(20)
         .background(Vela.sheet(scheme).ignoresSafeArea())
-        .presentationDetents([.height(590)])
+        .presentationDetents([.height(settings.transitLines ? 650 : 590)])
+    }
+
+    /// One row of chips under the layer tiles: tap hides or shows a kind, long-press shows only that kind.
+    private var transitFilter: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(TransitMapCategory.allCases) { category in
+                    let shown = !settings.hiddenTransitCategories.contains(category.rawValue)
+                    Button {
+                        if shown { settings.hiddenTransitCategories.insert(category.rawValue) }
+                        else { settings.hiddenTransitCategories.remove(category.rawValue) }
+                        settings.hiddenTransitCategories = TransitMapFilter.sanitized(settings.hiddenTransitCategories.sorted())
+                    } label: {
+                        Label(L10n.text(category.label), systemImage: category.symbol)
+                            .font(.subheadline.weight(shown ? .semibold : .regular))
+                            .padding(.horizontal, 12).frame(minHeight: 44)
+                            .foregroundColor(shown ? Vela.accent(scheme) : .secondary)
+                            .background(Capsule().fill(Vela.chip(scheme)))
+                            .overlay(Capsule().stroke(shown ? Vela.accent(scheme) : .clear, lineWidth: 2))
+                    }
+                    .buttonStyle(.plain)
+                    .contextMenu {
+                        Button(L10n.text("Show only this kind")) {
+                            settings.hiddenTransitCategories = TransitMapFilter.hiddenShowingOnly(category)
+                        }
+                        Button(L10n.text("Show all kinds")) { settings.hiddenTransitCategories = [] }
+                    }
+                    .accessibilityLabel(L10n.text(category.label))
+                    .accessibilityValue(L10n.text(shown ? "Shown" : "Hidden"))
+                    .accessibilityIdentifier("transit-filter-\(category.rawValue)")
+                }
+            }
+        }
     }
 
     private func presetTile(_ preset: MapPreset) -> some View {
