@@ -206,9 +206,18 @@ struct SettingsView: View {
         Form {
             Section {
                 // Switched here it means everything or nothing: "Alerts only" is the drive screen's button.
-                Toggle(isOn: Binding(get: { settings.voice }, set: { settings.voice = $0; settings.voiceAlertsOnly = false })) {
-                    SettingLabel("Voice guidance", icon: "speaker.wave.2.fill", color: 0x0F766E)
-                }
+                Picker(selection: Binding(
+                    get: { VoiceLevel(voice: settings.voice, alertsOnly: settings.voiceAlertsOnly, maneuversOnly: settings.voiceManeuversOnly) },
+                    set: { level in
+                        let stored = level.storedSwitches
+                        settings.voice = stored.voice
+                        settings.voiceAlertsOnly = stored.alertsOnly
+                        settings.voiceManeuversOnly = stored.maneuversOnly
+                    })) {
+                    ForEach(VoiceLevel.allCases, id: \.self) { level in
+                        Text(L10n.text(level.title)).tag(level)
+                    }
+                } label: { SettingLabel("Voice guidance", icon: "speaker.wave.2.fill", color: 0x0F766E) }
                 Toggle(isOn: $settings.haptics) {
                     SettingLabel("Haptic cues", icon: "iphone.radiowaves.left.and.right", color: 0x7C3AED)
                 }

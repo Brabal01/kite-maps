@@ -243,13 +243,13 @@ struct NavigationOverlay: View {
                         MapFab(icon: "plus", size: 44) { model.adjustNavZoom(wider: false) }
                             .accessibilityLabel("Zoom in")
                     }
-                    MapFab(icon: nav.voiceMode.icon, tint: nav.voiceMode == .alerts ? Vela.accentText(scheme) : .primary, size: 52) {
+                    MapFab(icon: nav.voiceMode.icon, tint: nav.voiceMode == .all || nav.voiceMode == .off ? .primary : Vela.accentText(scheme), size: 52) {
                         nav.voiceMode = nav.voiceMode.next
                         let v = nav.voiceMode
                         withAnimation(.easeOut(duration: 0.2)) { buttonNote = ButtonNote(title: v.title, detail: v.detail) }
                     }
                     .accessibilityLabel(L10n.format("Voice: %@", L10n.text(nav.voiceMode.title)))
-                    .accessibilityHint("Switches between voice on, alerts only and voice off")
+                    .accessibilityHint("Switches between voice on, turns only, alerts only and voice off")
                 }
                 .task(id: buttonNote) {
                     guard buttonNote != nil else { return }

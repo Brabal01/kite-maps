@@ -24,15 +24,17 @@ final class Navigator: ObservableObject {
     /** What the voice says: everything, only warnings (cameras, police, hazards), or nothing. */
     @Published var voiceMode: VoiceMode {
         didSet {
-            if voiceMode == .off || (voiceMode == .alerts && !speakingAlert) { speech.stopSpeaking(at: .immediate) }
+            if !voiceMode.allows(speakingKind) { speech.stopSpeaking(at: .immediate) }
             // Remembered, so the next trip starts on the same choice instead of full voice again.
-            AppSettings.shared.voice = voiceMode != .off
-            AppSettings.shared.voiceAlertsOnly = voiceMode == .alerts
+            let stored = voiceMode.storedSwitches
+            AppSettings.shared.voice = stored.voice
+            AppSettings.shared.voiceAlertsOnly = stored.alertsOnly
+            AppSettings.shared.voiceManeuversOnly = stored.maneuversOnly
         }
     }
     var muted: Bool { voiceMode == .off }
     /** Whether what's being said now is a warning, so switching to "Alerts only" doesn't cut it off. */
-    private var speakingAlert = false
+    private var speakingKind = SpeechKind.info
     /** The camera follows the user until they pan the map. */
     @Published var showingOverview = false
     private var spokenLimitDrop: Double?
@@ -231,7 +233,7 @@ final class Navigator: ObservableObject {
         self.destination = destination
         self.stops = stops
         tracker = RouteTracker(route: route)
-        voiceMode = !settings.voice ? .off : settings.voiceAlertsOnly ? .alerts : .all
+        voiceMode = VoiceLevel(voice: settings.voice, alertsOnly: settings.voiceAlertsOnly, maneuversOnly: settings.voiceManeuversOnly)
         avoidHighways = settings.avoidHighways
         avoidTolls = settings.avoidTolls
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .voicePrompt, options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers])
@@ -260,8 +262,8 @@ final class Navigator: ObservableObject {
             : "In \(Fmt.spokenDistance(f.alongMeters)), \(f.spokenWords.lowercasedFirst)." } ?? ""
         if L10n.isCzech {
             let next = first.map { " " + CzechNavigation.prompt($0) } ?? ""
-            speak("Spouštím navigaci do cíle \(destination.name)." + next, localized: true)
-        } else { speak("Starting route to \(destination.name). " + firstWords) }
+            speak("Spouštím navigaci do cíle \(destination.name)." + next, maneuver: true, localized: true)
+        } else { speak("Starting route to \(destination.name). " + firstWords, maneuver: true) }
         // That was the heads-up for the first step: don't say it again a moment later, but still
         // say the turn itself as it comes up.
         if let f = first, f.alongMeters < 1500, let i = route.maneuvers.firstIndex(of: f) { spokenStage[i] = f.alongMeters < 40 ? 3 : f.alongMeters < 300 ? 2 : 1 }
@@ -337,10 +339,10 @@ final class Navigator: ObservableObject {
         guard let maneuver = nextManeuver else { return }
         let distance = progress?.distanceToNext ?? 0
         if L10n.isCzech {
-            speak(CzechNavigation.prompt(maneuver, distance: distance > 25 ? distance : nil), urgent: true, localized: true)
+            speak(CzechNavigation.prompt(maneuver, distance: distance > 25 ? distance : nil), urgent: true, maneuver: true, localized: true)
         } else {
             speak(distance > 25 ? "In \(Fmt.spokenDistance(distance)), \(maneuver.spokenWords.lowercasedFirst)" : maneuver.spokenWords,
-                  urgent: true)
+                  urgent: true, maneuver: true)
         }
     }
 
@@ -482,9 +484,9 @@ final class Navigator: ObservableObject {
             estimating = false
             if L10n.isCzech {
                 let side = destinationSide.map { $0 == "left" ? " Cíl je vlevo." : " Cíl je vpravo." } ?? ""
-                speak("Dorazili jste do cíle \(destination.name)." + side, localized: true)
+                speak("Dorazili jste do cíle \(destination.name)." + side, maneuver: true, localized: true)
             } else {
-                speak("You have arrived at \(destination.name)" + (destinationSide.map { ", on the \($0)." } ?? "."))
+                speak("You have arrived at \(destination.name)" + (destinationSide.map { ", on the \($0)." } ?? "."), maneuver: true)
             }
             // Parked, the phone goes in a pocket: let the screen sleep, and a few minutes on, end
             // the trip so full-power GPS doesn't run all day in the background.
@@ -1139,7 +1141,7 @@ final class Navigator: ObservableObject {
                m.alongMeters - r.alongMeters < 150 { return }
             // The turn itself matters more than whatever is still being said.
             if L10n.isCzech { sayCzechTurn(m, urgent: true) }
-            else { speak(m.spokenWords + thenWords(i), urgent: true) }
+            else { speak(m.spokenWords + thenWords(i), urgent: true, maneuver: true) }
         } else if m.leavesRoundabout {
             // Already said with the roundabout ("take the 3rd exit"): only "exit" itself, as it comes up.
             return
@@ -1154,13 +1156,13 @@ final class Navigator: ObservableObject {
             let words = m.type == .arrive ? destinationSide.map { "your destination is on the \($0)" } ?? "your destination is ahead"
                 : m.spokenWords.lowercasedFirst
             if L10n.isCzech { sayCzechTurn(m, distance: d, lanes: true) }
-            else { speak("In \(Fmt.spokenDistance(d)), \(words)\(m.type == .arrive ? "" : thenWords(i))\(lane)") }
+            else { speak("In \(Fmt.spokenDistance(d)), \(words)\(m.type == .arrive ? "" : thenWords(i))\(lane)", maneuver: true) }
         } else if d <= far && d > near + 150 && stage < 1 && m.type != .arrive {
             spokenStage[i] = 1
             // On a phone call only what's needed now is said; the early heads-up would talk over it.
             if onCall { return }
             if L10n.isCzech { sayCzechTurn(m, distance: d) }
-            else { speak("In \(Fmt.spokenDistance(d)), \(m.spokenWords.lowercasedFirst)") }
+            else { speak("In \(Fmt.spokenDistance(d)), \(m.spokenWords.lowercasedFirst)", maneuver: true) }
         } else if drive && d > 3000 && stage < 1 && !toldContinue.contains(i) && justPassed(p) {
             // A long way to the next turn, like after joining a motorway: say so once, the way
             // Google does ("Continue on M27 for 7 miles"), so a quiet stretch doesn't feel lost.
@@ -1280,7 +1282,7 @@ final class Navigator: ObservableObject {
         } else {
             spokenStage[i] = d <= near ? 2 : 1
             if L10n.isCzech { sayCzechTurn(m, distance: d) }
-            else { speak("In \(Fmt.spokenDistance(d)), \(m.spokenWords.lowercasedFirst)") }
+            else { speak("In \(Fmt.spokenDistance(d)), \(m.spokenWords.lowercasedFirst)", maneuver: true) }
         }
     }
 
@@ -1366,7 +1368,7 @@ final class Navigator: ObservableObject {
                     // just before "You have arrived" (a simulated drive to Cardiff Castle) is noise.
                     && latLng(loc).distance(to: destination.location) > 150 {
             rerouteSpokenAt = Date()
-            speak("Rerouting.")
+            speak("Rerouting.", maneuver: true)
         }
         let from = LatLng(loc.coordinate.latitude, loc.coordinate.longitude)
         // Only while driving: on foot or a bike, turning round is fine.
@@ -1463,7 +1465,7 @@ final class Navigator: ObservableObject {
             if let road = currentRoad { speakTemplate("Continue on %@ for %@.", road, length) }
             else { speakTemplate("Continue along the road for %@.", length) }
         } else {
-            speak(continueWords(distance))
+            speak(continueWords(distance), maneuver: true)
         }
     }
 
@@ -1475,12 +1477,13 @@ final class Navigator: ObservableObject {
         if lanes, let advice = LaneGuide.lanes(for: step, leftTraffic: Geo.drivesOnLeft(step.location)), !advice.lanes.isEmpty {
             message += ". Doporučené řazení: " + advice.words.lowercased()
         }
-        speak(message, urgent: urgent, localized: true)
+        speak(message, urgent: urgent, maneuver: true, localized: true)
     }
 
-    private func speak(_ text: String, urgent: Bool = false, alert: Bool = false, localized: Bool = false) {
-        guard !stopped, voiceMode == .all || (voiceMode == .alerts && alert) else { return }
-        speakingAlert = alert
+    private func speak(_ text: String, urgent: Bool = false, alert: Bool = false, maneuver: Bool = false, localized: Bool = false) {
+        let kind: SpeechKind = alert ? .alert : maneuver ? .maneuver : .info
+        guard !stopped, voiceMode.allows(kind) else { return }
+        speakingKind = kind
         if urgent && speech.isSpeaking { speech.stopSpeaking(at: .word) }
         try? AVAudioSession.sharedInstance().setActive(true)
         let translation = localized ? text : L10n.text(text)
@@ -1540,14 +1543,34 @@ extension String {
     var lowercasedFirst: String { prefix(1).lowercased() + dropFirst() }
 }
 
-/** The speaker button's three choices, like Waze. */
-enum VoiceMode: Equatable {
-    case all, alerts, off
+/** The speaker button's choices; what each one says is `VoiceLevel.allows`. */
+typealias VoiceMode = VoiceLevel
 
-    var next: VoiceMode { self == .all ? .alerts : self == .alerts ? .off : .all }
-    var icon: String { self == .all ? "speaker.wave.2.fill" : self == .alerts ? "bell.fill" : "speaker.slash.fill" }
-    var title: String { self == .all ? "Voice on" : self == .alerts ? "Alerts only" : "Voice off" }
-    var detail: String { self == .all ? "Turns and warnings" : self == .alerts ? "Cameras and police, no turns" : "Nothing spoken" }
+extension VoiceLevel {
+    var icon: String {
+        switch self {
+        case .all: return "speaker.wave.2.fill"
+        case .maneuvers: return "arrow.turn.up.right"
+        case .alerts: return "bell.fill"
+        case .off: return "speaker.slash.fill"
+        }
+    }
+    var title: String {
+        switch self {
+        case .all: return "Voice on"
+        case .maneuvers: return "Turns only"
+        case .alerts: return "Alerts only"
+        case .off: return "Voice off"
+        }
+    }
+    var detail: String {
+        switch self {
+        case .all: return "Turns and warnings"
+        case .maneuvers: return "Turns, no warnings"
+        case .alerts: return "Cameras and police, no turns"
+        case .off: return "Nothing spoken"
+        }
+    }
 }
 
 /** A faster way found mid-drive: how much it saves and which road it takes. */

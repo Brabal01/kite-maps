@@ -77,8 +77,8 @@ final class AppSettings: ObservableObject {
     @Published var useAppleMaps = UserDefaults.standard.bool(forKey: "useAppleMaps") {
         didSet { d.set(useAppleMaps, forKey: "useAppleMaps") }
     }
-    @Published var mapboxToken = UserDefaults.standard.string(forKey: "mapboxToken") ?? "" {
-        didSet { d.set(mapboxToken, forKey: "mapboxToken") }
+    @Published var mapboxToken = MapboxCredential.load() {
+        didSet { MapboxCredential.save(mapboxToken) }
     }
     @Published var useMapbox = UserDefaults.standard.bool(forKey: "useMapbox") {
         didSet { d.set(useMapbox, forKey: "useMapbox") }
@@ -99,6 +99,8 @@ final class AppSettings: ObservableObject {
     @Published var haptics: Bool { didSet { d.set(haptics, forKey: "haptics") } }
     /** The speaker button was last left on "Alerts only" (cameras and police, no turns). */
     @Published var voiceAlertsOnly: Bool { didSet { d.set(voiceAlertsOnly, forKey: "voiceAlertsOnly") } }
+    /** The speaker button was last left on "Turns only" (no warnings). */
+    @Published var voiceManeuversOnly: Bool { didSet { d.set(voiceManeuversOnly, forKey: "voiceManeuversOnly") } }
     @Published var traffic: Bool { didSet { d.set(traffic, forKey: "traffic") } }
     @Published var satellite: Bool { didSet { d.set(satellite, forKey: "satellite") } }
     /** One coherent map look; the old individual switches remain readable and additive. */
@@ -215,6 +217,7 @@ final class AppSettings: ObservableObject {
         voice = d.object(forKey: "voice") as? Bool ?? true
         haptics = d.object(forKey: "haptics") as? Bool ?? true
         voiceAlertsOnly = d.bool(forKey: "voiceAlertsOnly")
+        voiceManeuversOnly = d.bool(forKey: "voiceManeuversOnly")
         traffic = d.object(forKey: "traffic") as? Bool ?? true
         satellite = d.bool(forKey: "satellite")
         mapPreset = MapPreset(rawValue: d.string(forKey: "mapPreset") ?? "") ?? .classic
