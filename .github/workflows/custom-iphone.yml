@@ -3,10 +3,17 @@ name: Build custom iPhone IPA
 # From iphone-custom-v24 the customizations live in the versioned source tree.
 # Kite-0.7.16-custom.patch and Kite-v16..v23-changes.patch stay for history but
 # must not be applied again: doing so would duplicate every custom change.
+#
+# Two packages are built from the same commit:
+#   Full      app + NavigationWidget (Live Activities / Dynamic Island)
+#   SideStore app only, no extension, Live Activities not advertised
+# The signing and packaging logic lives in .github/scripts/ so the main
+# `Build iPhone app` workflow cannot drift from it again.
 on:
   workflow_dispatch:
   push:
-    branches: [iphone-custom-v23, iphone-custom-v24, iphone-custom-v25, iphone-custom-v26, iphone-custom-v27, iphone-custom-v28-stability]
+    branches:
+      - iphone-custom-v30-advanced-navigation
 
 permissions:
   contents: read
@@ -14,7 +21,7 @@ permissions:
 jobs:
   ipa:
     name: Build Kite.ipa
-    timeout-minutes: 35
+    timeout-minutes: 40
     # Xcode 27.1 (the iOS 27.1 SDK) is what lets Kite fill the iPhone Duo's screens; built with an
     # older Xcode it runs there small, with black bars.
     runs-on: xcode-27
@@ -22,6 +29,10 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The build number is derived from the commit count, so the history
+          # must be complete (a shallow clone gives every build the same number).
+          fetch-depth: 0
       - name: Verify the versioned customization sources
         run: |
           test -f App/Sources/GoogleMapsPage.swift
@@ -30,7 +41,9 @@ jobs:
           git diff --check
       - name: Test VelaCore
         working-directory: VelaCore
-        run: KITE_VERIFY_GOOGLE=1 swift test
+        run: |
+          mkdir -p ../test-artifacts
+          KITE_VERIFY_GOOGLE=1 swift test 2>&1 | tee ../test-artifacts/velacore-tests.log
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Make the Xcode project
@@ -48,37 +61,52 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            build | tail -n 200
-      - name: Stamp the build number
-        # AltStore and SideStore spot updates by this number, so each build gets its own.
-        run: |
-          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $((1000 + GITHUB_RUN_NUMBER))" \
-            build/Build/Products/Release-iphoneos/Kite.app/Info.plist
+            build | tee test-artifacts/release-build.log | tail -n 200
       - name: Ad-hoc sign
-        # An app with no signature at all is read as broken by some sideloaders. An ad-hoc
-        # signature fixes that; the sideloader still re-signs with your Apple ID.
+        # Widget first, frameworks next, app last; also keeps app and extension
+        # build numbers identical so sideloaders see one coherent package.
+        run: |
+          BUILD_NUMBER="$(bash .github/scripts/build-number.sh)"
+          APP=build/Build/Products/Release-iphoneos/Kite.app
+          bash .github/scripts/sign-app.sh "$APP" "$BUILD_NUMBER"
+          echo "BUILD_NUMBER=$BUILD_NUMBER" >> "$GITHUB_ENV"
+      - name: Package both variants
         run: |
           APP=build/Build/Products/Release-iphoneos/Kite.app
-          WIDGET="$APP/PlugIns/NavigationWidget.appex"
-          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $((1000 + GITHUB_RUN_NUMBER))" "$WIDGET/Info.plist"
-          codesign --force --sign - --timestamp=none "$WIDGET"
-          for f in "$APP"/Frameworks/*.framework; do
-            codesign --force --sign - --timestamp=none "$f"
-          done
-          codesign --force --sign - --timestamp=none "$APP"
-          codesign --verify --deep --strict --verbose=2 "$APP"
-      - name: Package .ipa
+          bash .github/scripts/pack-ipa.sh "$APP" full Kite-v30-Full.ipa
+          bash .github/scripts/pack-ipa.sh "$APP" sidestore Kite-v30-SideStore.ipa
+      - name: Check the IPA structure and signatures
         run: |
-          mkdir -p Payload
-          ditto build/Build/Products/Release-iphoneos/Kite.app Payload/Kite.app
-          zip -qr -X Kite.ipa Payload
-          unzip -l Kite.ipa | tail -n 3
-          unzip -tq Kite.ipa
-      - name: Upload .ipa
+          bash .github/scripts/verify-ipa.sh Kite-v30-Full.ipa full | tee test-artifacts/ipa-full.txt
+          bash .github/scripts/verify-ipa.sh Kite-v30-SideStore.ipa sidestore | tee test-artifacts/ipa-sidestore.txt
+      - name: Report the packages
+        run: |
+          {
+            echo "## Kite v30 build $BUILD_NUMBER"
+            echo
+            echo "| Variant | Size | Extensions | Live Activities |"
+            echo "| --- | --- | --- | --- |"
+            echo "| Full | $(du -h Kite-v30-Full.ipa | cut -f1) | NavigationWidget | yes |"
+            echo "| SideStore | $(du -h Kite-v30-SideStore.ipa | cut -f1) | none | no |"
+            echo
+            echo "Both come from commit \`${GITHUB_SHA}\`. Structure checks passed; physical SideStore install is still unverified."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload Full IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Kite-custom-ipa
-          path: Kite.ipa
-
-
-
+          name: Kite-v30-Full-ipa
+          path: Kite-v30-Full.ipa
+          if-no-files-found: error
+      - name: Upload SideStore IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kite-v30-SideStore-ipa
+          path: Kite-v30-SideStore.ipa
+          if-no-files-found: error
+      - name: Upload build and test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kite-v30-Test-Results
+          path: test-artifacts
+          if-no-files-found: warn

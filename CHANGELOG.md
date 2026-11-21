@@ -3,6 +3,58 @@
 Every version of Kite Maps, newest first. The small number goes up for fixes and polish, and
 the middle number for big milestones.
 
+## v30 advanced navigation (iPhone custom, branch `iphone-custom-v30-advanced-navigation`)
+
+Built on the v29 planning fix (`bb0cdfe`); the app version stays 0.8.0 until
+the v30 release number is chosen.
+
+- **NavigationSession 3.0:** explicit lifecycle and session ID, navigation-grade
+  start guard, no illogical GPS/reroute/arrival combinations.
+- **Reroute Engine 3.0:** cancellable generations, offline route preservation,
+  explicit rerouting/recovered/unavailable states, stops and preferences kept.
+- **AlertCoordinator:** one tested priority engine with direction filtering,
+  de-duplication, hysteresis, cooldown and maneuver protection.
+- **Lane Guidance 3.0:** straight approaches, merges/splits, exits and
+  roundabouts; recommended/suitable/unknown lanes; no invented lanes.
+- **Motorway Junction View:** vector diagram from real exit signs, lanes and road
+  references, with destinations, exit number, lanes and the follow-up turn.
+- **Map Engine 3.0:** Classic, Navigation, Minimal, Explore, Transit, Outdoors
+  and Satellite presets; adaptive POI/labels/buildings; 3D buildings stay on
+  during guidance; MapKit applies the compatible subset.
+- **HUD 3.0:** Simple, Advanced, Highway and Custom, with a live preview.
+- **Saved Journeys and GPX:** save/reverse/delete complete trips; bounded GPX
+  import and route export, clearly labelled as a track rather than turn-by-turn.
+- **Road controls:** direction- and mode-aware traffic-light/stop/crossing
+  policy; unknown direction is not shown as our light.
+- **Haptics:** optional maneuver/alert cues respecting Reduce Motion.
+- **Settings:** map presets, HUD, haptics, Public transport and Diagnostics.
+
+## 0.8.0 (iPhone custom, v29)
+
+Kite Maps 2.0: a redesign that also fixes the packaging.
+
+- **A package that installs:** the app and the Live Activity widget now declare
+  the same minimum iOS version, both workflows sign the widget before the app,
+  and a structural verifier blocks a broken IPA. Two packages are built from the
+  same commit: **Full** (with the widget) and **SideStore** (app only, no
+  extension, no Live Activities claim).
+- **New map home:** one search surface, contextual shortcuts you can edit
+  (Home, Work, Parking, Transit, Fuel, Food, Recent, Just drive), and no
+  duplicate buttons on the map.
+- **New bottom bar:** Map, Routes, Saved, Settings. The new Routes page plans a
+  journey, resumes the one Kite remembers and repeats recent destinations.
+- **No London flash:** the map opens on your last area, then your location, then
+  a neutral world view.
+- **Navigation HUD 2.0:** one clear banner with the maneuver, distance, signed
+  destinations and exit number, recommended lanes, and the next turn (amber when
+  it is close). The bottom panel carries ETA, remaining time and distance,
+  add stop, steps and end trip.
+- **Cleaner place and route planning:** one action row in the place sheet,
+  calmer route cards, and route alternatives that differ only by noise are no
+  longer shown as separate choices.
+- **Design system:** one adaptive light/dark palette, type scale, spacing and
+  motion for every screen.
+
 ## 0.7.16 (iPhone and Android)
 
 Four ideas from a Kite user on GitHub, picked by Matteo:

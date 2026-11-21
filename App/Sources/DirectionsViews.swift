@@ -60,6 +60,22 @@ struct DirectionsOverlay: View {
                                                    set: { if !$0 { model.transitStartNotice = nil } })) {
                 Button("OK") { model.transitStartNotice = nil }
             } message: { Text(L10n.text(model.transitStartNotice ?? "")) }
+            .sheet(item: $model.gpxExport) { export in
+                VStack(spacing: 18) {
+                    Image(systemName: "map").font(.system(size: 42, weight: .semibold))
+                        .foregroundColor(KiteColor.accentText)
+                    Text(L10n.text("Export GPX")).font(KiteText.title())
+                    Text(export.name).font(KiteText.caption()).foregroundColor(KiteColor.inkSecondary)
+                    ShareLink(item: export.url) {
+                        Label(L10n.text("Share .gpx file"), systemImage: "square.and.arrow.up")
+                    }
+                    .buttonStyle(KitePrimaryButtonStyle(height: 52))
+                    Button(L10n.text("Done")) { model.gpxExport = nil }
+                        .font(KiteText.label(16))
+                }
+                .padding(24)
+                .presentationDetents([.height(300)])
+            }
         }
     }
 }
@@ -189,6 +205,83 @@ struct EndpointsCard: View {
 }
 
 /** The part of the trip sheet always in view: how long, how you go, and a giant Go. */
+/**
+ The one place that explains what the planner is waiting for. A denied
+ permission, a slow GPS, a stale fix and an approximate fix are not the same
+ problem and must not share one sentence.
+ */
+struct PlanningStatusBanner: View {
+    @ObservedObject var model: AppModel
+    var compact = false
+    @Environment(\.colorScheme) private var scheme
+
+    private var icon: String {
+        guard let s = model.directions?.planning else { return "location.fill" }
+        if model.location.denied || model.location.servicesOff { return "location.slash.fill" }
+        switch s.phase {
+        case .waitingForPermission: return "location.badge.clock"
+        case .failed: return "exclamationmark.triangle.fill"
+        case .searching: return model.planningOffersManualStart ? "location.magnifyingglass" : "location.fill"
+        case .ready, .idle:
+            switch s.originUsability {
+            case .stale: return "clock.arrow.circlepath"
+            case .approximate: return "location.slash.circle.fill"
+            case .imprecise, .expired: return "exclamationmark.triangle.fill"
+            case .usable, .missing: return "location.fill"
+            }
+        }
+    }
+
+    var body: some View {
+        if let text = model.planningStatusText {
+            VStack(alignment: .leading, spacing: compact ? 5 : 8) {
+                HStack(alignment: .top, spacing: 7) {
+                    Image(systemName: icon)
+                        .font(.system(size: compact ? 13 : 15, weight: .bold))
+                        .foregroundColor(KiteColor.accentText)
+                        .frame(width: 18)
+                    Text(L10n.text(text))
+                        .font(.system(size: compact ? 13.5 : 15.5, weight: .semibold))
+                        .foregroundColor(KiteColor.inkSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("planning-status")
+
+                HStack(spacing: 7) {
+                    if model.location.denied || model.location.servicesOff {
+                        action("Open Settings", "gearshape.fill", "planning-settings", LocationService.openSettings)
+                    }
+                    if model.planningCanRefresh {
+                        action("Try again", "arrow.clockwise", "planning-retry") { model.retryPlanningLocation() }
+                    }
+                    if model.planningOffersManualStart {
+                        action("Choose start", "mappin", "planning-manual-start") { model.editingEndpoint = .from }
+                    }
+                    if model.location.reducedAccuracy, !model.location.denied, !model.location.servicesOff {
+                        action("Use precise location", "scope", "planning-precise") { model.usePrecisePlanningLocation() }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func action(_ title: String, _ icon: String, _ id: String,
+                        _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(L10n.text(title), systemImage: icon)
+                .font(.system(size: 12.5, weight: .bold))
+                .padding(.horizontal, 11)
+                .frame(minHeight: compact ? 30 : 34)
+                .foregroundColor(KiteColor.accentText)
+                .background(Capsule().fill(KiteColor.accentSoft))
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(id)
+    }
+}
+
 struct TripHeader: View {
     @ObservedObject var model: AppModel
     @AppStorage("walkingSpeed") private var walkingSpeed = 5.0
@@ -219,6 +312,12 @@ struct TripHeader: View {
 
     private var optionsMenu: some View {
         Menu {
+            Button { model.saveCurrentJourney() } label: {
+                Label(L10n.text("Save journey"), systemImage: "bookmark")
+            }
+            Button { model.prepareGPXExport() } label: {
+                Label(L10n.text("Export GPX"), systemImage: "square.and.arrow.up")
+            }
             if model.directions?.mode == .walk {
                 Picker("Walking speed", selection: $walkingSpeed) {
                     ForEach(4...16, id: \.self) { step in
@@ -246,15 +345,11 @@ struct TripHeader: View {
     private var goButton: some View {
         Button { model.startNavigation() } label: {
             HStack(spacing: 10) {
-                Image(systemName: "location.north.fill").font(.system(size: 24, weight: .bold))
-                Text("Go").font(.system(size: 26, weight: .heavy))
+                Image(systemName: "location.north.fill").font(.system(size: 22, weight: .bold))
+                Text(L10n.text("Go")).font(KiteText.headline(22))
             }
-            .foregroundColor(Vela.onAccent(scheme))
-            .frame(maxWidth: .infinity, minHeight: 68)
-            .background(Capsule().fill(Vela.accent(scheme)))
-            .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(KitePrimaryButtonStyle(height: 62))
         .accessibilityLabel("Start navigation")
     }
 
@@ -290,18 +385,20 @@ struct TripHeader: View {
                 }
                 .font(.caption2.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.7)
             }
-            .frame(maxWidth: .infinity, minHeight: 88, alignment: .leading)
-            .padding(.horizontal, 9)
-            .foregroundStyle(.primary)
-            .background(RoundedRectangle(cornerRadius: 16).fill(on ? Color(hex: 0x007AFF).opacity(scheme == .dark ? 0.25 : 0.13) : Vela.chip(scheme)))
-            .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(
-                on ? Color(hex: scheme == .dark ? 0x80BFFF : 0x007AFF) : .clear, lineWidth: 2
+            .frame(maxWidth: .infinity, minHeight: 92, alignment: .leading)
+            .padding(.horizontal, 10)
+            .foregroundStyle(KiteColor.ink)
+            .background(RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(on ? KiteColor.accentSoft : KiteColor.fill))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(
+                on ? KiteColor.accent : .clear, lineWidth: 2
             ))
-            .contentShape(RoundedRectangle(cornerRadius: 16))
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(on ? .isSelected : [])
+        .accessibilityIdentifier(r.id == best.id ? "route-summary" : "route-summary-\(r.id)")
     }
 
     var body: some View {
@@ -318,6 +415,7 @@ struct TripHeader: View {
                             card(r, best: best, on: r.id == d.route?.id) { model.selectRoute(i) }
                         }
                     }
+                    PlanningStatusBanner(model: model, compact: true)
                     closingLine(d)
                     if d.startsFromLocation { goButton }
                 }
@@ -335,9 +433,10 @@ struct TripHeader: View {
                     } else if let r = d.route {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(Fmt.duration(r.durationSeconds))
-                                .font(.system(size: 44, weight: .heavy))
+                                .font(KiteText.digits(44, weight: .heavy))
                                 .foregroundColor(TripBody.delayColor(r, scheme))
                                 .lineLimit(1).minimumScaleFactor(0.7)
+                                .accessibilityIdentifier("route-summary")
                             Text(L10n.format("%@ · arrive %@", String(describing: Fmt.distance(r.distanceMeters)), String(describing: Fmt.arrival(r.durationSeconds))))
                                 .font(.system(size: 17, weight: .medium)).foregroundColor(Vela.muted(scheme))
                                 .lineLimit(1).minimumScaleFactor(0.8)
@@ -349,12 +448,15 @@ struct TripHeader: View {
                     } else if d.loading.contains(d.mode) {
                         HStack(spacing: 10) { ProgressView(); Text("Finding routes…").font(.system(size: 19, weight: .semibold)) }
                             .frame(height: 52)
+                    } else if model.planningStatusText != nil {
+                        PlanningStatusBanner(model: model)
+                            .frame(minHeight: 52)
                     } else {
                         VStack(alignment: .leading, spacing: 10) {
                             Text(L10n.text(d.errors[d.mode] ?? "No route found.")).font(.system(size: 18, weight: .semibold))
                                 .foregroundColor(Vela.muted(scheme))
                                 .fixedSize(horizontal: false, vertical: true)
-                            if model.location.denied {
+                            if model.location.denied || model.location.servicesOff {
                                 PillButton(title: "Open Settings", icon: "location.fill", filled: true) { LocationService.openSettings() }
                             } else if d.errors[d.mode] != nil {
                                 PillButton(title: "Try again", icon: "arrow.clockwise") { model.reloadRoutes() }
@@ -392,6 +494,14 @@ struct ModeTabs: View {
         }
     }
 
+    private func modeID(_ m: TravelMode) -> String {
+        switch m {
+        case .drive: return "drive"
+        case .bike: return "bike"
+        case .walk: return "walk"
+        }
+    }
+
     var body: some View {
         // Four equal tiles, always all in view, so the right one is easy to hit.
         HStack(spacing: 8) {
@@ -400,11 +510,13 @@ struct ModeTabs: View {
                 tile(icon: icon(m), on: on, loading: state.loading.contains(m),
                      time: state.routes[m]?.first.map { Fmt.shortDuration($0.durationSeconds) }) { model.setMode(m) }
                     .accessibilityLabel(L10n.text(m.label))
+                    .accessibilityIdentifier("mode-\(modeID(m))")
             }
             tile(icon: "tram.fill", on: state.transit, loading: state.trips == nil,
                  // The same trip the header shows (the picked one, else the first), so the two never disagree.
                  time: (state.pickedTrip ?? state.trips?.first).map { Fmt.shortDuration($0.durationSeconds) }) { model.showTransit() }
                 .accessibilityLabel("Transit")
+                .accessibilityIdentifier("mode-transit")
         }
     }
 
@@ -419,9 +531,10 @@ struct ModeTabs: View {
                 }
             }
             .frame(maxWidth: .infinity, minHeight: 62)
-            .foregroundColor(on ? Vela.onAccent(scheme) : .primary)
-            .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(on ? Vela.accent(scheme) : Vela.chip(scheme)))
-            .contentShape(RoundedRectangle(cornerRadius: 18))
+            .foregroundColor(on ? KiteColor.onAccent : KiteColor.ink)
+            .background(RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(on ? KiteColor.accent : KiteColor.fill))
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(on ? .isSelected : [])
@@ -437,6 +550,7 @@ struct TripBody: View {
             ScrollView {
                 SheetTopMarker()
                 VStack(alignment: .leading, spacing: 12) {
+                    PlanningStatusBanner(model: model)
                     if d.transit {
                         TransitBody(model: model, state: d)
                     } else if let r = d.route {
@@ -458,8 +572,15 @@ struct TripBody: View {
                     } else if d.loading.contains(d.mode) {
                         HStack { ProgressView(); Text("Finding routes…").foregroundColor(.secondary) }
                             .padding(.vertical, 20)
-                    } else {
-                        Text(L10n.text(d.errors[d.mode] ?? "No route found.")).foregroundColor(.secondary).padding(.vertical, 20)
+                    } else if model.planningStatusText == nil {
+                        // The header already explains why (location off, provider down).
+                        // The expanded sheet gets a proper empty state, not the same
+                        // sentence repeated under it.
+                        KiteEmptyState(icon: "map",
+                                       title: "No route to show",
+                                       detail: "Change the start, the destination or the travel mode, then try again.",
+                                       actionTitle: "Try again") { model.reloadRoutes() }
+                            .padding(.vertical, KiteSpace.s)
                     }
                 }
                 .padding(.horizontal, 16)
@@ -498,12 +619,12 @@ struct TripBody: View {
         ShareLink(item: url) {
             HStack(spacing: 8) {
                 Image(systemName: "square.and.arrow.up").font(.system(size: 17, weight: .bold))
-                Text("Share place").font(.system(size: 17, weight: .bold))
+                Text("Share place").font(KiteText.label(16))
             }
             .padding(.horizontal, 20)
-            .frame(height: 52)
-            .foregroundColor(Vela.onTonal(scheme))
-            .background(Capsule().fill(Vela.tonal(scheme)))
+            .frame(height: 50)
+            .foregroundColor(KiteColor.accentText)
+            .background(Capsule().fill(KiteColor.accentSoft))
         }
         .buttonStyle(.plain)
     }

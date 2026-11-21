@@ -1,6 +1,125 @@
 # Kite Maps iPhone custom build — development progress
 
-Updated: 2026-11-20
+Updated: 2026-11-21
+
+## v30 advanced navigation (branch `iphone-custom-v30-advanced-navigation`, base `bb0cdfe`)
+
+The P0 planning fix from v29 is preserved. v30 adds:
+
+- **NavigationSession 3.0** — one UUID session and an explicit lifecycle
+  (`NavigationState.swift`), integrated into `Navigator`; impossible state
+  combinations are rejected. Guidance now always starts from a
+  navigation-grade fix or enters `waitingForGPS`.
+- **Reroute Engine 3.0** — explicit rerouting/recovered/unavailable states,
+  request cancellation, original route kept while offline, remaining stops and
+  exclusions preserved, arrival/departure evidence unchanged.
+- **AlertCoordinator** — tested direction filtering, de-duplication, priority,
+  hysteresis, cooldown and urgent-maneuver suppression; the HUD no longer sorts
+  alerts inline.
+- **Lane Guidance 3.0** — recommended/suitable/unsuitable/unknown lanes for
+  turns, exits, splits, merges, straight approaches and roundabouts; never
+  invents lanes.
+- **Motorway Junction View** — vector Canvas diagram from real exit signs,
+  lanes and road references; insufficient data shows the ordinary banner.
+- **Road-control policy** — car guidance shows only nearby, direction-plausible
+  lights/stops/crossings; walking and browsing get different sets.
+- **Map Engine 3.0** — seven coherent presets (Classic, Navigation, Minimal,
+  Explore, Transit, Outdoors, Satellite), adaptive labels/POI/buildings, and
+  Navigation mode during driving. MapKit applies the POI/building subset.
+- **HUD 3.0** — Simple, Advanced, Highway and Custom profiles with a live
+  preview.
+- **Saved Journeys** — full trip persistence (origin, destination, stops, mode,
+  notes, preferences), reverse/delete/open, plus bounded GPX import and GPX
+  export of a planned route.
+- **Settings additions** — Public transport page, Diagnostics entry, map
+  presets, HUD, haptics.
+- **Haptics** — optional maneuver/alert cues, respecting Reduce Motion.
+
+Verification for this branch is recorded in `docs/TEST_RESULTS.md` once the v30
+CI run completes. Physical-device items remain in
+`docs/V30_DEVICE_TEST_CHECKLIST.md`.
+
+## v29 redesign (branch `iphone-custom-v29-redesign`, base v28 `462b575`)
+
+Two things were done in parallel and are deliberately documented separately:
+the packaging fix that decides whether the IPA installs, and the visual/product
+redesign.
+
+### Packaging and SideStore (P0)
+
+- **Root cause found for a class of install failures:** the app target was built
+  for iOS 16.0 while `NavigationWidget` required 16.2. iOS rejects a package
+  whose extension needs a newer system. Both now use 16.2, the real Live
+  Activities floor (`ActivityContent`).
+- **Second cause:** `Build iPhone app` signed frameworks and the app but never
+  the widget, then verified `--deep --strict`. It therefore failed on v28 while
+  the custom workflow passed. Both workflows now call `.github/scripts/sign-app.sh`.
+- One packaging script and one verifier (`pack-ipa.sh`, `verify-ipa.sh`) produce
+  and check two variants from one build:
+  - **Kite Full** — app + NavigationWidget + Live Activities;
+  - **Kite SideStore** — same source and navigation core, no extension, Live
+    Activities not advertised.
+- The verifier fails on: wrong bundle id, missing arm64, emulator slice,
+  unsigned extension/framework, extension/app version, build or minimum-OS
+  mismatch, foreign provisioning profile, a SideStore build that still contains
+  an extension, or a Full build without `NSSupportsLiveActivities`.
+- Build numbers use `1000 + git commit count` in both workflows (full history
+  fetched), so they grow and do not reset per workflow.
+- See `docs/KITE_2_PACKAGING.md`.
+
+### Design and product (P1)
+
+- **Kite Design System 2.0** (`App/Sources/KiteDesignSystem.swift`): adaptive
+  light/dark palette, type ramp, spacing, radius, elevation, motion, cards,
+  buttons, chips, empty states. Legacy `Vela` colours resolve to the new tokens,
+  so old and new screens share one identity.
+- **Map home:** new 58 pt search surface with voice action; contextual quick
+  actions (Home, Work, Parking, Transit, Fuel, Food, Recent, Just drive) edited
+  in Settings; duplicate Just drive and parking map FABs removed.
+- **Camera start:** last browsed area → current fix → neutral world view. No
+  London flash. A restored area is kept when the first fix is nearby.
+- **Dock:** Map / Routes / Saved / Settings, one floating surface, soft teal
+  selection. New **Routes** page: plan, resume a remembered trip, favourites,
+  recent destinations, empty state.
+- **Navigation HUD 2.0:** one banner hierarchy (maneuver tile, distance,
+  instruction, signed exit panel with exit number and destinations, recommended
+  lanes, then-row). A close follow-up turn is highlighted amber. Trip bar now
+  carries arrival, remaining time/distance, destination, add stop, steps and end.
+- **Place sheet:** one action row (Save, Share, Reviews, Photos) and a clear
+  Directions / Go pair.
+- **Route planning:** tokenised mode tabs, cards and Go; near-identical route
+  alternatives are collapsed by a pure `RouteAlternatives` filter (6 new tests).
+- **Accessibility:** combined banner sentence + repeat action, labelled lanes,
+  dock selection traits, Reduce Motion respected by new transitions.
+
+### v29 verification (build 1088)
+
+- Final IPA workflow run
+  [44836383104](https://github.com/Brabal01/kite-maps/actions/runs/44836383104):
+  **success** on commit `77adc49`. Both variants passed the structure checks.
+- VelaCore: **222 tests, 0 failures**, including six `RouteAlternativesTests`
+  and two regression tests for the transit entrance query.
+- Artifacts (from the same source commit):
+  - `Kite-v29-Full.ipa` — arm64 app and MapLibre, `app.vela.ios` 0.8.0 (1088),
+    iOS ≥ 16.2, Live Activities on, `app.vela.ios.navigation` extension 0.8.0
+    (1088), signed.
+  - `Kite-v29-SideStore.ipa` — the same app with no PlugIns and Live Activities
+    switched off.
+  - Both unpack cleanly, contain no provisioning profile, and have matching
+    app/extension versions and minimum OS.
+- Simulator smoke with screenshots: run
+  [`44838972349`](https://github.com/Brabal01/kite-maps/actions/runs/44838972349)
+  on the same commit. It launches the app three times, once without location,
+  once in safe mode, then opens home, routes, place, navigation and settings,
+  plus home/navigation in dark mode, and uploads
+  `Kite-v29-Simulator-Screenshots`. Curated frames are in
+  `docs/screenshots/v29/`.
+- The earlier build 1078/1081 runs verified the same packaging path while the
+  final UI changes were still landing.
+
+Physical SideStore installation remains unverified; that needs the phone.
+
+## v28 stability
 
 ## v28 stability (in progress)
 
@@ -19,6 +138,17 @@ Branch: `iphone-custom-v28-stability`, based on verified v27.
 - Added `.github/workflows/simulator-smoke.yml`: simulator build, install, three launches and a
   safe-mode launch, with logs and screenshot artifacts.
 - See `docs/CRASH_RECOVERY.md` for the audit, suspects and exact phone steps.
+
+### v28 verification (build 1051)
+
+- Custom IPA run `44794880719` succeeded in 5m02s on commit `462b575`.
+- Artifact `Kite-custom-ipa` checked: clean `unzip -t`, arm64 app and widget, bundle IDs
+  `app.vela.ios` / `app.vela.ios.navigation`, `CFBundleVersion` 1051, `_CodeSignature` on both.
+- iOS simulator smoke run `44794890053` succeeded in 13m22s. It launched the normal app three
+  times, once with location denied, and once in safe mode. MapLibre initialised in the four normal
+  launches and not in safe mode; no crash/fatal/exception lines were found in the collected logs.
+- The smoke test is a simulator launch check, not a physical-device crash reproduction. The v27
+  physical crash remains unconfirmed without the phone's `.ips`/MetricKit diagnostic.
 
 ## v27 (verified build 1043)
 

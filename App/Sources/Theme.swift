@@ -7,35 +7,37 @@ import VelaCore
  * names are kept so older code reads the same). Sized and colored for a phone in a car holder.
  */
 enum Vela {
+    // The legacy names stay: hundreds of call sites already read them. Their
+    // values now come from KiteColor, so every screen shares one palette.
     static let teal = Color(hex: 0x0F766E)
     static let tealLight = Color(hex: 0x2DD4BF)
-    static let routeBlue = Color(hex: 0x2F7BFF)
-    static let open = Color(hex: 0x16A34A)
+    static let routeBlue = KiteColor.route
+    static let open = KiteColor.success
     static let openDark = Color(hex: 0x4ADE80)
-    static let closed = Color(hex: 0xDC2626)
+    static let closed = KiteColor.danger
     static let closedDark = Color(hex: 0xF87171)
     static let star = Color(hex: 0xF9AB00)
     /** Speed cameras: loud orange, so a glance is enough. */
-    static let camera = Color(hex: 0xFF8A00)
-    static let police = Color(hex: 0x2F7BFF)
+    static let camera = KiteColor.camera
+    static let police = KiteColor.police
 
     /** The filled "Go" color: bright teal with dark text, day and night. */
-    static func accent(_ scheme: ColorScheme) -> Color { scheme == .dark ? tealLight : Color(hex: 0x14B8A6) }
-    static func onAccent(_ scheme: ColorScheme) -> Color { Color(hex: 0x04241F) }
+    static func accent(_ scheme: ColorScheme) -> Color { KiteColor.accent }
+    static func onAccent(_ scheme: ColorScheme) -> Color { KiteColor.onAccent }
     /** Teal for text and icons on the page (darker by day so it reads on white). */
-    static func accentText(_ scheme: ColorScheme) -> Color { scheme == .dark ? tealLight : teal }
-    static func sheet(_ scheme: ColorScheme) -> Color { scheme == .dark ? Color(hex: 0x151F30) : .white }
+    static func accentText(_ scheme: ColorScheme) -> Color { KiteColor.accentText }
+    static func sheet(_ scheme: ColorScheme) -> Color { KiteColor.surface }
     /** Cards, buttons and tiles floating on the map. */
-    static func surface(_ scheme: ColorScheme) -> Color { scheme == .dark ? Color(hex: 0x1A2638) : .white }
+    static func surface(_ scheme: ColorScheme) -> Color { KiteColor.surface }
     /** Behind whole pages (Saved, Settings). */
-    static func ground(_ scheme: ColorScheme) -> Color { scheme == .dark ? Color(hex: 0x0E1726) : Color(hex: 0xF2F5F9) }
-    static func chip(_ scheme: ColorScheme) -> Color { scheme == .dark ? Color(hex: 0x243349) : Color(hex: 0xEDF1F6) }
+    static func ground(_ scheme: ColorScheme) -> Color { KiteColor.canvas }
+    static func chip(_ scheme: ColorScheme) -> Color { KiteColor.fill }
     /** A soft amber for "worth knowing" chips, like a longer route or a road charge. */
-    static func warnFill(_ scheme: ColorScheme) -> Color { scheme == .dark ? Color(hex: 0x3A2A10) : Color(hex: 0xFDEFD9) }
-    static func warnText(_ scheme: ColorScheme) -> Color { scheme == .dark ? Color(hex: 0xFBBF24) : Color(hex: 0x9A4A08) }
-    static func tonal(_ scheme: ColorScheme) -> Color { scheme == .dark ? Color(hex: 0x12403C) : Color(hex: 0xCCFBF1) }
-    static func onTonal(_ scheme: ColorScheme) -> Color { scheme == .dark ? Color(hex: 0x99F6E4) : Color(hex: 0x134E4A) }
-    static func muted(_ scheme: ColorScheme) -> Color { scheme == .dark ? Color(hex: 0x94A3B8) : Color(hex: 0x64748B) }
+    static func warnFill(_ scheme: ColorScheme) -> Color { KiteColor.warningSoft }
+    static func warnText(_ scheme: ColorScheme) -> Color { KiteColor.warning }
+    static func tonal(_ scheme: ColorScheme) -> Color { KiteColor.accentSoft }
+    static func onTonal(_ scheme: ColorScheme) -> Color { KiteColor.accentText }
+    static func muted(_ scheme: ColorScheme) -> Color { KiteColor.inkSecondary }
 }
 
 /** Kite's type: rounded, and never smaller than a size that reads from a phone holder. */

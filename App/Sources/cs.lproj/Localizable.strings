@@ -479,6 +479,18 @@
 "Voice, travel mode, avoid tolls and motorways" = "Hlas, způsob dopravy, mýto a dálnice";
 "Voice: %@" = "Hlas: %@";
 "Waiting for your location…" = "Čekám na vaši polohu…";
+"Finding your location…" = "Hledám vaši polohu…";
+"Waiting for location permission…" = "Čekám na oprávnění k poloze…";
+"Still looking for a GPS fix. You can retry, or choose a start." = "Stále hledám GPS signál. Můžete to zkusit znovu nebo zvolit výchozí bod.";
+"Using your last known location from %@ min ago." = "Používám poslední známou polohu před %@ min.";
+"Using an approximate location. Routes are a guide." = "Používám přibližnou polohu. Trasy jsou jen orientační.";
+"That GPS fix is too imprecise for a route from here." = "GPS poloha je pro trasu odsud příliš nepřesná.";
+"Looking for a fresh location…" = "Hledám novou polohu…";
+"Approximate location is on. Routes can still be planned." = "Přibližná poloha je zapnutá. Trasy lze přesto naplánovat.";
+"Location services are off on this phone." = "Polohové služby jsou na tomto telefonu vypnuté.";
+"Waiting for a precise GPS fix before starting navigation." = "Před zahájením navigace čekám na přesnou GPS polohu.";
+"Choose start" = "Zvolit start";
+"Use precise location" = "Použít přesnou polohu";
 "Walk" = "Pěšky";
 "Walk around in Google Maps" = "Prohlédnout okolí v Mapách Google";
 "Walk to the stop" = "Pěšky na zastávku";
@@ -487,7 +499,7 @@
 "Webcams provided by Windy.com" = "Webkamery poskytuje Windy.com";
 "Website" = "Web";
 "Welcome to Kite" = "Vítejte v Kite";
-"Where to?" = "Kam chcete jet?";
+"Where to?" = "Kam vyrazíme?";
 "While driving" = "Při jízdě";
 "While navigating, a card pops up for reports on your route, only ones made by drivers going your way." = "Při navigaci se zobrazují hlášení z vaší trasy od řidičů jedoucích stejným směrem.";
 "While navigating, warns when a police aircraft is within about 10 km, from open flight tracking (adsb.lol), not Waze. It spots them by their police callsign (like NPAS in the UK), and some don't broadcast at all, so no warning doesn't mean the sky is clear." = "Navigace může upozornit na policejní letadlo do vzdálenosti přibližně 10 km. Využívá otevřená data adsb.lol a volací znaky, například NPAS. Některá letadla svou polohu nevysílají.";
@@ -611,3 +623,28 @@
 "Open all reviews on the Google Maps website" = "Otevřít všechny recenze na webu Google Maps";
 "Open photos on the Google Maps website" = "Otevřít fotky na webu Google Maps";
 "Google only provides a sample without an API key. The full list opens on the Google Maps website." = "Google bez klíče poskytuje jen ukázku. Úplný seznam se otevře na webu Google Maps.";
+"Plan a route" = "Naplánovat cestu";
+"Favourites" = "Oblíbené";
+"Tap to set" = "Nastavit";
+"Last destination" = "Poslední cíl";
+"Fuel" = "Palivo";
+"Hide shortcut" = "Skrýt zkratku";
+"Edit shortcuts" = "Upravit zkratky";
+"Find a place" = "Najít místo";
+"Plan, resume or repeat a journey." = "Naplánujte cestu, pokračujte v ní nebo ji zopakujte.";
+"Search a place, an address or a category" = "Hledejte místo, adresu nebo kategorii";
+"Shortcuts on the map" = "Zkratky na mapě";
+"Shown under the search field. Tap a shortcut's own checkbox to add it back. The order follows the order you add them in; hiding a shortcut keeps its place in your saved data." = "Zobrazují se pod vyhledávacím polem. Zaškrtnutím je přidáte zpět. Pořadí odpovídá tomu, v jakém jste je přidali; skrytí zkratky její nastavení nesmaže.";
+"No recent journeys yet" = "Zatím žádné nedávné cesty";
+"Places you open or navigate to will be listed here, ready for the next trip." = "Místa, která otevřete nebo kam navigujete, se zde objeví připravená pro další cestu.";
+"Searching" = "Hledám";
+"Recommended lanes" = "Doporučené pruhy";
+"No parking spot saved yet. Tap Parking on the map when you park." = "Zatím nemáte uložené parkování. Až zaparkujete, klepněte na mapě na Parkování.";
+
+"Parking spot saved. The Parking shortcut finds your car." = "Parkování uloženo. Zkratka Parkování vás dovede zpět k autu.";
+
+"Tap to go" = "Klepnutím spustíte navigaci";
+
+"No route to show" = "Není co zobrazit";
+
+"Change the start, the destination or the travel mode, then try again." = "Změňte start, cíl nebo způsob dopravy a zkuste to znovu.";

@@ -8,7 +8,7 @@ import VelaCore
 
 /** The dock's pages. */
 enum AppTab: Equatable {
-    case map, saved, settings
+    case map, routes, saved, settings
 }
 
 /** Which of your places the "pick a place" sheet is choosing. */
@@ -102,6 +102,8 @@ struct DirectionsState {
     var transitTime: Date?
     var arriveBy = false
     var trip = 0
+    /** The event-driven location/route plan that every mode shares. */
+    var planning: PlanningSession?
 
     var current: [Route] { transit ? [] : routes[mode] ?? [] }
     var route: Route? { current.indices.contains(selected) ? current[selected] : current.first }
@@ -122,6 +124,13 @@ final class AppModel: ObservableObject {
     @Published var resultsTitle = ""
     @Published var selected: Place?
     @Published var searching = false
+    /** Bumped by the Routes page (or a shortcut) to open the search field on the map. */
+    @Published var focusSearchRequest = 0
+
+    func requestSearch() {
+        tab = .map
+        focusSearchRequest += 1
+    }
     @Published var notice: String?
     @Published var detent: SheetDetent = .half
     @Published var openNowOnly = false
@@ -255,17 +264,81 @@ final class AppModel: ObservableObject {
     /** How wide the side panel is on a big screen (the open iPhone Duo), so the map centres
      *  things in the part you can see; 0 on a phone. */
     var sideInset: CGFloat = 0 { didSet { glide.leftInset = sideInset } }
+
+    /** Where the map opens: the last browse area, else the user, else a neutral world view. */
+    struct MapStart {
+        var center: CLLocationCoordinate2D
+        var zoom: Double
+        /// True when this is the area the user was looking at before the app closed.
+        var restored: Bool
+    }
+
+    var mapStart: MapStart {
+        if let saved = settings.lastMapCenter, settings.lastMapZoom >= 2.5,
+           abs(saved.lat) <= 85, abs(saved.lng) <= 180 {
+            return MapStart(center: CLLocationCoordinate2D(latitude: saved.lat, longitude: saved.lng),
+                            zoom: min(18, max(2.5, settings.lastMapZoom)), restored: true)
+        }
+        if let fix = location.last, fix.horizontalAccuracy >= 0, fix.horizontalAccuracy <= 500,
+           abs(fix.coordinate.latitude) <= 85 {
+            return MapStart(center: fix.coordinate, zoom: 14, restored: false)
+        }
+        // No saved area and no fix yet: a calm world view beats pretending to be in London.
+        return MapStart(center: CLLocationCoordinate2D(latitude: 20, longitude: 0), zoom: 1.6, restored: false)
+    }
+
+    /** A good first fix must not yank the map away from the area the user left it in. */
+    func keepsRestoredView(for fix: CLLocation) -> Bool {
+        guard let saved = settings.lastMapCenter else { return false }
+        let here = LatLng(fix.coordinate.latitude, fix.coordinate.longitude)
+        return saved.distance(to: here) < 60_000
+    }
+
+    private var lastCameraWrite = Date.distantPast
+    private var lastCameraWriteCenter: LatLng?
+
+    /** Remember the browse camera occasionally, never during guidance or route planning. */
+    func rememberBrowseCamera(_ surface: KiteMapSurface) {
+        guard nav == nil, !hasActiveJourney, directions == nil, transitJourney == nil,
+              tab == .map else { return }
+        let c = CLLocationCoordinate2D(latitude: surface.centerCoordinate.latitude,
+                                       longitude: surface.centerCoordinate.longitude)
+        guard abs(c.latitude) <= 85, abs(c.longitude) <= 180, surface.zoomLevel >= 2.5 else { return }
+        let point = LatLng(c.latitude, c.longitude)
+        let now = Date()
+        if let last = lastCameraWriteCenter,
+           now.timeIntervalSince(lastCameraWrite) < 6,
+           last.distance(to: point) < 250,
+           abs(settings.lastMapZoom - surface.zoomLevel) < 0.4 { return }
+        lastCameraWrite = now
+        lastCameraWriteCenter = point
+        settings.lastMapCenter = point
+        settings.lastMapZoom = surface.zoomLevel
+    }
     /** Moves the nav arrow and camera every frame between GPS fixes. */
     let glide = NavGlide()
     /** Bumped on every new route or transit request, so answers to an older one (before a
      *  reverse, a new stop or another time) are dropped instead of replacing the new ones. */
     private var routesRequest = 0
     private var routeLoadTasks: [TravelMode: Task<Void, Never>] = [:]
+    private var routeQueue: [TravelMode] = []
+    private var activeRouteLoads = 0
+    private let maxRouteLoads = 2
+
+    /** The one stable start point every mode is planned from. */
+    @Published private(set) var planningCurrentLocation: PlanningOrigin?
+    private var lastPlanningOrigin: PlanningOrigin?
+    private var planningGPSActive = false
+    private var planningDeadlineTask: Task<Void, Never>?
+    /** "Go" was pressed before a navigation-grade fix existed. */
+    @Published private(set) var pendingNavigationStart = false
 
     private func cancelRouteLoads() {
         routesRequest += 1
         for task in routeLoadTasks.values { task.cancel() }
         routeLoadTasks.removeAll()
+        routeQueue.removeAll()
+        activeRouteLoads = 0
         walkingSettingsTask?.cancel()
     }
     private var transitRequest = 0
@@ -281,6 +354,10 @@ final class AppModel: ObservableObject {
             if self?.userLatLng == nil { LaunchTrace.mark("first location") }
             self?.locationChanged(loc)
         }
+        location.onPlanningInterrupted = { [weak self] in self?.planningUpdatesPaused() }
+        location.onAuthorizationChanged = { [weak self] granted, denied, servicesOff in
+            self?.planningAuthorizationChanged(granted: granted, denied: denied, servicesOff: servicesOff)
+        }
         // A trip still saved means Kite closed in the middle of it. Within two hours it's offered again.
         if let t = settings.trip, !DemoScript.active {
             if Date().timeIntervalSince(t.at) < 2 * 3600 { resumeOffer = t } else { settings.trip = nil }
@@ -294,11 +371,11 @@ final class AppModel: ObservableObject {
         settings.trip = nil
         selected = nil
         results = []
-        directions = DirectionsState(destination: t.destination, mode: TravelMode(rawValue: t.mode) ?? .drive)
-        directions?.stops = t.stops
+        var state = DirectionsState(destination: t.destination, mode: TravelMode(rawValue: t.mode) ?? .drive)
+        state.stops = t.stops
         detent = .half
         autoStart = true
-        loadAllModes()
+        startPlanning(state)
     }
 
     func dismissResume() {
@@ -311,8 +388,53 @@ final class AppModel: ObservableObject {
         settings.trip = SavedTrip(destination: n.destination, stops: n.stops, mode: n.route.mode.rawValue, at: Date())
     }
 
+    /**
+     Search bias and distance labels only. Planning uses the stable snapshot
+     below; the map centre is never substituted for a real location.
+     */
     var userLatLng: LatLng? {
-        location.last.map { LatLng($0.coordinate.latitude, $0.coordinate.longitude) }
+        (location.searchFix ?? location.lastKnown)
+            .map { LatLng($0.coordinate.latitude, $0.coordinate.longitude) }
+    }
+
+    private func planningFix(from loc: CLLocation) -> PlanningFix {
+        PlanningFix(point: LatLng(loc.coordinate.latitude, loc.coordinate.longitude),
+                    timestamp: loc.timestamp, horizontalAccuracy: loc.horizontalAccuracy)
+    }
+
+    private func currentPlanningOrigin(at now: Date = Date()) -> PlanningOrigin? {
+        let policy = PlanningLocationPolicy()
+        if let fix = location.planningFix(at: now) {
+            let usability = policy.usability(of: fix, at: now)
+            if usability.canPlan {
+                return PlanningOrigin(point: fix.point, capturedAt: fix.timestamp,
+                                      accuracy: fix.horizontalAccuracy,
+                                      kind: usability.kind ?? .estimated,
+                                      label: L10n.text("My location"))
+            }
+        }
+        if let last = lastPlanningOrigin,
+           policy.usability(of: last, at: now).canPlan {
+            return last
+        }
+        return nil
+    }
+
+    private func makePlanningSession(for state: DirectionsState, now: Date = Date()) -> PlanningSession {
+        let manual = state.origin.map {
+            PlanningOrigin(point: $0.location, capturedAt: now, accuracy: 0,
+                           kind: .manual, label: $0.name)
+        }
+        let current = currentPlanningOrigin(at: now)
+        if manual == nil, let current { planningCurrentLocation = current }
+        return PlanningSession(destinationID: state.destination.id,
+                               destinationName: state.destination.name,
+                               destination: state.destination.location,
+                               mode: state.transit ? .transit : PlanningMode(state.mode),
+                               reversed: state.reversed,
+                               stops: state.stops.map(\.location),
+                               manualOrigin: manual,
+                               deviceOrigin: current)
     }
 
     // MARK: Search
@@ -576,7 +698,7 @@ final class AppModel: ObservableObject {
         }
         guard let target else {
             if kind == .car {
-                if let nav { nav.say("No parking spot saved yet.") } else { notice = "No parking spot saved yet. Tap P on the map when you park." }
+                if let nav { nav.say("No parking spot saved yet.") } else { notice = "No parking spot saved yet. Tap Parking on the map when you park." }
             }
             // Mid-drive, keep the trip going: a picker on top of it, cancelled, would lose it.
             else if let nav { nav.say("No \(kind == .home ? "home" : "work") address saved yet. Set it in Saved after this drive.") }
@@ -617,7 +739,7 @@ final class AppModel: ObservableObject {
         f.dateStyle = .none
         p.category = L10n.format("Parked at %@", f.string(from: Date()))
         settings.parking = p
-        notice = "Parking spot saved. Tap the P button to find your car."
+        notice = "Parking spot saved. The Parking shortcut finds your car."
         let pid = p.id
         Task {
             guard let found = await Photon.reverse(me), settings.parking?.id == pid else { return }
@@ -649,15 +771,18 @@ final class AppModel: ObservableObject {
         // Going somewhere else: the old trip isn't wanted back.
         if resumeOffer != nil { dismissResume() }
         autoStart = false
-        directions = DirectionsState(destination: place, mode: settings.defaultMode)
+        pendingNavigationStart = false
         detent = .half
-        loadAllModes()
+        startPlanning(DirectionsState(destination: place, mode: settings.defaultMode))
     }
 
     func closeDirections() {
+        stopPlanningGPS()
         cancelRouteLoads()
         transitRequest += 1
         autoStart = false
+        pendingNavigationStart = false
+        if directions?.planning != nil { lastPlanningOrigin = planningCurrentLocation }
         directions = nil
         showSteps = false
         if let p = selected { select(p) }
@@ -670,12 +795,18 @@ final class AppModel: ObservableObject {
             else if let here = userLatLng {
                 state.destination = Place(id: "route-here", name: "My location", location: here, source: "osm")
             } else { return }
-        } else { state.origin = place }
+        } else {
+            // Clearing the endpoint means "from where I am", never the map centre.
+            state.origin = place
+        }
         state.routes = [:]
+        state.loading = []
+        state.errors = [:]
         state.exclusion = nil
         state.trips = nil
+        state.tripsError = nil
         directions = state
-        reloadRoutes()
+        restartPlanningRoutes()
     }
 
     func confirmEndpointOnMap() {
@@ -686,27 +817,425 @@ final class AppModel: ObservableObject {
         selectEndpoint(endpoint, place: pin)
     }
 
+    /**
+     Both endpoints resolve from the trip itself or from the one stable
+     planning snapshot. A missing fix stays missing; it is never filled with
+     the map centre or a default city.
+     */
     private func endpoints(_ d: DirectionsState) -> (LatLng, LatLng)? {
-        guard let from = d.fromPlace?.location ?? userLatLng, let to = d.toPlace?.location ?? userLatLng else { return nil }
+        // The session's deviceOrigin is the snapshot all modes share. It only
+        // moves after a significant move, never on every GPS wobble.
+        let current = d.planning?.deviceOrigin?.point
+            ?? planningCurrentLocation?.point
+            ?? currentPlanningOrigin()?.point
+        guard let from = d.fromPlace?.location ?? current,
+              let to = d.toPlace?.location ?? current else { return nil }
         return (from, to)
     }
 
     func reverseDirections() {
-        directions?.reversed.toggle()
-        directions?.exclusion = nil
-        directions?.routes = [:]
-        directions?.selected = 0
-        directions?.trips = nil
-        directions?.trip = 0
-        loadAllModes()
+        guard var state = directions else { return }
+        state.reversed.toggle()
+        state.exclusion = nil
+        state.routes = [:]
+        state.loading = []
+        state.errors = [:]
+        state.selected = 0
+        state.trips = nil
+        state.tripsError = nil
+        state.trip = 0
+        directions = state
+        restartPlanningRoutes()
     }
 
     func setMode(_ m: TravelMode) {
-        directions?.transit = false
-        directions?.mode = m
-        directions?.selected = 0
+        guard var state = directions else { return }
+        state.transit = false
+        state.mode = m
+        state.selected = 0
         settings.defaultMode = m
-        frameRoute()
+        // A failure for another mode must not stay on screen after the switch.
+        state.errors[m] = nil
+        var session = state.planning
+        let effects = session?.selectMode(PlanningMode(m), now: Date()) ?? []
+        state.planning = session
+        directions = state
+        applyPlanningEffects(effects)
+        // An existing route appears at once; otherwise the mode that was just
+        // picked owns the shared location request and the others follow.
+        if effects.contains(where: { $0.kind == .loadRoute }) {
+            queueBackgroundModes(after: PlanningMode(m))
+        } else {
+            frameRoute()
+        }
+    }
+
+    // MARK: Saved journeys and GPX
+
+    func saveCurrentJourney(name: String? = nil) {
+        guard let d = directions else { return }
+        let title = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallback = "\(d.fromPlace?.name ?? L10n.text("My location")) → \(d.destination.name)"
+        let journey = SavedJourney(name: (title?.isEmpty == false ? title! : fallback),
+                                   origin: d.fromPlace, destination: d.destination,
+                                   stops: d.stops, mode: d.mode,
+                                   avoidTolls: settings.avoidTolls,
+                                   avoidHighways: settings.avoidHighways)
+        settings.savedJourneys.insert(journey, at: 0)
+        notice = L10n.text("Journey saved.")
+    }
+
+    func openSavedJourney(_ journey: SavedJourney) {
+        settings.avoidTolls = journey.avoidTolls
+        settings.avoidHighways = journey.avoidHighways
+        var state = DirectionsState(destination: journey.destination, mode: journey.mode)
+        state.origin = journey.origin
+        state.stops = journey.stops
+        tab = .map
+        detent = .half
+        startPlanning(state)
+        if journey.isGPXTrack {
+            notice = L10n.text("GPX track imported. Kite plans a road route between its ends; this is not turn-by-turn track following.")
+        }
+    }
+
+    func reverseSavedJourney(_ journey: SavedJourney) {
+        guard let index = settings.savedJourneys.firstIndex(where: { $0.id == journey.id }) else { return }
+        let reversed = journey.reversed()
+        settings.savedJourneys[index] = reversed
+        openSavedJourney(reversed)
+    }
+
+    func deleteSavedJourney(_ journey: SavedJourney) {
+        settings.savedJourneys.removeAll { $0.id == journey.id }
+    }
+
+    func importGPX(from url: URL) {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let values = try url.resourceValues(forKeys: [.fileSizeKey])
+            if let size = values.fileSize, size > GPX.maximumBytes {
+                notice = L10n.text("That GPX file is too large. The limit is 5 MB.")
+                return
+            }
+            let data = try Data(contentsOf: url, options: .mappedIfSafe)
+            let track = try GPX.parse(data)
+            guard let first = track.points.first, let last = track.points.last else {
+                notice = L10n.text("That GPX file has no track points.")
+                return
+            }
+            let start = Place(id: "gpx-start-\(track.name)", name: track.name,
+                              location: first.location, source: "gpx")
+            let end = Place(id: "gpx-end-\(track.name)", name: track.name,
+                            location: last.location, source: "gpx")
+            let note = L10n.format("GPX track: %@ km, %@ m climb. This is a track, not turn-by-turn guidance.",
+                                   String(format: "%.1f", track.distanceMeters / 1000),
+                                   String(Int(track.elevationGainMeters.rounded())))
+            let journey = SavedJourney(name: track.name, origin: start, destination: end,
+                                       stops: [], mode: .bike, notes: note,
+                                       isGPXTrack: true)
+            settings.savedJourneys.insert(journey, at: 0)
+            notice = L10n.text("GPX track imported.")
+        } catch {
+            notice = L10n.text("That GPX file could not be read.")
+        }
+    }
+
+    @Published var gpxExport: GPXExport?
+    struct GPXExport: Identifiable {
+        let id = UUID()
+        let url: URL
+        let name: String
+    }
+
+    func prepareGPXExport() {
+        guard let d = directions, let route = d.route else { return }
+        let name = "\(d.fromPlace?.name ?? L10n.text("My location")) – \(d.destination.name)"
+        let data = GPX.export(route, name: name)
+        let safe = name.replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Kite-\(safe).gpx")
+        do {
+            try data.write(to: url, options: .atomic)
+            gpxExport = GPXExport(url: url, name: "\(safe).gpx")
+        } catch {
+            notice = L10n.text("Could not prepare the GPX file.")
+        }
+    }
+
+    // MARK: Planning lifecycle
+
+    /** Fresh session for a trip, or a changed start/destination. */
+    private func startPlanning(_ state: DirectionsState) {
+        if planningGPSActive {
+            location.endPlanning()
+            planningGPSActive = false
+        }
+        cancelRouteLoads()
+        transitRequest += 1
+        transitTask?.cancel()
+        var state = state
+        state.routes = [:]
+        state.loading = []
+        state.errors = [:]
+        state.selected = 0
+        state.trips = nil
+        state.tripsError = nil
+        var session = makePlanningSession(for: state)
+        var effects = session.start(now: Date())
+        if location.denied || location.servicesOff {
+            effects = session.permissionChanged(granted: false, denied: location.denied,
+                                                servicesOff: location.servicesOff, now: Date())
+        }
+        state.planning = session
+        directions = state
+        planningGPSActive = false
+        location.cancelPlanningRequest()
+        applyPlanningEffects(effects)
+        schedulePlanningDeadlines()
+    }
+
+    /** The trip changed shape: keep the mode, but ask for the routes again. */
+    private func restartPlanningRoutes() {
+        guard let state = directions else { return }
+        startPlanning(state)
+    }
+
+    private func stopPlanningGPS() {
+        planningDeadlineTask?.cancel()
+        planningDeadlineTask = nil
+        if planningGPSActive {
+            location.endPlanning()
+            planningGPSActive = false
+        }
+        pendingNavigationStart = false
+    }
+
+    /** Two deadlines, not a polling loop: slow notice, then the manual-start offer. */
+    private func schedulePlanningDeadlines() {
+        planningDeadlineTask?.cancel()
+        guard directions?.planning?.isWaitingForLocation == true else { return }
+        let policy = directions?.planning?.policy ?? PlanningLocationPolicy()
+        planningDeadlineTask = Task { [weak self] in
+            let slow = UInt64((policy.slowAfter + 1) * 1e9)
+            let manual = UInt64((policy.manualAfter - policy.slowAfter) * 1e9)
+            try? await Task.sleep(nanoseconds: slow)
+            guard !Task.isCancelled, let self else { return }
+            self.planningTick()
+            try? await Task.sleep(nanoseconds: manual)
+            guard !Task.isCancelled else { return }
+            self.planningTick()
+        }
+    }
+
+    private func planningTick() {
+        guard directions != nil, var session = directions?.planning else { return }
+        let effects = session.tick(now: Date())
+        let wasWaiting = directions?.planning?.isWaitingForLocation ?? false
+        directions?.planning = session
+        applyPlanningEffects(effects)
+        // Two deadlines only; after the manual-start offer the user decides.
+        if wasWaiting, session.isWaitingForLocation, !session.manualOriginOffered {
+            schedulePlanningDeadlines()
+        }
+    }
+
+    private func applyPlanningEffects(_ effects: [PlanningEffect]) {
+        guard directions?.planning != nil else { return }
+        for effect in effects {
+            switch effect.kind {
+            case .requestFreshLocation:
+                if planningGPSActive {
+                    location.retryPlanningLocation()
+                } else {
+                    planningGPSActive = true
+                    location.beginPlanning()
+                }
+            case .cancelRouteLoads:
+                cancelRouteLoads()
+            case .loadRoute:
+                guard let mode = effect.mode else { continue }
+                if mode == .transit {
+                    loadTransit()
+                } else if let travel = mode.travelMode {
+                    startRouteLoad(travel)
+                }
+            case .loadBackgroundModes:
+                guard let priority = effect.mode else { continue }
+                queueBackgroundModes(after: priority)
+            case .frameRoute:
+                frameRoute()
+            case .showSlowNotice, .offerManualOrigin:
+                // The view reads these from the session; no extra state to set.
+                break
+            }
+        }
+    }
+
+    /** The visible mode is loaded first; the rest follow with a small cap. */
+    private func queueBackgroundModes(after priority: PlanningMode) {
+        let rest = TravelMode.allCases.filter { PlanningMode($0) != priority }
+        for mode in rest where routeLoadTasks[mode] == nil &&
+            directions?.routes[mode] == nil &&
+            !routeQueue.contains(mode) {
+            routeQueue.append(mode)
+        }
+        pumpRouteLoads()
+    }
+
+    private func pumpRouteLoads() {
+        guard directions != nil else { return }
+        while activeRouteLoads < maxRouteLoads, !routeQueue.isEmpty {
+            let mode = routeQueue.removeFirst()
+            if routeLoadTasks[mode] == nil { startRouteLoad(mode) }
+        }
+    }
+
+    // MARK: Planning status for the interface
+
+    /** Nil when the selected mode has everything it needs. */
+    var planningStatusText: String? {
+        guard let d = directions, let s = d.planning else { return nil }
+        let hasRoute = d.transit ? (d.trips != nil && d.tripsError == nil) : (d.routes[d.mode] != nil)
+        if hasRoute {
+            switch s.originUsability {
+            case .stale, .approximate, .expired, .imprecise: break
+            case .usable, .missing: return nil
+            }
+        }
+        switch s.phase {
+        case .waitingForPermission:
+            return L10n.text("Waiting for location permission…")
+        case .failed(.permissionDenied), .failed(.locationServicesOff):
+            return L10n.text(Self.locationOffText)
+        case .failed:
+            return nil
+        case .searching:
+            if location.servicesOff { return L10n.text("Location services are off on this phone.") }
+            if location.denied { return L10n.text(Self.locationOffText) }
+            if s.slowLocationNotice {
+                return L10n.text("Still looking for a GPS fix. You can retry, or choose a start.")
+            }
+            return L10n.text("Finding your location…")
+        case .ready, .idle:
+            switch s.originUsability {
+            case .stale(let age, _):
+                let minutes = max(1, Int((age / 60).rounded(.up)))
+                return L10n.format("Using your last known location from %@ min ago.", String(minutes))
+            case .approximate:
+                return L10n.text("Using an approximate location. Routes are a guide.")
+            case .imprecise:
+                return L10n.text("That GPS fix is too imprecise for a route from here.")
+            case .expired:
+                return L10n.text("Looking for a fresh location…")
+            case .usable, .missing:
+                if location.reducedAccuracy, !d.transit {
+                    return L10n.text("Approximate location is on. Routes can still be planned.")
+                }
+                return nil
+            }
+        }
+    }
+
+    var planningCanRetry: Bool {
+        guard let s = directions?.planning else { return false }
+        return s.isOpen && s.needsDeviceLocation &&
+            (s.phase == .searching || s.isWaitingForLocation)
+    }
+
+    var planningCanRefresh: Bool {
+        guard let s = directions?.planning, s.needsDeviceLocation else { return false }
+        if planningCanRetry { return true }
+        switch s.originUsability {
+        case .stale, .approximate, .expired, .imprecise: return true
+        case .usable, .missing: return false
+        }
+    }
+
+    var planningOffersManualStart: Bool {
+        directions?.planning?.manualOriginOffered == true && planningCanRetry
+    }
+
+    func retryPlanningLocation() {
+        guard directions != nil, var session = directions?.planning else { return }
+        if location.denied || location.servicesOff {
+            _ = session.permissionChanged(granted: false, denied: location.denied,
+                                          servicesOff: location.servicesOff, now: Date())
+            directions?.planning = session
+            return
+        }
+        let effects = session.retryLocation(now: Date())
+        directions?.planning = session
+        planningGPSActive = true
+        location.beginPlanning()
+        applyPlanningEffects(effects)
+        schedulePlanningDeadlines()
+    }
+
+    func usePrecisePlanningLocation() {
+        location.requestPreciseLocation()
+        retryPlanningLocation()
+    }
+
+    private func planningAuthorizationChanged(granted: Bool, denied: Bool, servicesOff: Bool) {
+        guard directions != nil, var session = directions?.planning else { return }
+        let effects = session.permissionChanged(granted: granted, denied: denied,
+                                                servicesOff: servicesOff, now: Date())
+        directions?.planning = session
+        if denied || servicesOff {
+            planningDeadlineTask?.cancel()
+            planningDeadlineTask = nil
+            pendingNavigationStart = false
+            return
+        }
+        applyPlanningEffects(effects)
+        schedulePlanningDeadlines()
+    }
+
+    private func planningUpdatesPaused() {
+        guard directions != nil, var session = directions?.planning else { return }
+        let effects = session.updatesPaused(now: Date())
+        directions?.planning = session
+        applyPlanningEffects(effects)
+        schedulePlanningDeadlines()
+    }
+
+    /** The planner's view came back after a lock or a trip through the background. */
+    func planningReturnedToForeground() {
+        guard directions != nil, var session = directions?.planning else { return }
+        let effects = session.returnedToForeground(now: Date())
+        directions?.planning = session
+        applyPlanningEffects(effects)
+        schedulePlanningDeadlines()
+    }
+
+    func planningLocationChanged(_ loc: CLLocation) {
+        guard directions != nil, var session = directions?.planning else { return }
+        let fix = planningFix(from: loc)
+        let policy = PlanningLocationPolicy()
+        let usability = policy.usability(of: fix, at: Date())
+        // Keep the current-location snapshot up to date even when the user
+        // typed a start; a reversed trip may still need it, and navigation will.
+        if usability.canPlan {
+            planningCurrentLocation = PlanningOrigin(point: fix.point, capturedAt: fix.timestamp,
+                                                     accuracy: fix.horizontalAccuracy,
+                                                     kind: usability.kind ?? .estimated,
+                                                     label: L10n.text("My location"))
+        }
+        let effects = session.location(fix, now: Date())
+        directions?.planning = session
+        applyPlanningEffects(effects)
+        if !session.isWaitingForLocation {
+            planningDeadlineTask?.cancel()
+            planningDeadlineTask = nil
+        }
+        if pendingNavigationStart, session.originUsability.isNavigationGrade,
+           location.navigationFix(maximumError: navigationAccuracy(for: session.selectedMode.travelMode ?? .drive)) != nil {
+            pendingNavigationStart = false
+            startNavigation()
+        }
     }
 
     func addStop(_ p: Place) {
@@ -733,14 +1262,27 @@ final class AppModel: ObservableObject {
     func setTransitTime(kind: Int, at date: Date) {
         directions?.transitTime = kind == 0 ? nil : date
         directions?.arriveBy = kind == 2
+        directions?.tripsError = nil
         loadTransit()
     }
 
     func showTransit() {
-        directions?.transit = true
+        guard var state = directions else { return }
+        state.transit = true
+        state.tripsError = nil
+        var session = state.planning
+        let effects = session?.selectMode(.transit, now: Date()) ?? []
+        state.planning = session
+        directions = state
+        let startedTransit = effects.contains { $0.kind == .loadRoute && $0.mode == .transit }
+        applyPlanningEffects(effects)
         // "Leave now" times found a while ago may have left already: look again.
-        if directions?.transitTime == nil, Date().timeIntervalSince(transitLoadedAt) > 120 { loadTransit() }
-        frameRoute()
+        if !startedTransit, directions?.transitTime == nil,
+           Date().timeIntervalSince(transitLoadedAt) > 120 {
+            loadTransit()
+        } else if directions?.trips != nil {
+            frameRoute()
+        }
     }
 
     func selectTrip(_ i: Int) {
@@ -758,8 +1300,35 @@ final class AppModel: ObservableObject {
         guard directions != nil else { return }
         directions?.routes = [:]
         directions?.errors = [:]
+        directions?.tripsError = nil
         directions?.selected = 0
-        loadAllModes()
+        if directions?.planning?.isWaitingForLocation == true {
+            directionRetryLocationThenLoad()
+        } else {
+            loadAllModes()
+        }
+    }
+
+    /** "Try again": restart the GPS request, then load the selected mode when it lands. */
+    private func directionRetryLocationThenLoad() {
+        guard directions != nil, var session = directions?.planning else { return }
+        if location.denied || location.servicesOff {
+            _ = session.permissionChanged(granted: false, denied: location.denied,
+                                          servicesOff: location.servicesOff, now: Date())
+            directions?.planning = session
+            return
+        }
+        let effects = session.retryLocation(now: Date())
+        directions?.planning = session
+        planningGPSActive = true
+        location.beginPlanning()
+        applyPlanningEffects(effects)
+        schedulePlanningDeadlines()
+        // A usable but stale start can still show a route immediately.
+        if let d = directions, endpoints(d) != nil,
+           directions?.planning?.originUsability.canPlan == true {
+            loadAllModes()
+        }
     }
 
     private var walkingSettingsTask: Task<Void, Never>?
@@ -783,46 +1352,83 @@ final class AppModel: ObservableObject {
         guard let d = directions else { return }
         cancelRouteLoads()
         directions?.loading = []
-        let req = routesRequest
-        guard let (from, to) = endpoints(d) else {
-            // Say so on the trip card itself, not just in passing.
-            let why = location.denied ? Self.locationOffText : "Waiting for your location…"
-            for m in TravelMode.allCases { directions?.errors[m] = why }
-            directions?.tripsError = why
-            directions?.trips = []
-            if !location.denied {
-                // GPS is on but hasn't answered yet: try again once it does.
-                location.start()
-                Task {
-                    for _ in 0..<40 where userLatLng == nil && routesRequest == req {
-                        try? await Task.sleep(nanoseconds: 250_000_000)
-                    }
-                    if userLatLng != nil, routesRequest == req, directions?.destination.id == d.destination.id,
-                       directions?.routes.isEmpty == true { reloadRoutes() }
-                }
-            }
+        directions?.errors = [:]
+        guard endpoints(d) != nil else {
+            markWaitingForLocation(reason: planningStatusText)
             return
         }
+        // The visible mode goes first. Two at a time is enough to be quick
+        // without firing every router request at once on a slow connection.
+        var order = TravelMode.allCases
+        if let i = order.firstIndex(of: d.mode) {
+            let picked = order.remove(at: i)
+            order.insert(picked, at: 0)
+        }
+        routeQueue = order
+        pumpRouteLoads()
+        if d.transit { loadTransit() }
+    }
+
+    private func markWaitingForLocation(reason: String?) {
+        guard var d = directions else { return }
+        let why = reason ?? L10n.text("Waiting for your location…")
+        for m in TravelMode.allCases where d.routes[m] == nil {
+            d.errors[m] = why
+        }
+        if d.transit, d.trips == nil { d.tripsError = why }
+        d.loading = []
+        directions = d
+    }
+
+    private func startRouteLoad(_ m: TravelMode) {
+        guard let d = directions, routeLoadTasks[m] == nil else { return }
+        guard let (from, to) = endpoints(d) else {
+            markWaitingForLocation(reason: planningStatusText)
+            return
+        }
+        let req = routesRequest
+        let sessionID = d.planning?.requestID ?? 0
+        let destID = d.destination.id
+        let exclusion = d.exclusion
         let via = (d.reversed ? d.stops.reversed() : d.stops).map(\.location)
         let hw = settings.avoidHighways, tolls = settings.avoidTolls, google = !settings.noGoogle
         // Already driving (asked at a red light, say): no route that starts with a U-turn.
-        let moving = location.last.flatMap { l in l.speed >= 4 && l.course >= 0 && l.courseAccuracy >= 0 && l.courseAccuracy < 45 ? l.course : nil }
+        let moving = (location.lastKnown ?? location.last).flatMap { l in
+            l.speed >= 4 && l.course >= 0 && l.courseAccuracy >= 0 && l.courseAccuracy < 45 ? l.course : nil
+        }
         let heading = d.startsFromLocation ? moving : nil
-        for m in TravelMode.allCases {
-            directions?.loading.insert(m)
-            routeLoadTasks[m] = Task { [weak self] in
-                let r = await Directions.routes(from: from, to: to, mode: m, avoidHighways: hw, avoidTolls: tolls, useGoogle: google, via: via,
-                                                heading: m == .drive ? heading : nil, alternatives: true)
-                guard let self, !Task.isCancelled, directions?.destination.id == d.destination.id,
-                      routesRequest == req else { return }
-                routeLoadTasks[m] = nil
-                directions?.loading.remove(m)
-                // The fastest first, so it's the one picked (Matteo, 2026-11-13: a bike route marked
-                // "Slower route" was picked while one 5 min faster sat below it).
-                let allowed = m == .drive ? r.routes.filter { d.exclusion?.allows($0) ?? true } : r.routes
-                directions?.routes[m] = allowed.sorted { $0.durationSeconds < $1.durationSeconds }
-                if allowed.isEmpty, m == .drive, d.exclusion != nil {
-                    directions?.errors[m] = "No alternative avoids this segment. Undo the avoidance to see all routes."
+        directions?.loading.insert(m)
+        directions?.errors[m] = nil
+        activeRouteLoads += 1
+        routeLoadTasks[m] = Task { [weak self] in
+            let r: Directions.Result
+            if UITestSupport.mockRoutes {
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                r = Directions.Result(routes: UITestSupport.routes(from: from, to: to, mode: m,
+                                                                   avoidHighways: hw))
+            } else {
+                r = await Directions.routes(from: from, to: to, mode: m, avoidHighways: hw, avoidTolls: tolls,
+                                            useGoogle: google, via: via,
+                                            heading: m == .drive ? heading : nil, alternatives: true)
+            }
+            guard let self, !Task.isCancelled, var current = directions,
+                  current.destination.id == destID, routesRequest == req else { return }
+            routeLoadTasks[m] = nil
+            activeRouteLoads = max(0, activeRouteLoads - 1)
+            current.loading.remove(m)
+            // The fastest first, so it's the one picked (Matteo, 2026-11-13: a bike route marked
+            // "Slower route" was picked while one 5 min faster sat below it).
+            let allowed = m == .drive ? r.routes.filter { exclusion?.allows($0) ?? true } : r.routes
+            // Two answers that differ by seconds and a few hundred metres are one
+            // choice, not two cards. The fastest always stays.
+            let kept = RouteAlternatives.distinct(allowed)
+                .sorted { $0.durationSeconds < $1.durationSeconds }
+            if !kept.isEmpty { current.routes[m] = kept }
+            let failure: PlanningFailure?
+            if kept.isEmpty {
+                if allowed.isEmpty, m == .drive, exclusion != nil {
+                    current.errors[m] = "No alternative avoids this segment. Undo the avoidance to see all routes."
+                    failure = .noRoute
                 } else if r.routes.isEmpty {
                     let message: String
                     switch r.error {
@@ -831,23 +1437,47 @@ final class AppModel: ObservableObject {
                     case "No verified toll-free route found.": message = "No verified toll-free route found."
                     default: message = "Couldn't get a route just now. Try again in a moment."
                     }
-                    directions?.errors[m] = Connectivity.explain(message)
+                    current.errors[m] = Connectivity.explain(message)
+                    failure = !Connectivity.shared.online ? .offline
+                        : (r.error == "No route found." ? .noRoute : .routerUnavailable)
+                } else {
+                    failure = .noRoute
                 }
-                if m == directions?.mode {
-                    frameRoute()
-                    if autoStart, !allowed.isEmpty {
-                        autoStart = false
-                        startNavigation()
-                    }
+            } else {
+                failure = nil
+            }
+            var effects: [PlanningEffect] = []
+            if var session = current.planning {
+                if let failure {
+                    effects = session.routeFailed(mode: PlanningMode(m), requestID: sessionID,
+                                                  failure: failure, now: Date())
+                } else {
+                    effects = session.routeLoaded(mode: PlanningMode(m), requestID: sessionID,
+                                                  count: kept.count, now: Date())
+                }
+                current.planning = session
+            }
+            directions = current
+            applyPlanningEffects(effects)
+            if m == current.mode {
+                frameRoute()
+                if autoStart, !kept.isEmpty {
+                    autoStart = false
+                    startNavigation()
                 }
             }
+            pumpRouteLoads()
         }
-        loadTransit()
     }
 
     /** Transit trips for the current trip, leaving now or at the picked time. */
     func loadTransit() {
-        guard let d = directions, let (from, to) = endpoints(d) else { return }
+        guard let d = directions else { return }
+        guard let (from, to) = endpoints(d) else {
+            directions?.trips = []
+            directions?.tripsError = planningStatusText ?? L10n.text("Waiting for your location…")
+            return
+        }
         transitLoadedAt = Date()
         // A new request either way, so one still loading can't put back trips without the stops.
         transitRequest += 1
@@ -858,6 +1488,7 @@ final class AppModel: ObservableObject {
             return
         }
         let destId = d.destination.id
+        let sessionID = d.planning?.requestID ?? 0
         let time = d.transitTime, arriveBy = d.arriveBy
         let liveURL = settings.gtfsRealtimeURL
         let discover = settings.autoTransitFeeds
@@ -869,13 +1500,20 @@ final class AppModel: ObservableObject {
         transitTask?.cancel()
         transitTask = Task {
             do {
-                async let planned = Transitous.plan(from: from, to: to, time: time, arriveBy: arriveBy)
+                let trips: [TransitTrip]
+                if UITestSupport.mockRoutes {
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                    trips = UITestSupport.transitTrips(from: from, to: to)
+                } else {
+                    trips = try await Transitous.plan(from: from, to: to, time: time, arriveBy: arriveBy)
+                }
                 async let live = Self.liveFeed(from: from, to: to, manual: liveURL, discover: discover)
-                let trips = try await planned
                 guard directions?.destination.id == destId, transitRequest == req else { return }
                 // Show the timetable immediately; a slow live feed is applied when it arrives.
                 directions?.trips = trips.sorted { $0.durationSeconds < $1.durationSeconds }
                 if trips.isEmpty { directions?.tripsError = "No transit trips found here." }
+                updatePlanningTransit(count: trips.count, requestID: sessionID,
+                                      failure: trips.isEmpty ? .noRoute : nil)
                 // Transitous already carries live times from its own GTFS-Realtime sources. An
                 // optional extra feed can add another region's delays, alerts and vehicle positions.
                 if let feed = await live, !trips.isEmpty {
@@ -888,9 +1526,26 @@ final class AppModel: ObservableObject {
                 guard directions?.destination.id == destId, transitRequest == req else { return }
                 directions?.trips = []
                 directions?.tripsError = Connectivity.explain("Couldn't reach the transit planner.")
+                updatePlanningTransit(count: 0, requestID: sessionID,
+                                      failure: Connectivity.shared.online ? .routerUnavailable : .offline)
             }
             if directions?.transit == true { frameRoute() }
         }
+    }
+
+    private func updatePlanningTransit(count: Int, requestID: Int, failure: PlanningFailure?) {
+        guard var d = directions, var session = d.planning else { return }
+        let effects: [PlanningEffect]
+        if let failure {
+            effects = session.routeFailed(mode: .transit, requestID: requestID,
+                                          failure: failure, now: Date())
+        } else {
+            effects = session.routeLoaded(mode: .transit, requestID: requestID,
+                                          count: count, now: Date())
+        }
+        d.planning = session
+        directions = d
+        applyPlanningEffects(effects)
     }
 
     /**
@@ -946,7 +1601,31 @@ final class AppModel: ObservableObject {
 
     func startNavigation() {
         guard let d = directions, let route = d.route, d.startsFromLocation, let destination = d.toPlace else { return }
-        beginNavigation(route, to: destination, stops: d.reversed ? Array(d.stops.reversed()) : d.stops, exclusion: d.exclusion)
+        if var session = d.planning {
+            // A preview may have been planned from a stale or approximate fix.
+            // Guidance needs a real one; if the phone moved, calculate again.
+            let preparation = session.prepareNavigation(fix: location.planningFix(), now: Date())
+            directions?.planning = session
+            if preparation.rerouted {
+                pendingNavigationStart = true
+                // Start as soon as the recalculated route lands.
+                autoStart = true
+                applyPlanningEffects(preparation.effects)
+                return
+            }
+            guard preparation.canStart else {
+                pendingNavigationStart = true
+                notice = session.phase == .failed(.permissionDenied)
+                    ? L10n.text(Self.locationOffText)
+                    : L10n.text("Waiting for a precise GPS fix before starting navigation.")
+                planningGPSActive = true
+                location.beginPlanning()
+                return
+            }
+        }
+        pendingNavigationStart = false
+        beginNavigation(route, to: destination, stops: d.reversed ? Array(d.stops.reversed()) : d.stops,
+                        exclusion: d.exclusion)
     }
 
     private func beginNavigation(_ route: Route, to destination: Place, stops: [Place] = [],
@@ -985,11 +1664,25 @@ final class AppModel: ObservableObject {
         }
         resumeOffer = nil
         if transitJourney == nil { rememberTrip(n) }
+        // Guidance owns the GPS from here; the planning request must stop.
+        planningDeadlineTask?.cancel()
+        planningDeadlineTask = nil
+        if planningGPSActive {
+            location.endPlanning()
+            planningGPSActive = false
+        }
+        pendingNavigationStart = false
+        location.cancelPlanningRequest()
         location.setNavigating(true, mode: route.mode.rawValue)
         map?.showsUserLocation = false
-        if let loc = location.last, loc.horizontalAccuracy <= navigationAccuracy(for: route.mode) {
+        // Every real guidance path must begin from a navigation-grade fix, not
+        // a five-minute-old search fix or a manual start.
+        if let loc = location.navigationFix(maximumError: navigationAccuracy(for: route.mode)) {
             n.handle(loc)
             if nav === n { followCamera(n, loc, animated: false) }
+        } else {
+            n.waitForFreshLocation()
+            location.start()
         }
     }
 
@@ -1045,6 +1738,7 @@ final class AppModel: ObservableObject {
             trip.legs.insert(TransitLeg(isWalk: true, mode: "WALK", toName: state.fromPlace?.name ?? trip.legs.first?.fromName ?? "",
                                        path: [here, origin]), at: 0)
         }
+        stopPlanningGPS()
         location.start()
         showSteps = false
         selected = nil
@@ -1113,6 +1807,7 @@ final class AppModel: ObservableObject {
     }
 
     func startJustDrive() {
+        stopPlanningGPS()
         selected = nil
         directions = nil
         justDrive = true
@@ -1241,6 +1936,7 @@ final class AppModel: ObservableObject {
     }
 
     func endNavigation() {
+        stopPlanningGPS()
         clearNearbyControls()
         if #available(iOS 16.2, *) { JourneyActivity.shared.finish() }
         journeyStopTask?.cancel()
@@ -1427,6 +2123,10 @@ final class AppModel: ObservableObject {
     func resumeNavigationDisplay() {
         defer { refreshActivity() }
         location.setForeground(true)
+        if nav == nil, directions != nil, directions?.planning != nil {
+            planningReturnedToForeground()
+            return
+        }
         guard let n = nav, !n.arrived else { return }
         if let fix = location.navigationFix(maximumError: navigationAccuracy(for: n.route.mode)) {
             followCamera(n, fix, animated: false)
@@ -1440,6 +2140,11 @@ final class AppModel: ObservableObject {
 
     private func locationChanged(_ loc: CLLocation) {
         defer { refreshActivity() }
+        // The planner is event-driven: the first usable fix continues the plan
+        // no matter whether it arrives after 5, 30 or 90 seconds.
+        if nav == nil, directions != nil, directions?.planning != nil {
+            planningLocationChanged(loc)
+        }
         if !location.reducedAccuracy { refreshNearbyControls(loc) }
         if location.reducedAccuracy || loc.horizontalAccuracy > 200 { areaRisk = nil }
         if let journey = transitJourney, !location.reducedAccuracy, updateTransitPosition(loc, journey: journey) { return }

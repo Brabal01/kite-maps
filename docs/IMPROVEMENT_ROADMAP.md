@@ -3,6 +3,41 @@
 This is a living backlog, not a claim that everything below exists. Items already shipped are
 marked **done**; everything else needs code and tests.
 
+## v30 status
+
+- **Done (v30)**: explicit `NavigationSessionState` and navigation-grade entry
+  guard; reroute lifecycle and offline route preservation.
+- **Done (v30)**: tested `AlertCoordinator`, `LaneGuidanceEngine`,
+  `JunctionGuideBuilder`, `ControlDisplayPolicy`.
+- **Done (v30)**: seven map presets, adaptive POI/label/building density,
+  Navigation mode while driving, MapKit POI/building subset.
+- **Done (v30)**: HUD Simple/Advanced/Highway/Custom with preview.
+- **Done (v30)**: saved journeys, GPX import/export with bounded validation.
+- **Partial (v30)**: settings regrouped and search is not yet implemented;
+  offline journey/map/routing are documented but not shipped.
+- Next (P1): physical-device reroute/GPS/performance verification.
+- Next (P2): settings search, along-route detour ranking, richer Live Activity
+  fields, offline journey persistence.
+- Next (P3): offline map areas and local routing graph.
+
+## v29 status
+
+- **Done (v29)**: one packaging/signing/verification path, two IPA variants from
+  the same build, matching app/extension minimum OS, monotonic build numbers.
+- **Done (v29)**: Kite Design System 2.0 tokens; map home, search, quick actions,
+  four-tab dock, Routes page, camera restoration, Navigation HUD 2.0, place
+  header, planning surfaces, tested route-alternative filtering.
+- **Done (v29)**: screenshot workflow for SE/standard/Max, light/dark, large
+  text, long names, with a mechanical blank-frame check.
+- Next (P2): extract alert prioritisation into a tested `AlertCoordinator`; no
+  second implementation may exist during that change.
+- Next (P2): dedicated motorway junction diagram from mapped exits/lanes.
+- Next (P2): adaptive map style presets (Classic / Navigation / Minimal) as one
+  setting rather than several independent toggles.
+- Next (P2): extract `NavigationSession` state from `AppModel` without moving UI.
+- Next (P3): saved journeys, shortcut reordering, MHD card polish, richer Live
+  Activity states, offline areas.
+
 ## Navigation core
 
 - **Done (v27)**: departure evidence separated from match confidence; weak-but-usable GPS can

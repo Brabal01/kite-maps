@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import VelaCore
 
 struct UpcomingRoadControl: Equatable, Identifiable {
@@ -39,7 +40,7 @@ struct RoadControlTimeline: View {
                         }
                         let kind = event.control.kind
                         VStack(spacing: 2) {
-                            Image(systemName: kind.symbol).font(.system(size: 19, weight: .semibold))
+                            Image(systemName: kind.icon).font(.system(size: 19, weight: .semibold))
                                 .frame(width: 29, height: 25)
                             Text(Fmt.distance(event.meters)).lineLimit(1).minimumScaleFactor(0.75)
                         }
@@ -76,7 +77,7 @@ struct RoadEventsList: View {
                 ForEach(controls) { event in
                     HStack {
                         let kind = event.control.kind
-                        Image(systemName: kind.symbol).frame(width: 28)
+                        Image(systemName: kind.icon).frame(width: 28)
                         Text(L10n.text(kind.title))
                         Spacer(minLength: 4)
                         Text(Fmt.distance(event.meters)).monospacedDigit().foregroundStyle(.secondary)
@@ -91,6 +92,12 @@ struct RoadEventsList: View {
 }
 
 private extension RouteControl.Kind {
+    /// An SF Symbol that actually exists in this iOS version. A missing name
+    /// draws nothing, which looked like an empty road-event row.
+    var icon: String {
+        UIImage(systemName: symbol) == nil ? "circle.fill" : symbol
+    }
+
     var title: String {
         switch self {
         case .light: return "Traffic lights ahead"
@@ -105,8 +112,8 @@ private extension RouteControl.Kind {
 
     var symbol: String {
         switch self {
-        case .light: return "trafficlight.fill"
-        case .stop: return "stop.octagon.fill"
+        case .light: return "trafficlight"
+        case .stop: return "octagon.fill"
         case .railway: return "train.side.front.car"
         case .tram: return "tram.fill"
         case .crossing: return "figure.walk"

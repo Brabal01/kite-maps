@@ -7,9 +7,10 @@ public enum LaneApproach {
         return min(900, max(300, max(0, speed) * seconds))
     }
 
-    public static func showsStrip(distance: Double, speed: Double, laneCount: Int, offRoute: Bool) -> Bool {
+    public static func showsStrip(distance: Double, speed: Double, laneCount: Int,
+                                  offRoute: Bool, leadMultiplier: Double = 1) -> Bool {
         let seconds = laneCount >= 4 ? 12.5 : 11.0
-        let lead = min(450, max(110, speed * seconds))
+        let lead = min(650, max(110, speed * seconds) * max(0, leadMultiplier))
         return !offRoute && (0...lead).contains(distance)
     }
 }

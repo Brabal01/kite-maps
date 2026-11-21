@@ -2,8 +2,13 @@
 name: Kite
 options:
   bundleIdPrefix: app.vela
+  # The app and every embedded extension must declare the SAME minimum iOS
+  # version. A widget built for 16.2 inside an app built for 16.0 makes the
+  # package fail to install (sideloaders report a broken/incompatible app),
+  # which is one of the v28 SideStore symptoms. Live Activities need 16.2,
+  # so 16.2 is the real floor for the Full build.
   deploymentTarget:
-    iOS: "16.0"
+    iOS: "16.2"
 packages:
   MapLibre:
     url: https://github.com/maplibre/maplibre-gl-native-distribution
@@ -23,12 +28,14 @@ targets:
         embed: true
       - package: MapLibre
       - package: VelaCore
-    scheme: {}
+    scheme:
+      testTargets:
+        - KiteUITests
     info:
       path: App/Info.plist
       properties:
         CFBundleDisplayName: Kite
-        CFBundleShortVersionString: "0.7.16"
+        CFBundleShortVersionString: "0.8.0"
         CFBundleVersion: "1"
         NSSupportsLiveActivities: true
         UILaunchScreen: {}
@@ -59,12 +66,26 @@ targets:
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1,2"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        MARKETING_VERSION: "0.7.16"
+        MARKETING_VERSION: "0.8.0"
         CURRENT_PROJECT_VERSION: "1"
+
+  KiteUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "16.2"
+    sources:
+      - AppUITests
+    dependencies:
+      - target: Kite
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.vela.ios.uitests
+        SWIFT_VERSION: "5.0"
 
   NavigationWidget:
     type: app-extension
     platform: iOS
+    # Same floor as the app: see the comment on `options.deploymentTarget`.
     deploymentTarget: "16.2"
     sources:
       - NavigationWidget
@@ -73,7 +94,7 @@ targets:
       path: WidgetInfo.plist
       properties:
         CFBundleDisplayName: Kite Navigation
-        CFBundleShortVersionString: "0.7.16"
+        CFBundleShortVersionString: "0.8.0"
         CFBundleVersion: "1"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension

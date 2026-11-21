@@ -41,6 +41,16 @@ The v26→v27 diff was reviewed with particular attention to startup:
   launch trace. It does not start location, maps, network requests or Live Activities.
 - *Leave safe mode* turns the switch off; Kite must be closed and opened again for the normal path.
 
+## Simulator verification (build 1051)
+
+- Run `44794890053` launched the app three times normally, once with location denied and once in
+  safe mode. All five processes stayed alive for the test window.
+- MapLibre initialised in the four normal launches and not in safe mode, so the safe-mode branch is
+  actually bypassing the map stack.
+- No crash, fatal or uncaught-exception lines appeared in the collected logs.
+- This proves the simulator launch path and safe-mode split; it does not prove the physical iPhone
+  crash is fixed. The v27 crash log is still required for that claim.
+
 ## Diagnostics added
 
 - `LaunchTrace`: up to 40 timestamped, privacy-safe milestones (`app init`, `AppModel init`,

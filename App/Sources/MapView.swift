@@ -27,7 +27,10 @@ struct VelaMapView: UIViewRepresentable {
         map.logoView.isHidden = true
         map.attributionButtonPosition = .bottomLeft
         map.attributionButtonMargins = CGPoint(x: 8, y: 8)
-        map.setCenter(CLLocationCoordinate2D(latitude: 51.5074, longitude: -0.1278), zoomLevel: 12, animated: false)
+        // Never open on a hard-coded city: restore the user's last area, or their
+        // current fix, or a neutral world view until the first fix arrives.
+        let start = model.mapStart
+        map.setCenter(start.center, zoomLevel: start.zoom, animated: false)
         let camera = map.camera
         camera.pitch = model.browsePitch
         map.camera = camera
@@ -124,6 +127,8 @@ struct VelaMapView: UIViewRepresentable {
         private var lastTransitVehicleKey = ""
         /** Whether the map is currently stripped down for driving; nil after a style load. */
         private var styledDriving: Bool?
+        /** The map preset currently applied to the style, nil after a style load. */
+        private var styledPreset: MapPreset?
         private var lastCameraKey = ""
         private var drawnControls: [RouteControl]?
         private var drawnSignals: [LatLng] = []
@@ -177,6 +182,7 @@ struct VelaMapView: UIViewRepresentable {
             styleReady = true
             heatTiles.styleReloaded()
             styledDriving = nil
+            styledPreset = nil
             repaint(mapView)
             lastResultsKey = ""; lastRouteKey = ""; lastMineKey = ""; lastPuckKey = ""; lastTransitVehicleKey = ""; lastCameraKey = ""; drawnControls = nil; drawnSignals = []; lastWazeKey = ""; lastLiveKey = ""
             render(mapView)
@@ -609,6 +615,12 @@ struct VelaMapView: UIViewRepresentable {
             let s = model.settings
             updateMapbox(style)
             let driving = model.nav?.route.mode == .drive || model.justDrive
+            let effectivePreset: MapPreset = driving && s.mapPreset != .minimal ? .navigation : s.mapPreset
+            if styledPreset != effectivePreset {
+                MapStyler.preset(style, preset: effectivePreset)
+                styledPreset = effectivePreset
+            }
+            let profile = MapPresetCatalog.profile(for: effectivePreset)
             (style.layer(withIdentifier: "vela-puck") as? MLNSymbolStyleLayer)?.iconScale =
                 NSExpression(forConstantValue: s.navArrowScale)
             // Not before the welcome screen's choice: "Open data only" means nothing ever went to Google.
@@ -625,9 +637,12 @@ struct VelaMapView: UIViewRepresentable {
             }
             // The map-style driving simplification must not silently remove buildings.
             // Keep the user's setting independent of the camera's 2D/3D pitch.
-            let showBuildings = !s.satellite && (!navigating || s.navBuildings)
+            let showBuildings = !s.satellite && profile.showBuildings && (!navigating || s.navBuildings)
             for id in ["building", "building-3d"] { style.layer(withIdentifier: id)?.isVisible = showBuildings }
-            style.layer(withIdentifier: "building-3d")?.minimumZoomLevel = 14.5
+            style.layer(withIdentifier: "building-3d")?.minimumZoomLevel =
+                profile.show3DBuildings ? 14.5 : 22
+            style.layer(withIdentifier: "vela-traffic")?.isVisible =
+                s.traffic && !s.noGoogle && s.welcomed && profile.showTraffic
         }
 
         private func publish(_ shape: MLNShape?, to id: String) {
@@ -747,8 +762,22 @@ struct VelaMapView: UIViewRepresentable {
                 ? model.nearbyControls.filter { !model.justDrive || $0.kind.showsDuringDriving } : (model.nav == nil ? model.previewCoverage?.events.map(\.control) : nil))
             let walking = model.nav?.route.mode == .walk ||
                 (model.nav == nil && (model.directions?.route?.mode == .walk || model.transitJourney?.leg.isWalk == true))
-            let controls = walking ? routeControls?.filter { $0.kind != .crossing && $0.kind != .oneWay } : routeControls
-            let signals = controls?.isEmpty != false ? model.nav?.routeSignals ?? [] : []
+            let cycling = model.nav?.route.mode == .bike
+            let activity: MapActivity = model.nav != nil
+                ? (walking ? .navigatingWalk : cycling ? .navigatingBike : .navigatingDrive)
+                : (model.justDrive ? .freeDrive : .browsing)
+            let here = model.nav?.progress?.snapped ?? model.userLatLng
+            func relevant(_ controls: [RouteControl]?) -> [RouteControl]? {
+                controls?.filter { control in
+                    let distance = here.map { $0.distance(to: control.location) }
+                    return ControlDisplayPolicy.shouldShow(control, activity: activity,
+                                                           distanceAhead: distance)
+                }
+            }
+            let controls = relevant(routeControls)
+            let signals = controls?.isEmpty != false
+                ? relevant((model.nav?.routeSignals ?? []).map { RouteControl(kind: .light, location: $0) })?.map(\.location) ?? []
+                : []
             guard controls != drawnControls || signals != drawnSignals else { return }
             drawnControls = controls
             drawnSignals = signals
@@ -1417,6 +1446,7 @@ struct VelaMapView: UIViewRepresentable {
             render(map)
             loadRail(map)
             noteHeading(map)
+            model.rememberBrowseCamera(map)
         }
 
         nonisolated func mapViewRegionIsChanging(_ mapView: MLNMapView) {
@@ -1453,6 +1483,9 @@ struct VelaMapView: UIViewRepresentable {
             movedToUser = true
             guard model.results.isEmpty, model.selected == nil, model.directions == nil,
                   !model.hasActiveJourney else { return }
+            // The user left the map over their own city: keep that view. Only a fix
+            // far away from the restored area takes the camera.
+            if model.mapStart.restored, model.keepsRestoredView(for: loc) { return }
             map.setCenter(loc.coordinate, zoomLevel: 15, animated: false)
             let camera = map.camera
             camera.pitch = model.browsePitch
