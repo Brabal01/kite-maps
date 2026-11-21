@@ -90,7 +90,12 @@ public enum Roundabouts {
                 r.maneuvers[i].exit = final
                 changed = true
             }
-            let words = OSRM.instruction(type: "roundabout", modifier: nil, road: m.road, exit: final, mode: route.mode)
+            // Keep the signed destinations the router or Google gave: the number changes,
+            // the "toward Eastleigh" does not.
+            let signs = OSRM.Signs(destinations: m.exitSign?.destinations.joined(separator: ", "),
+                                   exits: m.exitSign?.number, from: nil)
+            let words = OSRM.instruction(type: "roundabout", modifier: nil, road: m.road, exit: final,
+                                         mode: route.mode, signs: signs)
             if r.maneuvers[i].instruction != words {
                 r.maneuvers[i].instruction = words
                 changed = true
