@@ -120,6 +120,12 @@ jobs:
         run: |
           set -euo pipefail
           UDID="${{ steps.simulator.outputs.udid }}"
+          # The safe-mode launch above persists its switch in the app container,
+          # which made every later screenshot show the safe-mode screen. A fresh
+          # install clears that switch and the launch marker.
+          xcrun simctl terminate "$UDID" app.vela.ios >/dev/null 2>&1 || true
+          xcrun simctl uninstall "$UDID" app.vela.ios >/dev/null 2>&1 || true
+          xcrun simctl install "$UDID" "build/Build/Products/Debug-iphonesimulator/Kite.app"
           # The denied-location test above revoked permission; give it back so
           # the place, planning and navigation screens are captured for real.
           xcrun simctl privacy "$UDID" grant location app.vela.ios >/dev/null 2>&1 || true
