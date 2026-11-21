@@ -138,6 +138,17 @@ final class AppSettings: ObservableObject {
     @Published var plateCameras: Bool { didSet { d.set(plateCameras, forKey: "plateCameras") } }
     /** Say "Speed camera ahead" while navigating. Off by default: some countries restrict it. */
     @Published var cameraWarnings: Bool { didSet { d.set(cameraWarnings, forKey: "cameraWarnings") } }
+    /** Where the car is, resolved from a geocoded position — not from the device's language or region. */
+    @Published var cameraJurisdiction: CameraWarningPolicy = .unknown
+    /** Honest acknowledgement that the user takes responsibility where no verified country is known. */
+    @Published var cameraJurisdictionResponsible: Bool {
+        didSet { d.set(cameraJurisdictionResponsible, forKey: "cameraJurisdictionResponsible") }
+    }
+    /** The only value the navigator may use: preference gated by a verified jurisdiction. */
+    var effectiveCameraWarnings: Bool {
+        CameraJurisdiction.warningsEnabled(userPreference: cameraWarnings, policy: cameraJurisdiction,
+                                           userAcceptsResponsibility: cameraJurisdictionResponsible)
+    }
     /** Say so when driving over the posted limit. Off by default, like Vela. */
     @Published var speedingAlert: Bool { didSet { d.set(speedingAlert, forKey: "speedingAlert") } }
     /** How close the driving map sits: Closer, Normal (as Kite always was) or Wider. */
@@ -246,7 +257,13 @@ final class AppSettings: ObservableObject {
         surveillanceCameras = d.bool(forKey: "surveillanceCameras")
         plateCameras = d.object(forKey: "plateCameras") as? Bool ?? true
         // On for new users, except where warning of cameras is against the law.
-        cameraWarnings = d.object(forKey: "cameraWarnings") as? Bool ?? !Self.camerasRestricted
+        cameraWarnings = d.object(forKey: "cameraWarnings") as? Bool ?? true
+        cameraJurisdictionResponsible = d.bool(forKey: "cameraJurisdictionResponsible")
+        // An offline first launch has no verified country. The device region is a hint only, and only
+        // for someone who has explicitly accepted responsibility for checking the local law.
+        if cameraJurisdictionResponsible {
+            cameraJurisdiction = CameraJurisdiction.policy(isoCountryCode: Locale.current.region.identifier)
+        }
         speedingAlert = d.bool(forKey: "speedingAlert")
         mapZoom = MapZoom(rawValue: d.string(forKey: "mapZoom") ?? "") ?? .normal
         driveLook = MapLook(rawValue: d.string(forKey: "driveLook") ?? "") ?? .tilted
@@ -289,11 +306,6 @@ final class AppSettings: ObservableObject {
         recentPlaces = d.data(forKey: "recentPlaces").flatMap { try? JSONDecoder().decode([Place].self, from: $0) } ?? []
         // The OpenWeb Ninja key and counter from 0.7.3, no longer used: don't leave the key on the phone.
         for k in ["ninjaKey", "ninjaMonth", "ninjaUsed"] { d.removeObject(forKey: k) }
-    }
-
-    /** Countries where apps may not warn of speed cameras (France, Germany, Switzerland and a few more). */
-    static var camerasRestricted: Bool {
-        ["FR", "DE", "CH", "CY", "SK", "TR"].contains(Locale.current.regionCode ?? "")
     }
 
     private func save<T: Encodable>(_ v: T, _ key: String) {

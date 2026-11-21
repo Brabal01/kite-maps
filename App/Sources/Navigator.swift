@@ -799,7 +799,7 @@ final class Navigator: ObservableObject {
         // that, the next ones at the same limit within a couple of minutes get the card and the chime.
         let repeatRun = Date().timeIntervalSince(cameraSpokenAt) < 150 && limit == cameraSpokenLimit
         // Likely the other side's camera: on screen only, no chime or voice.
-        if AppSettings.shared.cameraWarnings, cam.kind == .speed, !cam.quiet {
+        if AppSettings.shared.effectiveCameraWarnings, cam.kind == .speed, !cam.quiet {
             chime()
             if !repeatRun {
                 if L10n.isCzech {
@@ -978,7 +978,7 @@ final class Navigator: ObservableObject {
             } else {
                 zoneEntry = nil
                 averageCheck = nil
-                if AppSettings.shared.cameraWarnings { speak("Average speed check ended.", alert: true) }
+                if AppSettings.shared.effectiveCameraWarnings { speak("Average speed check ended.", alert: true) }
             }
         }
         guard let i = inside else { return }
@@ -992,7 +992,7 @@ final class Navigator: ObservableObject {
                 zoneEntry = (z.startMeters, z.endMeters, c.time, at - driven, z.kmh ?? c.kmh)
             } else {
                 zoneEntry = (z.startMeters, z.endMeters, Date(), at, z.kmh)
-                if AppSettings.shared.cameraWarnings {
+                if AppSettings.shared.effectiveCameraWarnings {
                     chime()
                     if L10n.isCzech {
                         let distance = CzechNavigation.spokenDistance(z.endMeters - at)

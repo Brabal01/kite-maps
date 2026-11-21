@@ -42,7 +42,7 @@ final class HighwayHeat {
     // The server goes to zoom 14. Up to 13 its tiles follow the roads cleanly (checked in London and
     // Southampton); its few blocky patches are faint, so the "quiet" cut-off in blueLights hides
     // them. Closer in, Kite stretches the zoom 13 tiles.
-    static let minZoom = 5, maxZoom = 13
+    nonisolated static let minZoom = 5, maxZoom = 13
 
     nonisolated static func url(_ t: Tile) -> URL {
         URL(string: "https://tiles.cmbe.cc/heat_map/get/\(t.z)/\(t.x)/\(t.y).webp")!

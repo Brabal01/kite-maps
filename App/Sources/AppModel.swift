@@ -1703,6 +1703,7 @@ final class AppModel: ObservableObject {
         selected = nil
         let n = Navigator(route: route, destination: destination, stops: stops, settings: settings, coverage: previewCoverage)
         n.compassHeading = location.deviceHeading
+        resolveJurisdiction(for: route)
         n.exclusion = exclusion
         nav = n
         defer { refreshActivity() }
@@ -1758,6 +1759,13 @@ final class AppModel: ObservableObject {
         if ProcessInfo.processInfo.environment["KITE_UITEST_REPLAY"] == "1" {
             let factor = Double(ProcessInfo.processInfo.environment["KITE_UITEST_REPLAY_SPEED"] ?? "") ?? 1
             startReplay(.clean, speedFactor: factor)
+        }
+    }
+
+    private func resolveJurisdiction(for route: Route) {
+        guard let origin = route.polyline.first else { return }
+        Task { @MainActor in
+            _ = await JurisdictionService.shared.resolve(origin)
         }
     }
 
