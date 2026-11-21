@@ -61,6 +61,21 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" | tee planning-ui-test.log | tail -n 120
+      - name: v31 roundabout, traffic-light and transit UI regression
+        # Deterministic demo data, so these three screens do not depend on routing
+        # servers or a live timetable.
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project Kite.xcodeproj \
+            -scheme Kite \
+            -configuration Debug \
+            -destination "id=${{ steps.simulator.outputs.udid }}" \
+            -derivedDataPath build \
+            -only-testing:KiteUITests/V31UITests \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" | tee v31-ui-test.log | tail -n 120
       - name: Install and launch repeatedly
         run: |
           set -euo pipefail
@@ -213,6 +228,7 @@ jobs:
           path: |
             simulator-build.log
             planning-ui-test.log
+            v31-ui-test.log
             launch-*.txt
             kite-*.log
             demo-*.txt

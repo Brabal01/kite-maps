@@ -1060,6 +1060,31 @@ enum DemoScript {
             model.nav?.showDemoAlerts()
             return
         }
+        if step == "roundaboutsynthetic" || step == "signalsynthetic" {
+            // No network: a deterministic route and the demo maneuver, for the v31 UI test.
+            let from = LatLng(56.3900, -3.4300), to = LatLng(56.4200, -3.4000)
+            let destination = Place(id: "demo-synthetic", name: "Synthetic destination", location: to, source: "demo")
+            var state = DirectionsState(destination: destination, origin: nil, exclusion: nil, mode: .drive)
+            state.routes[.drive] = UITestSupport.routes(from: from, to: to, mode: .drive)
+            state.selected = 0
+            model.directions = state
+            model.startNavigation()
+            await wait(2)
+            if step == "signalsynthetic" { model.nav?.showDemoSignals() } else { model.nav?.showDemoRoundabout() }
+            return
+        }
+        if step == "transitsynthetic" {
+            // No network: the same deterministic trips the screenshots use.
+            let from = LatLng(38.5449, -121.7405), to = LatLng(38.5843, -121.5006)
+            let destination = Place(id: "demo-sac-synthetic", name: "Sacramento Valley Station", location: to, source: "demo")
+            var state = DirectionsState(destination: destination, origin: nil, exclusion: nil, mode: .transit)
+            state.transit = true
+            state.trips = UITestSupport.demoTransitTrips(from: from, to: to)
+            state.trip = 0
+            model.directions = state
+            model.detent = .full
+            return
+        }
         if ["nextlimit", "flat", "northup", "closer", "wider"].contains(step) {
             // On the A9 in miles: a 30 coming up in a 60, the 2D and north-up views, and the zoom setting.
             model.settings.units = .yards
