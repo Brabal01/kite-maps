@@ -40,8 +40,12 @@ struct RoadControlTimeline: View {
                         }
                         let kind = event.control.kind
                         VStack(spacing: 2) {
-                            Image(systemName: kind.icon).font(.system(size: 19, weight: .semibold))
-                                .frame(width: 29, height: 25)
+                            if kind == .light {
+                                TrafficLightGlyph().frame(width: 20, height: 24)
+                            } else {
+                                Image(systemName: kind.icon).font(.system(size: 19, weight: .semibold))
+                                    .frame(width: 29, height: 25)
+                            }
                             Text(Fmt.distance(event.meters)).lineLimit(1).minimumScaleFactor(0.75)
                         }
                         .frame(minWidth: 44, minHeight: 38)
@@ -77,7 +81,11 @@ struct RoadEventsList: View {
                 ForEach(controls) { event in
                     HStack {
                         let kind = event.control.kind
-                        Image(systemName: kind.icon).frame(width: 28)
+                        if kind == .light {
+                            TrafficLightGlyph().frame(width: 20, height: 24).frame(width: 28)
+                        } else {
+                            Image(systemName: kind.icon).frame(width: 28)
+                        }
                         Text(L10n.text(kind.title))
                         Spacer(minLength: 4)
                         Text(Fmt.distance(event.meters)).monospacedDigit().foregroundStyle(.secondary)
@@ -88,6 +96,21 @@ struct RoadEventsList: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/** A small traffic light: three lenses in a dark housing. SF Symbols has no traffic-light symbol. */
+private struct TrafficLightGlyph: View {
+    var body: some View {
+        VStack(spacing: 2) {
+            Circle().fill(Color(hex: 0xE11D48)).frame(width: 5, height: 5)
+            Circle().fill(Color(hex: 0xF59E0B)).frame(width: 5, height: 5)
+            Circle().fill(Color(hex: 0x16A34A)).frame(width: 5, height: 5)
+        }
+        .padding(3)
+        .background(RoundedRectangle(cornerRadius: 4, style: .continuous).fill(Color(hex: 0x111827)))
+        .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous).strokeBorder(.white.opacity(0.2), lineWidth: 0.5))
+        .accessibilityHidden(true)
     }
 }
 
