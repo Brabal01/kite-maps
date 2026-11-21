@@ -36,6 +36,6 @@ final class V31UITests: XCTestCase {
         let app = launch("transitsynthetic")
         // A stable identifier, not a localized label: the synthetic metro is line A.
         let metro = app.descendants(matching: .any)["transit-line-metro-A"]
-        XCTAssertTrue(metro.waitForExistence(timeout: 60), "the transit card must show the metro line chip")
+        XCTAssertTrue(metro.waitForExistence(timeout: 60), "the transit card must show the metro line chip. Screen:\n\(app.debugDescription)")
     }
 }

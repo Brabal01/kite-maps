@@ -1091,6 +1091,9 @@ enum DemoScript {
             // Present the trip sheet the way a user does, then replace the timetable with
             // the deterministic fixture before any real transit request can land.
             model.openDirections(to: station)
+            // The place sheet can sit over the directions sheet; close it so the
+            // transit card is the surface the UI test and screenshot see.
+            model.selected = nil
             await wait(1)
             model.installDemoTransitTrips()
             model.detent = .full
@@ -1134,6 +1137,7 @@ enum DemoScript {
             model.select(station)
             await wait(2)
             model.openDirections(to: station)
+            model.selected = nil
             model.showTransit()
             if step == "transitcolors" {
                 // Deterministic metro/tram/bus/train colors and modes, not a live timetable.
