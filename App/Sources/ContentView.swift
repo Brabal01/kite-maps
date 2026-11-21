@@ -137,6 +137,11 @@ struct ContentView: View {
             }
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: model.liveCam?.id)
+        .overlay(alignment: .top) {
+            if let name = model.replayName {
+                SimulatedGPSBanner(name: name) { model.stopReplay() }
+            }
+        }
         .alert(item: $model.surveillanceInfo) { camera in
             Alert(title: Text(camera.isALPR ? "Plate reader" : "Surveillance camera"),
                   message: Text(surveillanceDetails(camera)),
@@ -1370,5 +1375,34 @@ struct StatusCards: View {
         .glass(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .padding(.horizontal, 16)
         .accessibilityElement(children: .combine)
+    }
+}
+
+
+/// Shown for as long as a developer GPS replay is the position source, so a simulated drive is never mistaken for a real one.
+struct SimulatedGPSBanner: View {
+    let name: String
+    let stop: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "waveform.path.ecg")
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Simulated GPS").font(.subheadline.weight(.bold))
+                Text(name).font(.caption)
+            }
+            Spacer(minLength: 8)
+            Button(action: stop) {
+                Text("Stop").font(.subheadline.weight(.bold))
+                    .padding(.horizontal, 14).frame(minHeight: 44)
+                    .background(Capsule().fill(Color.white.opacity(0.25)))
+            }
+            .accessibilityIdentifier("replay-stop")
+        }
+        .foregroundColor(.white)
+        .padding(.horizontal, 14).padding(.vertical, 6)
+        .background(Color.orange.ignoresSafeArea(edges: .top))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("simulated-gps-banner")
     }
 }

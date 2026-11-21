@@ -143,6 +143,18 @@ struct DataDiagnosticsView: View {
             } message: {
                 Text("The report will show the shape of your recent movement, without where in the world it was. Anyone who also knows your route could still recognise it.")
             }
+            if model.nav != nil {
+                Section {
+                    if model.isReplaying {
+                        Button("Stop the simulated drive", role: .destructive) { model.stopReplay() }
+                    } else {
+                        Button("Replay this route (clean GPS)") { model.startReplay(.clean) }
+                        Button("Replay with noisy GPS and a tunnel") { model.startReplay(.rough) }
+                    }
+                } header: { Text("Developer: GPS replay") } footer: {
+                    Text("Drives the current route with a simulated GPS. Your real position is ignored meanwhile, nothing is saved, and an orange banner stays on screen until you stop it.")
+                }
+            }
             if let nav = model.nav, !nav.roundaboutDiagnostics.isEmpty {
                 Section("Roundabouts on this route") {
                     ForEach(nav.roundaboutDiagnostics, id: \.self) { line in

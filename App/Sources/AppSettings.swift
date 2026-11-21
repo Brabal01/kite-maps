@@ -195,7 +195,14 @@ final class AppSettings: ObservableObject {
     @Published var parking: Place? { didSet { save(parking, "parking") } }
     /** The first-run choice between Google's data and open data only has been made. */
     /** The trip being driven now (nil when none): offered again if the app closes before it ends. */
-    @Published var trip: SavedTrip? { didSet { if trip == nil { d.removeObject(forKey: "trip") } else { save(trip, "trip") } } }
+    @Published var trip: SavedTrip? {
+        didSet {
+            if trip == nil {
+                d.removeObject(forKey: "trip")
+                AppModel.interruptedJourneys.clear()
+            } else { save(trip, "trip") }
+        }
+    }
     @Published var welcomed: Bool { didSet { d.set(welcomed, forKey: "welcomed") } }
     @Published var defaultMode: TravelMode { didSet { d.set(defaultMode.rawValue, forKey: "defaultMode") } }
     @Published var saved: [Place] { didSet { save(saved, "saved") } }
