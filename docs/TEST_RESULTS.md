@@ -1,5 +1,31 @@
 # Test results
 
+## v32 (branch `iphone-custom-v32-refinement`)
+
+### VelaCore (Linux Swift 6.0.3, local)
+
+* **400 tests, 0 failures, 6 skipped** (`swift test`). The skips are three Darwin-only compression
+  tests and three opt-in live Transitous checks when `KITE_VERIFY_TRANSITOUS` is not set.
+* New deterministic suites: `SavedJourneyTests` (8), `DiagnosticsTests` (5), `EndpointHealthTests` (9),
+  `RouteSectionSchedulerTests` (12), `VoiceLevelTests` (3), `OfflineJourneyTests` (4),
+  `GPSReplayTests` (6), `LaunchHealthTests` (5), `TransitMapFilterTests` (4),
+  `BoardingDetectorTests` (7). All 336 v31 tests still pass.
+* **Live integration** (`KITE_VERIFY_TRANSITOUS=1 swift test --filter TransitousLiveTests`):
+  3 tests passed against api.transitous.org — plan between Prague stops, live metro route map,
+  live departures at a central stop. They fail, rather than skip, when the service is unreachable.
+
+### iOS CI (GitHub Actions, xcode-27)
+
+* At commit `910cacce`: `Build custom iPhone IPA`, `iOS simulator smoke test` and
+  `Transitous live integration` all succeeded. The simulator run includes `PlanningUITests` and
+  `V31UITests`; the IPA workflow builds, ad-hoc signs, packages Full and SideStore from the same
+  commit and verifies their structure and signatures.
+* Later v32 commits (offline journey, replay, transit filters, safe mode, boarding detection) were
+  pushed after that build; the final v32 verification run is the one linked from the PR.
+
+### Not verified here
+
+Physical iPhone, SideStore installation, Live Activity on a locked device, battery drain, map FPS.
 ## v31 navigation, traffic lights and transit (branch `iphone-custom-v31-navigation-transit`)
 
 ### Unit tests (VelaCore, Linux Swift 6.0.3)

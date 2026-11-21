@@ -3,6 +3,21 @@
 This is a living backlog, not a claim that everything below exists. Items already shipped are
 marked **done**; everything else needs code and tests.
 
+## v32 status
+
+- **Done**: SavedJourney reversal fix, extended saved journeys, Mapbox Keychain migration,
+  `DiagnosticsLog`, `EndpointHealth`, `RouteSectionScheduler`, `RouteControlCache`, `VoiceLevel`,
+  live Transitous integration tests, offline journey snapshot, GPS replay engine, transit map
+  filters, stricter boarding detection, safe-mode launch policy.
+- **Done but unverified physically**: Keychain migration on a SideStore install, offline resume
+  after a real restart, replay on a live navigation session.
+- **Partial**: diagnostics still exports relative positions, which can identify a person when a
+  start is known; Overpass `fetch` marks HTTP 200 as success before body validation;
+  progress still advances on a single unconfirmed GPS jump.
+- **Next (v33 P0)**: fix those three, plus Swift 6 warnings and camera jurisdiction.
+- **Next (v33 P1)**: full in-app replay controls, golden navigation fixtures, Route Preview 2.0,
+  settings search, one-coordinator-at-a-time AppModel decomposition, benchmarks.
+
 ## v31 status
 
 - **Done (v31)**: `RoundaboutExitResolver` with evidence ordering, legal-exit

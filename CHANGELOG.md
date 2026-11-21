@@ -3,6 +3,34 @@
 Every version of Kite Maps, newest first. The small number goes up for fixes and polish, and
 the middle number for big milestones.
 
+## v32 refinement (branch `iphone-custom-v32-refinement`)
+
+Built on v31 `00c3065`. App version stays 0.8.0; build numbers continue from v31.
+The full independent audit is in `docs/V32_AUDIT.md`.
+
+- **Fixed SavedJourney reversal:** "My location → Work" no longer becomes a route from Work to Work.
+  Stored journeys gained favourite, rename, duplicate, last-used, import/export and a schema version;
+  v31 JSON still decodes. Reverse opens the opposite direction without mutating the saved copy.
+- **GPS privacy:** exact coordinates and spoken destinations are no longer written to public OS logs.
+  An in-memory, 3-hour diagnostics trail records route-relative technical events; positions are kept
+  only in explicit detailed mode and a shared report contains only offsets from an unknown start.
+- **Public-server politeness:** Overpass calls now share one health circuit (429/503/Retry-After,
+  back-off, half-open probe), road events use a 24 km sliding window with nearest-first requests and
+  one in flight, with bounded retries and a 20-minute cache. Cancelling a route stops its work.
+- **Mapbox token** migrated from UserDefaults to Keychain with lossless fallback.
+- **VoiceLevel:** turns-only and alerts-only are real modes, not two booleans that can disagree.
+- **Offline interruption:** the active route geometry and manoeuvres are saved atomically; when the
+  phone is offline on restart, the saved route can be followed, with no claim of offline rerouting.
+- **GPS replay:** deterministic fixture engine (noise, tunnel, late and poor fixes) and a developer
+  replay in Diagnostics. Replayed positions are isolated from real fixes and saved state, with a
+  persistent "Simulated GPS" banner.
+- **Transit:** map filters for metro/tram/bus/trolleybus/suburban/rail/ferry/other using cached line
+  geometry and official colours; boarding detection now requires waiting at the stop and moving
+  along the ride before it silently replaces the manual button.
+- **Safety:** safe mode needs two unconfirmed launches; a clean background exit clears the counter.
+- **Tests:** VelaCore grew from 336 to 400 tests (6 Darwin/live skips); three real Transitous
+  integration tests run in a separate workflow and fail when the service is down.
+
 ## v31 navigation, traffic lights and transit (iPhone custom, branch `iphone-custom-v31-navigation-transit`)
 
 Built on `804822f` (v29 base with the v30 PR #8 merged). App version stays 0.8.0

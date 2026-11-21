@@ -1,6 +1,25 @@
 # Kite Maps iPhone custom build — development progress
 
-Updated: 2026-11-21
+Updated: 2026-11-21 (v32 added)
+
+## v32 refinement (branch `iphone-custom-v32-refinement`)
+
+Base: v31 `00c3065`. The audit of the v31 code and the exact file-level findings are in
+`docs/V32_AUDIT.md`. Verified locally with Swift 6.0.3 on Linux: 400 tests, 0 failures, 6 skips.
+Three live Transitous integration tests passed against the real API.
+
+* **Done + unit-tested**: SavedJourney reversal and v31 compatibility (8), diagnostics/redaction (5),
+  EndpointHealth (9), RouteSectionScheduler and route-control cache (12), VoiceLevel (3),
+  offline journey (4), GPS replay (6), launch health (5), transit map filters (4),
+  boarding detection (7), live Transitous (3, opt-in).
+* **Done + CI-verified**: Full and SideStore IPAs from one commit, simulator build and smoke,
+  VelaCore tests. Both variants come from the same source and keep iOS 16.2 / `app.vela.ios`.
+* **Done, not physically verified**: offline resume on a real restart, GPS replay in a moving car,
+  Keychain migration on a sideloaded device, Live Activity on a locked screen, battery life.
+* **Known gaps carried to v33**: HTTP 200 with a bad Overpass body still resets health in `fetch`;
+  a single GPS jump can permanently advance the section window; relative diagnostic traces can be
+  re-identified when a start is known; camera jurisdiction uses the device region; large-file
+  decomposition and Swift 6 warnings.
 
 ## v31 navigation, traffic lights and transit (branch `iphone-custom-v31-navigation-transit`)
 
