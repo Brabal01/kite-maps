@@ -56,8 +56,18 @@ public struct Maneuver: Hashable, Sendable {
     public var laneHint: String?
     /** The lanes on the way into this maneuver, left to right, when OpenStreetMap maps them. */
     public var lanes: [Lane] = []
-    /** Which exit to take at a roundabout. */
+    /** Which exit to take at a roundabout: the one authoritative number every view reads. */
     public var exit: Int?
+    /** The number the routing provider gave, kept even when the resolved number differs. */
+    public var routerExit: Int?
+    /** A number a second provider's words gave, used as corroborating evidence only. */
+    public var alternativeExit: Int?
+    /** Where the displayed number came from. */
+    public var exitSource: RoundaboutExitSource?
+    /** 0…1 confidence in the displayed number. */
+    public var exitConfidence: Double?
+    /** True when the sources disagree and the map could not settle it. */
+    public var exitAmbiguous = false
     /** The roundabout's real layout, for drawing it: where every road leaves, and which is yours. */
     public var roundabout: RoundaboutShape?
     /** The point where the route leaves a roundabout (the router's "exit roundabout" step), shown with that roundabout's picture. */

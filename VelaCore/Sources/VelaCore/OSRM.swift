@@ -163,6 +163,7 @@ public enum OSRM {
                     man.exitSign = signs.panel
                     man.lanes = lanes(step)
                     man.exit = confirmedExit(entry: m["exit"] as? Int, leaving: nil)
+                    man.routerExit = man.exit
                     if type == "roundabout" || type == "rotary" {
                         // The lanes for a roundabout are sometimes mapped on the road leading up to it.
                         if man.lanes.isEmpty, si > 0, let last = (steps[si - 1]["intersections"] as? [[String: Any]])?.last {
@@ -180,6 +181,7 @@ public enum OSRM {
                            !maneuvers[index].leavesRoundabout {
                             let entry = maneuvers[index].exit
                             man.exit = Self.confirmedExit(entry: entry, leaving: man.exit)
+                            man.routerExit = man.exit
                             if man.exit != entry {
                                 maneuvers[index].exit = man.exit
                                 maneuvers[index].instruction = instruction(type: "roundabout", modifier: nil,
