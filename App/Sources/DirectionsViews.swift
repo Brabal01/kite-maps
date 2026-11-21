@@ -1085,6 +1085,7 @@ struct LineChip: View {
         .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(fg.opacity(0.18), lineWidth: 0.5))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(L10n.text(identity.mode.label)) \(identity.shortName)")
+        .accessibilityIdentifier("transit-line-\(identity.mode.rawValue)-\(identity.shortName)")
     }
 }
 

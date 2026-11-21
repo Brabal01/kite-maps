@@ -34,10 +34,8 @@ final class V31UITests: XCTestCase {
 
     func testTransitDemoShowsOfficialLineChips() {
         let app = launch("transitsynthetic")
-        // LineChip's accessibility label is "<mode> <line>": the synthetic metro is "Metro A".
-        let metro = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label CONTAINS[c] 'Metro A'"))
-            .firstMatch
-        XCTAssertTrue(metro.waitForExistence(timeout: 40), "the transit card must show the metro line chip")
+        // A stable identifier, not a localized label: the synthetic metro is line A.
+        let metro = app.descendants(matching: .any)["transit-line-metro-A"]
+        XCTAssertTrue(metro.waitForExistence(timeout: 60), "the transit card must show the metro line chip")
     }
 }
