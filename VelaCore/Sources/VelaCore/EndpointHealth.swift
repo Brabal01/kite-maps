@@ -28,6 +28,8 @@ public final class EndpointHealth: @unchecked Sendable {
         case rateLimited(retryAfter: TimeInterval?)
         case serverError
         case timeout
+        /** HTTP 200 whose body did not pass validation (an Overpass error remark, truncated JSON, …). */
+        case invalidResponse
     }
 
     private struct State {
@@ -79,12 +81,25 @@ public final class EndpointHealth: @unchecked Sendable {
         case .rateLimited(let retryAfter):
             let asked = min(policy.maximumRetryAfter, max(0, retryAfter ?? 0))
             state.blockedUntil = now.addingTimeInterval(max(asked, backoff))
-        case .serverError, .timeout:
+        case .serverError, .timeout, .invalidResponse:
             if state.failures >= policy.failuresBeforeBlock {
                 state.blockedUntil = now.addingTimeInterval(backoff)
             }
         }
         states[endpoint] = state
+    }
+
+    public enum Status: Equatable, Sendable {
+        case available(failures: Int)
+        case resting(until: Date, failures: Int)
+    }
+
+    /** Read-only state for diagnostics and debugging. */
+    public func status(of endpoint: String, now: Date = Date()) -> Status {
+        lock.lock(); defer { lock.unlock() }
+        let state = states[endpoint] ?? State()
+        if let until = state.blockedUntil, now < until { return .resting(until: until, failures: state.failures) }
+        return .available(failures: state.failures)
     }
 
     public func reset() {

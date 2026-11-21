@@ -18,6 +18,8 @@ final class RouteEventCoverage {
     var changed: (() -> Void)?
     private var scheduler: RouteSectionScheduler
     private var worker: Task<Void, Never>?
+    /** Sleep of the worker; cancelled when progress opens new work, so no polling delay is added. */
+    private var wakeTask: Task<Void, Never>?
     private let route: Route
     private let line: [LatLng]
     private let cumulative: [Double]
@@ -36,7 +38,11 @@ final class RouteEventCoverage {
                 case .working: continue
                 case .finished: return
                 case .wait(let seconds):
-                    do { try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000)) } catch { return }
+                    let waiter = Task<Void, Never> { try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000)) }
+                    self?.wakeTask = waiter
+                    await waiter.value
+                    self?.wakeTask = nil
+                    if Task.isCancelled { return }
                 }
             }
         }
@@ -44,11 +50,19 @@ final class RouteEventCoverage {
 
     private enum Step { case working, finished, wait(TimeInterval) }
 
-    deinit { worker?.cancel() }
+    deinit { worker?.cancel(); wakeTask?.cancel() }
 
     /// The vehicle moved: sections it has passed are dropped from the plan and the window slides ahead.
-    func updateProgress(_ alongMeters: Double) {
-        scheduler.updateProgress(alongMeters)
+    func updateProgress(_ alongMeters: Double, confidence: Double = 1) {
+        let before = scheduler.window
+        scheduler.updateProgress(alongMeters, confidence: confidence)
+        if scheduler.window != before { wakeTask?.cancel() }
+        // Sections well behind the vehicle are of no use: keep the event list bounded on long drives.
+        let cutoff = scheduler.progressMeters - 5_000
+        if cutoff > 0, events.contains(where: { $0.meters < cutoff }) {
+            events.removeAll { $0.meters < cutoff }
+            changed?()
+        }
         publishStatus(force: false)
     }
 
@@ -74,9 +88,12 @@ final class RouteEventCoverage {
         let key = RouteControlCache.key(for: section, walking: walking)
         var answer = RouteControlCache.shared.controls(for: key)
         if answer == nil {
-            answer = await RouteControls.lookup(on: section, walking: walking)
-            // An answer obtained while a mirror was resting may be partial; never keep it for later.
-            if let answer, EndpointHealth.shared.available(Overpass.endpoints).count == Overpass.endpoints.count {
+            let lookup = await RouteControls.lookupDetailed(on: section, walking: walking)
+            answer = lookup.controls
+            // Only a complete answer, from healthy providers, may be reused. A partial one would hide
+            // a light for the rest of the drive (and with the wrong route-relative distance elsewhere).
+            if let answer, lookup.complete,
+               EndpointHealth.shared.available(Overpass.endpoints).count == Overpass.endpoints.count {
                 RouteControlCache.shared.store(answer, for: key)
             }
         }

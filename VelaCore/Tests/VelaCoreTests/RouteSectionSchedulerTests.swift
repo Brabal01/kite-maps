@@ -134,3 +134,57 @@ final class RouteSectionSchedulerTests: XCTestCase {
         XCTAssertNotNil(cache.controls(for: "c", now: t0))
     }
 }
+
+final class RouteSectionProgressTests: XCTestCase {
+    private let t0 = Date(timeIntervalSince1970: 30_000)
+
+    func testOneWildLowConfidenceFixDoesNotSkipTheWindow() {
+        var s = RouteSectionScheduler(totalMeters: 100_000)
+        s.updateProgress(2_000, confidence: 0.9)
+        s.updateProgress(90_000, confidence: 0.2)
+        XCTAssertEqual(s.progressMeters, 2_000)
+        XCTAssertEqual(s.rejectedJumps, 1)
+        XCTAssertEqual(s.window.lowerBound, 0)
+    }
+
+    func testAConfirmedJumpIsAllowed() {
+        var s = RouteSectionScheduler(totalMeters: 100_000)
+        s.updateProgress(2_000)
+        s.updateProgress(90_000, confidence: 0.95)
+        XCTAssertEqual(s.progressMeters, 90_000)
+        XCTAssertEqual(s.rejectedJumps, 0)
+        XCTAssertTrue(s.window.contains(22))
+    }
+
+    func testShortJumpsAreAlwaysAllowedEvenWithPoorConfidence() {
+        var s = RouteSectionScheduler(totalMeters: 20_000)
+        s.updateProgress(2_000, confidence: 0.1)
+        s.updateProgress(2_200, confidence: 0.1)
+        XCTAssertEqual(s.progressMeters, 2_200)
+    }
+
+    func testCorrectionBackwardsNeverMovesProgressBack() {
+        var s = RouteSectionScheduler(totalMeters: 20_000)
+        s.updateProgress(10_000, confidence: 0.9)
+        s.updateProgress(200, confidence: 1)
+        XCTAssertEqual(s.progressMeters, 10_000)
+        XCTAssertEqual(s.window.lowerBound, 2)
+    }
+
+    func testNonFiniteProgressIsIgnored() {
+        var s = RouteSectionScheduler(totalMeters: 20_000)
+        s.updateProgress(.nan, confidence: 1)
+        s.updateProgress(.infinity, confidence: 1)
+        XCTAssertEqual(s.progressMeters, 0)
+        XCTAssertEqual(s.rejectedJumps, 0)
+    }
+
+    func testRepeatedBadFixesAreCountedButNeverAdvanceTheWindow() {
+        var s = RouteSectionScheduler(totalMeters: 100_000)
+        s.updateProgress(1_000, confidence: 0.9)
+        for i in 0..<50 { s.updateProgress(Double(i * 5_000 + 60_000), confidence: 0.1) }
+        XCTAssertEqual(s.progressMeters, 1_000)
+        XCTAssertEqual(s.rejectedJumps, 50)
+        XCTAssertEqual(s.next(now: t0), 0)
+    }
+}

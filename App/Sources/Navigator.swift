@@ -539,7 +539,7 @@ final class Navigator: ObservableObject {
                 } else { speak("Speed limit \(SpeedLimitSign.number(drop.kmh)) in \(Fmt.spokenDistance(drop.meters)).") }
             }
         }
-        coverage?.updateProgress(p.alongMeters)
+        coverage?.updateProgress(p.alongMeters, confidence: p.confidence)
         refreshUpcomingControls(p.alongMeters)
         checkTraffic(p, loc)
         checkCameras(p)

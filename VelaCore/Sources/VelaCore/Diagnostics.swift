@@ -78,11 +78,34 @@ public final class DiagnosticsLog: @unchecked Sendable {
         if events.count > capacity { events.removeFirst(events.count - capacity) }
     }
 
+    /** Three distinct exports, so a user never shares more than they understood. */
+    public enum ReportLevel: String, CaseIterable, Sendable {
+        case technical
+        case pseudonymized
+        case replay
+
+        public var title: String {
+            switch self {
+            case .technical: return "Technical only"
+            case .pseudonymized: return "Coarse movement shape"
+            case .replay: return "Detailed GPS replay"
+            }
+        }
+
+        public var explanation: String {
+            switch self {
+            case .technical: return "Distances, GPS accuracy, speed and navigation states. No movement at all."
+            case .pseudonymized: return "Movement snapped to a 500 m grid and times rounded to 15 s. Still potentially identifying if someone knows where you started."
+            case .replay: return "Full relative movement, enough to replay a roundabout or GPS fault. Potentially identifying: only share after explicit consent."
+            }
+        }
+    }
+
     /**
-     A shareable report. [includeTrack] is the explicit consent to share the movement trace; even then
-     it holds only offsets in metres from the first point, never coordinates.
+     * A shareable report. No level ever contains coordinates, addresses or place names; only the
+     * replay level contains a full relative trace, and it must be chosen explicitly in the UI.
      */
-    public func report(appVersion: String, includeTrack: Bool, now: Date = Date()) -> Data {
+    public func report(appVersion: String, level: ReportLevel, now: Date = Date()) -> Data {
         let events = snapshot(now: now)
         let start = events.first?.time ?? now
         let anchor = events.compactMap(\.position).first
@@ -94,10 +117,12 @@ public final class DiagnosticsLog: @unchecked Sendable {
             if !event.fields.isEmpty {
                 row["fields"] = event.fields.mapValues { DiagnosticRedactor.sanitize($0) }
             }
-            if includeTrack, let at = event.position, let anchor {
+            if level != .technical, let at = event.position, let anchor {
                 let local = DiagnosticRedactor.offset(of: at, from: anchor)
-                row["east"] = (local.east * 10).rounded() / 10
-                row["north"] = (local.north * 10).rounded() / 10
+                let grid = level == .pseudonymized ? 500.0 : 1.0
+                row["east"] = DiagnosticRedactor.snap(local.east, to: grid)
+                row["north"] = DiagnosticRedactor.snap(local.north, to: grid)
+                if level == .pseudonymized { row["t"] = DiagnosticRedactor.snap(event.time.timeIntervalSince(start), to: 15) }
             }
             return row
         }
@@ -105,8 +130,11 @@ public final class DiagnosticsLog: @unchecked Sendable {
             "schema": "kite-diagnostics-v1",
             "app": DiagnosticRedactor.sanitize(appVersion),
             "durationSeconds": Int(events.last.map { $0.time.timeIntervalSince(start) } ?? 0),
-            "containsTrack": includeTrack && anchor != nil,
-            "note": "No coordinates, addresses or place names. Positions, if any, are metres relative to an unknown start.",
+            "level": level.rawValue,
+            "containsTrack": level != .technical && anchor != nil,
+            "note": level == .technical
+                ? "No coordinates, movement, addresses or place names."
+                : "No absolute coordinates. Movement is relative to an unknown start and may still identify you when a starting point is known.",
             "events": rows,
         ]
         return (try? JSONSerialization.data(withJSONObject: document, options: [.prettyPrinted, .sortedKeys])) ?? Data()
@@ -133,6 +161,11 @@ public enum DiagnosticRedactor {
         let north = (point.lat - origin.lat) * 110_540
         let east = (point.lng - origin.lng) * 111_320 * cos(origin.lat * .pi / 180)
         return (east, north)
+    }
+
+    public static func snap(_ value: Double, to grid: Double) -> Double {
+        guard grid > 0, value.isFinite else { return value }
+        return (value / grid).rounded() * grid
     }
 
     /** A position rounded to about 1 km, for UI that wants "roughly where" without a precise location. */

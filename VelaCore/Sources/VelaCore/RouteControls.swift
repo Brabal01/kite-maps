@@ -225,7 +225,16 @@ public enum RouteControls {
     }
 
     public static func lookup(on line: [LatLng], walking: Bool = false) async -> [RouteControl]? {
-        guard line.count >= 2 else { return [] }
+        let result = await lookupDetailed(on: line, walking: walking)
+        return result.controls
+    }
+
+    /**
+     * [complete] is false when one of the two providers did not answer. Such an answer is useful now
+     * (a partial list beats none) but must not be cached as if it were the whole truth.
+     */
+    public static func lookupDetailed(on line: [LatLng], walking: Bool = false) async -> (controls: [RouteControl]?, complete: Bool) {
+        guard line.count >= 2 else { return ([], true) }
         let cumulative = Geo.cumulative(line)
         let length = cumulative.last ?? 0
         let count = max(2, min(150, Int(length / 35) + 1))
@@ -236,8 +245,9 @@ public enum RouteControls {
         }.joined(separator: ",")
         async let overpass = fetchControls(around: "37,\(points)", walking: walking)
         async let postpass = fetchPostpass(covering: line, padding: 45)
-        guard let items = await combined(overpass, postpass) else { return nil }
-        return mapped(items, on: line, cumulative: cumulative, walking: walking)
+        let (o, p) = await (overpass, postpass)
+        guard let items = combined(o, p) else { return (nil, false) }
+        return (mapped(items, on: line, cumulative: cumulative, walking: walking), o != nil && p != nil)
     }
 
     /**
