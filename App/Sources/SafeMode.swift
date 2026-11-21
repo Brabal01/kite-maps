@@ -1,4 +1,5 @@
 import SwiftUI
+import VelaCore
 
 /**
  * A diagnostic launch path that avoids MapLibre/MapKit, AppModel, location updates, network calls,
@@ -14,21 +15,39 @@ enum SafeMode {
         // screens, even when an earlier debug launch left the switch on.
         if ProcessInfo.processInfo.arguments.contains("-demo") { return false }
         if defaults.bool(forKey: "safeMode") { return true }
-        if let marker = defaults.object(forKey: "launchMarker") as? Date,
-           Date().timeIntervalSince(marker) < 120 {
+        // Two launches in a row that neither became healthy nor went to the background cleanly.
+        // One crash is not a loop, and a user who opens and swipes away the app is not a crash.
+        var health = defaults.data(forKey: LaunchHealthStore.key).flatMap { try? JSONDecoder().decode(LaunchHealth.self, from: $0) }
+            ?? LaunchHealth()
+        let enter = health.launch()
+        LaunchHealthStore.save(health)
+        if enter {
             defaults.set(true, forKey: "safeMode")
-            defaults.removeObject(forKey: "launchMarker")
-            LaunchTrace.mark("previous launch did not reach ready; safe mode enabled")
+            LaunchTrace.mark("two launches in a row did not reach ready; safe mode enabled")
             return true
         }
-        defaults.set(Date(), forKey: "launchMarker")
         return false
     }()
 
     static func leave() {
         let defaults = UserDefaults.standard
         defaults.set(false, forKey: "safeMode")
-        defaults.removeObject(forKey: "launchMarker")
+        LaunchHealthStore.markHealthy()
+    }
+}
+
+enum LaunchHealthStore {
+    static let key = "launchHealth"
+
+    static func save(_ health: LaunchHealth) {
+        if let data = try? JSONEncoder().encode(health) { UserDefaults.standard.set(data, forKey: key) }
+    }
+
+    static func markHealthy() {
+        var health = UserDefaults.standard.data(forKey: key).flatMap { try? JSONDecoder().decode(LaunchHealth.self, from: $0) }
+            ?? LaunchHealth()
+        health.markHealthy()
+        save(health)
     }
 }
 
@@ -54,7 +73,7 @@ enum LaunchTrace {
 
     /** Called after the first screen has stayed up long enough to count as a healthy launch. */
     static func markReady() {
-        UserDefaults.standard.removeObject(forKey: "launchMarker")
+        LaunchHealthStore.markHealthy()
     }
 }
 
