@@ -3,6 +3,13 @@
 This is a living backlog, not a claim that everything below exists. Items already shipped are
 marked **done**; everything else needs code and tests.
 
+## v33 status
+
+- **Done**: Overpass response validation and central status classification, GPS jump guard and event-driven worker wake, complete-answer-only cache, three-level diagnostics with preview, camera jurisdiction from geocoding, Swift 6/deprecation warnings, replay controls, golden navigation fixtures, route preview, settings search, quick-action reorder, benchmark executable.
+- **Done but needs a device**: replay during a real drive, SideStore install, offline resume after a real restart, Live Activity on a locked screen, battery and FPS.
+- **Still open (P2/P3)**: wholesale AppModel/MapView decomposition, offline map areas and routing, EV routing, CarPlay, advanced regional traffic, AR walking guidance. None of these are claimed in v33.
+- **Known limitation**: camera-jurisdiction codes are the app's conservative list, not legal advice; unknown locations suppress warnings.
+
 ## v32 status
 
 - **Done**: SavedJourney reversal fix, extended saved journeys, Mapbox Keychain migration,
