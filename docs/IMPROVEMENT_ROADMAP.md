@@ -13,7 +13,7 @@ marked **done**; everything else needs code and tests.
 - **Done (v31)**: `TransitLineIdentity`, mode classification, official colours,
   contrast-safe text, LineChip 3.0, TripRow 3.0, journey timeline, shared-track
   map offsets, mode-specific vehicle icons.
-- **Done (v31)**: 45 new VelaCore tests (333 total on Linux, 3 Darwin-only skips)
+- **Done (v31)**: 48 new VelaCore tests (336 total on Linux, 3 Darwin-only skips)
   and v31 screenshot steps.
 - **Partial (v31)**: roundabout diagnostics are in Settings → Diagnostics and
   the shared ZIP; there is no standalone roundabout debug map overlay.

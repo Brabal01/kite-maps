@@ -4,12 +4,12 @@
 
 ### Unit tests (VelaCore, Linux Swift 6.0.3)
 
-- **333 tests, 0 failures, 3 skipped** on the local Linux harness.
+- **336 tests, 0 failures, 3 skipped** on the local Linux harness.
   - The 3 skips are Darwin-only: the Waze zlib fixture (Compression is not in
     Linux Foundation) and two tests that call the compression helper. They run
     on macOS CI.
 - New deterministic suites:
-  - `RoundaboutExitResolverTests` (13) — topology correction, corroboration,
+  - `RoundaboutExitResolverTests` (16) — topology correction, corroboration,
     entrance-only arms, dual carriageway, reverse traversal, left-hand traffic,
     provider conflict, router-only, no evidence, missing branch, close exits,
     route integration, diagnostics.
@@ -38,14 +38,14 @@
   - a transit card at accessibility-extra-large Dynamic Type.
 - The workflow still runs `PlanningUITests` and the launch/safe-mode checks.
 - Results of the v31 CI run are recorded on the run page; the local Linux run
-  above is the source of the 333-test number.
+  above is the source of the 336-test number.
 
 ### v30 reference
 
 The last verified v30 build is
 [run 44886980456](https://github.com/Brabal01/kite-maps/actions/runs/44886980456)
 on `iphone-custom-v30-advanced-navigation`. v30 documented 288 VelaCore tests;
-v31 adds 45 and keeps the same 3 Darwin-only skips on Linux.
+v31 adds 48 and keeps the same 3 Darwin-only skips on Linux.
 
 ### Not verified here
 

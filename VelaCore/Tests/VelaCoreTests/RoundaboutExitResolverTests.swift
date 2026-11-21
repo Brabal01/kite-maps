@@ -143,6 +143,43 @@ final class RoundaboutExitResolverTests: XCTestCase {
         XCTAssertFalse(r.isCertain)
     }
 
+
+    func testFiveArmRoundaboutCountsEveryLegalExit() {
+        var ways = fourArm()
+        // A fifth road to the north-east, between north and east.
+        ways.append(Roundabouts.Way(id: 310, nodes: [2, 91], points: [at(45, 30), at(45, 120)],
+                                    tags: ["highway": "primary", "name": "North East Road"]))
+        let r = resolve(ways: ways, exitDeg: 90, router: 3)
+        // West, north, north-east, east: the route takes the 4th.
+        XCTAssertEqual(r.exit, 4)
+        XCTAssertEqual(r.eligibleExits, 4)
+        XCTAssertEqual(r.source, .osmTopology)
+    }
+
+    func testPrivateArmIsRejectedAndNotCounted() {
+        var ways = fourArm()
+        ways.append(Roundabouts.Way(id: 320, nodes: [2, 92], points: [at(45, 30), at(45, 120)],
+                                    tags: ["highway": "service", "access": "private", "name": "Private drive"]))
+        let r = resolve(ways: ways, exitDeg: 90, router: 3)
+        XCTAssertEqual(r.exit, 3, "the private drive is not a usable exit")
+        XCTAssertEqual(r.eligibleExits, 3)
+        XCTAssertTrue(r.rejected.contains { $0.contains("way 320") && $0.contains("access=private") })
+    }
+
+    func testFiveExitsOnTheCircleKeepTheirOrder() {
+        var ways = fourArm()
+        for (i, deg) in [45.0, 135.0].enumerated() {
+            ways.append(Roundabouts.Way(id: Int64(330 + i), nodes: [Int64([2, 5][i]), Int64(93 + i)],
+                                        points: [at(deg, 30), at(deg, 120)],
+                                        tags: ["highway": "primary", "name": "Extra \(i)"]))
+        }
+        let r = resolve(ways: ways, exitDeg: 90, router: 3)
+        // West, north, north-east, east, south-east: east is still the 4th ahead.
+        XCTAssertEqual(r.exit, 4)
+        XCTAssertEqual(r.eligibleExits, 5)
+        XCTAssertEqual(r.shape?.exits.count, 5)
+    }
+
     func testResolvedRouteKeepsNumberWordsAndPictureTogether() throws {
         let ways = fourArm()
         let r = route(exitDeg: 90)

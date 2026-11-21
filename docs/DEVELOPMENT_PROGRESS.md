@@ -27,7 +27,7 @@ PR #8. The v30 planning, navigation, lane, alert, map and HUD work is preserved.
 - Mini-roundabouts keep their own count; the ring query no longer erases it.
 - Diagnostics: per-roundabout source/confidence/eligible/rejected lines are
   available in Settings → Diagnostics and in the explicitly shared ZIP.
-- 13 new resolver tests plus the existing `RoundaboutTests`.
+- 16 new resolver tests plus the existing `RoundaboutTests`.
 
 ### P0 — Directional traffic lights
 
@@ -78,7 +78,7 @@ PR #8. The v30 planning, navigation, lane, alert, map and HUD work is preserved.
   and `transitcolors` in light mode, dark mode and large Dynamic Type, and
   uploads `Kite-v31-Simulator-Screenshots`.
 - Linux test portability: `WazeCameras`, the `vela-probe` HTTP imports and the
-  zlib fixture are guarded, so the same 333-test suite runs on Linux and macOS.
+  zlib fixture are guarded, so the same 336-test suite runs on Linux and macOS.
 
 ### Not shipped in v31
 

@@ -28,7 +28,7 @@ until the v31 release number is chosen.
 - **CI:** v31 Full and SideStore IPAs from the same commit, v31 test results,
   and v31 simulator screenshots including dark mode and large Dynamic Type.
 - **Linux test portability:** guarded the Darwin-only compression paths so the
-  full VelaCore suite runs on Linux (333 tests, 3 Darwin-only skips).
+  full VelaCore suite runs on Linux (336 tests, 3 Darwin-only skips).
 
 ## v30 advanced navigation (iPhone custom, branch `iphone-custom-v30-advanced-navigation`)
 
