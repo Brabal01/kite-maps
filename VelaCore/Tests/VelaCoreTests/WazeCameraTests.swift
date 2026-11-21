@@ -13,6 +13,14 @@ final class WazeCameraTests: XCTestCase {
         return out
     }
 
+    private var compressionAvailable: Bool {
+        #if canImport(Compression)
+        return true
+        #else
+        return false
+        #endif
+    }
+
     private func u32(_ v: Int) -> [UInt8] { [UInt8(v & 0xFF), UInt8((v >> 8) & 0xFF), UInt8((v >> 16) & 0xFF), UInt8((v >> 24) & 0xFF)] }
 
     /** A piece of Waze's map as its server sends it, holding [cameras] as table 25. */
@@ -31,16 +39,22 @@ final class WazeCameraTests: XCTestCase {
             ends += u32(body.count)
         }
         let plain = u32(tables.count) + u32(bits) + ends + body
+        #if canImport(Compression)
         let deflated = [UInt8](try! (Data(plain) as NSData).compressed(using: .zlib) as Data)
         let packed: [UInt8] = [0x78, 0x9C] + deflated + [0, 0, 0, 0]
         let lead: [UInt8] = bytes("2e2e2e2e000000011329e29e00000000000010b2")
         return Data(lead + Array("WZDF".utf8) + bytes("0100000000000300") + u32(packed.count) + u32(plain.count) + packed)
+        #else
+        // Linux's Foundation cannot zlib-pack; this fixture test only runs on Apple platforms.
+        return Data()
+        #endif
     }
 
     /** The M27 at junction 5 as Waze sent it on 2026-11-15: a camera each way, both 112 km/h (70 mph). */
     private let j5 = "2ef0eaff5d6d090346000270629e00007ff0eaffa36c0903fa00027099190000"
 
-    func testTheSpeedCamerasInAPieceOfWazesMap() {
+    func testTheSpeedCamerasInAPieceOfWazesMap() throws {
+        try XCTSkipUnless(compressionAvailable, "Compression is unavailable on this platform")
         // After the two real ones: a red light camera (kind 3), and a speed camera placed far outside the piece.
         let extra = "30f0eaff606d0903000003000100000000000000000000004600027002000000"
         let cams = WazeCameras.parse(piece(tile: 321512094, cameras: bytes(j5 + extra)))
@@ -57,7 +71,8 @@ final class WazeCameraTests: XCTestCase {
         XCTAssertNil(cams?[0].directions)
     }
 
-    func testAPieceWithoutCamerasAndSomethingThatIsntAPiece() {
+    func testAPieceWithoutCamerasAndSomethingThatIsntAPiece() throws {
+        try XCTSkipUnless(compressionAvailable, "Compression is unavailable on this platform")
         XCTAssertEqual(WazeCameras.parse(piece(tile: 321512093, cameras: []))?.count, 0)
         XCTAssertNil(WazeCameras.parse(Data("<html>busy</html>".utf8)))
         XCTAssertNil(WazeCameras.parse(Data()))
