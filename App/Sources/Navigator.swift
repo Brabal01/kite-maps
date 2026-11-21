@@ -516,7 +516,15 @@ final class Navigator: ObservableObject {
         }
         if Date().timeIntervalSince(tracedAt) >= 3 {
             tracedAt = Date()
-            Self.trace.info("at \(String(format: "%.5f,%.5f", loc.coordinate.latitude, loc.coordinate.longitude), privacy: .public) along \(Int(p.alongMeters)) off \(Int(p.offsetMeters)) next \(p.nextIndex ?? -1) in \(Int(p.distanceToNext)) offRoute \(p.offRoute) evidence \(String(format: "%.2f", p.departureEvidence)) confidence \(String(format: "%.2f", p.confidence)) speed \(Int(self.speedMps))")
+            // Route-relative values only: the OS log is readable by anyone who collects a sysdiagnose.
+            Self.trace.info("along \(Int(p.alongMeters)) off \(Int(p.offsetMeters)) next \(p.nextIndex ?? -1) in \(Int(p.distanceToNext)) offRoute \(p.offRoute) evidence \(String(format: "%.2f", p.departureEvidence), privacy: .public) confidence \(String(format: "%.2f", p.confidence), privacy: .public) speed \(Int(self.speedMps))")
+            DiagnosticsLog.shared.record("fix", [
+                "along": String(Int(p.alongMeters)), "off": String(Int(p.offsetMeters)),
+                "next": String(p.nextIndex ?? -1), "toNext": String(Int(p.distanceToNext)),
+                "offRoute": String(p.offRoute), "acc": String(Int(loc.horizontalAccuracy)),
+                "speed": String(Int(self.speedMps)),
+                "evidence": String(format: "%.1f", p.departureEvidence)
+            ], position: LatLng(loc.coordinate.latitude, loc.coordinate.longitude))
         }
         loadLaneApproach()
         announce(p)
@@ -529,6 +537,7 @@ final class Navigator: ObservableObject {
                 } else { speak("Speed limit \(SpeedLimitSign.number(drop.kmh)) in \(Fmt.spokenDistance(drop.meters)).") }
             }
         }
+        coverage?.updateProgress(p.alongMeters)
         refreshUpcomingControls(p.alongMeters)
         checkTraffic(p, loc)
         checkCameras(p)
@@ -1339,7 +1348,10 @@ final class Navigator: ObservableObject {
     }
 
     private func reroute(from loc: CLLocation, quiet: Bool = false, adding: Place? = nil) {
-        Self.trace.info("reroute from \(String(format: "%.5f,%.5f", loc.coordinate.latitude, loc.coordinate.longitude), privacy: .public) heading \(self.heading(loc).map { Int($0) } ?? -1)")
+        Self.trace.info("reroute heading \(self.heading(loc).map { Int($0) } ?? -1)")
+        DiagnosticsLog.shared.record("reroute", ["heading": String(self.heading(loc).map { Int($0) } ?? -1),
+                                                 "acc": String(Int(loc.horizontalAccuracy))],
+                                     position: LatLng(loc.coordinate.latitude, loc.coordinate.longitude))
         rerouting = true
         syncNavigationState()
         lastReroute = Date()
@@ -1407,7 +1419,9 @@ final class Navigator: ObservableObject {
                 ? (e.time, max(0, p.alongMeters - e.along), Geo.slice(route.polyline, from: p.alongMeters, to: e.end), Date(), e.kmh) : nil
         }
         let firstSteps = fresh.maneuvers.prefix(4).map { "\(Int($0.alongMeters)) m \($0.instruction)" }.joined(separator: " | ")
-        Self.trace.info("new route \(Int(fresh.distanceMeters)) m, starts \(String(format: "%.5f,%.5f", fresh.polyline.first?.lat ?? 0, fresh.polyline.first?.lng ?? 0), privacy: .public): \(firstSteps, privacy: .public)")
+        Self.trace.info("new route \(Int(fresh.distanceMeters)) m: \(firstSteps, privacy: .private)")
+        DiagnosticsLog.shared.record("newRoute", ["meters": String(Int(fresh.distanceMeters)),
+                                                  "steps": String(fresh.maneuvers.count)])
         laneFetch?.cancel()
         startedApproaches = []
         markedApproaches = [:]
@@ -1473,7 +1487,7 @@ final class Navigator: ObservableObject {
         let czech = localized || translation != text
         let said = czech ? translation : SpokenText.forVoice(translation)
         // What was said, for checking a drive afterwards (Console, or `log stream` on a simulator).
-        Self.log.info("say: \(said, privacy: .public)")
+        Self.log.info("say: \(said, privacy: .private)")
         // Test drives on a Mac (launched with -KiteSilent): logged, never played out loud.
         if Self.silent { return }
         if AppSettings.shared.haptics, !UIAccessibility.isReduceMotionEnabled {

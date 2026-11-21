@@ -15,7 +15,7 @@ final class DataDiagnostics: ObservableObject {
     @Published var status = "Ready"
     @Published var report: URL?
 
-    func run(model: AppModel, includeMap: Bool) {
+    func run(model: AppModel, includeMap: Bool, includeTrack: Bool = false) {
         guard !running else { return }
         running = true; report = nil; status = "Testing…"
         let mapImage: Data? = {
@@ -42,11 +42,19 @@ final class DataDiagnostics: ObservableObject {
                 "Navigating: \(model.nav != nil)",
                 "Roundabout resolutions: \(model.nav?.roundaboutDiagnostics.count ?? 0)",
                 "Map picture included: \(mapImage != nil) (it can show where you are).",
+                "Navigation trace included: \(includeTrack) (only as metres relative to an unknown start, never coordinates).",
                 "No GPS position, searches, saved places or accounts are in this file.",
                 "",
                 "Service tests (fixed box in central London):",
             ]
             if let mapImage { entries.append(.init(name: "map.png", data: mapImage)) }
+            // Technical events from the last few hours (distance along the route, accuracy, speed). The
+            // trace is added only when the user chose it for this report.
+            let version = "\(info?["CFBundleShortVersionString"] as? String ?? "?") (\(info?["CFBundleVersion"] as? String ?? "?"))"
+            if DiagnosticsLog.shared.count > 0 {
+                entries.append(.init(name: "navigation-events.json",
+                                     data: DiagnosticsLog.shared.report(appVersion: version, includeTrack: includeTrack)))
+            }
             if let nav = model.nav, !nav.roundaboutDiagnostics.isEmpty {
                 lines.append("")
                 lines.append("Roundabout resolutions (route distances only, no coordinates):")
@@ -92,13 +100,16 @@ struct DataDiagnosticsView: View {
     @ObservedObject var model: AppModel
     @StateObject private var diagnostics = DataDiagnostics()
     @State private var includeMap = false
+    @State private var includeTrack = false
+    @State private var detailed = DiagnosticsLog.shared.isDetailed
+    @State private var confirmTrack = false
 
     var body: some View {
         Form {
             Section {
                 Toggle("Include a picture of the map", isOn: $includeMap)
                 Button(L10n.text(diagnostics.running ? "Testing…" : "Run tests")) {
-                    diagnostics.run(model: model, includeMap: includeMap)
+                    diagnostics.run(model: model, includeMap: includeMap, includeTrack: includeTrack)
                 }
                 .disabled(diagnostics.running)
                 Text(L10n.text(diagnostics.status)).font(.footnote).foregroundColor(.secondary)
@@ -107,6 +118,30 @@ struct DataDiagnosticsView: View {
                 }
             } footer: {
                 Text("Checks that Waze and OpenStreetMap answer, and puts that with your Kite version, iPhone model and settings into a small file to send with a bug report. Nothing is sent until you share it. The map picture can show where you are, so leave it off unless it helps.")
+            }
+            Section {
+                Toggle("Detailed diagnostics", isOn: $detailed)
+                    .onChange(of: detailed) { on in
+                        DiagnosticsLog.shared.setDetailed(on)
+                        if !on { includeTrack = false }
+                    }
+                if detailed {
+                    Toggle("Include my movement trace in the report", isOn: Binding(
+                        get: { includeTrack },
+                        set: { on in if on { confirmTrack = true } else { includeTrack = false } }))
+                }
+                Button("Delete recorded diagnostics", role: .destructive) {
+                    DiagnosticsLog.shared.clear()
+                    includeTrack = false
+                }
+            } header: { Text("Privacy") } footer: {
+                Text("Kite keeps a short list of technical events (distance along the route, GPS accuracy, speed) in memory for up to 3 hours. It is never written to disk and ends when you close Kite. Detailed diagnostics also remembers where those events happened, so a roundabout or GPS fault can be replayed. A report then holds only metres relative to an unknown start, never coordinates, and only if you switch the trace on for it.")
+            }
+            .confirmationDialog("Share your movement trace?", isPresented: $confirmTrack, titleVisibility: .visible) {
+                Button("Include trace in this report") { includeTrack = true }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("The report will show the shape of your recent movement, without where in the world it was. Anyone who also knows your route could still recognise it.")
             }
             if let nav = model.nav, !nav.roundaboutDiagnostics.isEmpty {
                 Section("Roundabouts on this route") {
