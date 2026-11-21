@@ -48,6 +48,7 @@ final class V33UITests: XCTestCase {
             "KITE_UITEST_LOCATION": "38.5449,-121.7405",
             "KITE_UITEST_LOCATION_DELAY": "1",
             "KITE_UITEST_ROUTES": "1",
+            "KITE_UITEST_REPLAY": "1",
             "KITE_UITEST_REPLAY_SPEED": "1"
         ]
         app.launch()
