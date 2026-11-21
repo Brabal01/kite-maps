@@ -227,8 +227,10 @@ enum DirectionsParser {
             m.type = .rampLeft
             m.sideUnknown = true
         }
-        // Text ordinals do not establish which branches count on the selected route.
+        // Text ordinals do not establish which branches count on the selected route. Keep Google's
+        // number as corroborating evidence for the resolver, never as the displayed count.
         if m.type == .roundabout {
+            m.alternativeExit = exitNumber(in: text)
             m.instruction = OSRM.instruction(type: "roundabout", modifier: nil, road: m.road, exit: nil, mode: .drive)
         }
         if m.type == .rampLeft || m.type == .rampRight,

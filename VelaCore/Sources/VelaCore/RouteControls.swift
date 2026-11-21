@@ -4,6 +4,11 @@ import FoundationNetworking
 #endif
 
 public struct RouteControl: Hashable, Sendable {
+    /// Whether the control is known to face the direction the driver travels.
+    public enum Relevance: String, Hashable, Sendable {
+        case relevant, ambiguous, irrelevant
+    }
+
     public enum Kind: String, Hashable, Sendable {
         case light = "traffic-light", stop = "route-stop", railway = "route-crossing", tram = "tram-crossing", crossing = "pedestrian-crossing", yield = "give-way", oneWay = "one-way"
 
@@ -16,21 +21,66 @@ public struct RouteControl: Hashable, Sendable {
     }
 
     public let kind: Kind
+    /// The mapped position. Kept, so a signal is never silently moved to the middle of a junction.
     public let location: LatLng
+    /// The original OSM node id, for diagnostics and de-duplication.
+    public var osmID: Int64?
+    /// The OSM way whose approach this control governs, when known.
+    public var wayID: Int64?
+    /// `traffic_signals:direction` / `direction` as tagged.
+    public var directionTag: String?
+    /// Distance from the start of the route, when it was matched to a route.
+    public var alongMeters: Double?
+    /// How far the mapped point sits from the route line.
+    public var offsetMeters: Double?
+    /// 0…1 confidence that this control belongs to our approach.
+    public var confidence: Double
+    public var source: String
+    /// True only when the way topology and direction say this is our approach.
+    public var directionCertain: Bool
+    public var relevance: Relevance
+    /// The identity of one physical stop line, for de-duplication.
+    public var stopLineKey: String?
 
-    public init(kind: Kind, location: LatLng) {
+    public init(kind: Kind, location: LatLng, osmID: Int64? = nil, wayID: Int64? = nil,
+                directionTag: String? = nil, alongMeters: Double? = nil, offsetMeters: Double? = nil,
+                confidence: Double = 0.6, source: String = "osm", directionCertain: Bool = true,
+                relevance: Relevance = .relevant, stopLineKey: String? = nil) {
         self.kind = kind
         self.location = location
+        self.osmID = osmID
+        self.wayID = wayID
+        self.directionTag = directionTag
+        self.alongMeters = alongMeters
+        self.offsetMeters = offsetMeters
+        self.confidence = confidence
+        self.source = source
+        self.directionCertain = directionCertain
+        self.relevance = relevance
+        self.stopLineKey = stopLineKey
     }
 }
 
 public enum RouteControls {
-    public static func nearby(_ point: LatLng) async -> [RouteControl]? {
+    /**
+     * Controls around a point. With a confirmed GPS heading, a short synthetic line
+     * along that heading lets the directional matcher reject the opposite
+     * carriageway and the crossing road; without one, the old proximity list is
+     * kept as browsing context.
+     */
+    public static func nearby(_ point: LatLng, heading: Double? = nil) async -> [RouteControl]? {
         let lat = point.lat, lon = point.lng
         async let overpass = fetchControls(around: "550,\(lat),\(lon)")
         async let postpass = fetchPostpass(covering: [point], padding: 550)
         guard let items = await combined(overpass, postpass) else { return nil }
-        return nodeControls(items)
+        guard let heading, heading.isFinite, (0..<360).contains(heading) else { return nodeControls(items) }
+        func offset(_ bearing: Double, _ meters: Double) -> LatLng {
+            let a = bearing * .pi / 180
+            return LatLng(point.lat + meters * cos(a) / 110_540,
+                          point.lng + meters * sin(a) / (111_320 * max(0.01, cos(point.lat * .pi / 180))))
+        }
+        let line = [offset(heading + 180, 30), point, offset(heading, 220)]
+        return DirectionalRoadControlMatcher.match(elements: items, on: line, cumulative: Geo.cumulative(line))
     }
 
     private static func fetchControls(around scope: String, walking: Bool = false) async -> [[String: Any]]? {
@@ -162,7 +212,7 @@ public enum RouteControls {
         }
     }
 
-    private static func kind(for tags: [String: String]) -> RouteControl.Kind? {
+    static func kind(for tags: [String: String]) -> RouteControl.Kind? {
         if tags["railway"] == "tram_level_crossing" { return .tram }
         if ["crossing", "level_crossing"].contains(tags["railway"] ?? "") { return .railway }
         switch tags["highway"] {
@@ -190,7 +240,17 @@ public enum RouteControls {
         return mapped(items, on: line, cumulative: cumulative, walking: walking)
     }
 
+    /**
+     * The controls that belong to the route, in route order. Driving uses the directional matcher,
+     * which reads the OSM way and its direction; walking keeps its own rules for crossings and
+     * one-way streets, where a car's approach is not the relevant one.
+     */
     static func mapped(_ items: [[String: Any]], on line: [LatLng], cumulative: [Double], walking: Bool = false) -> [RouteControl] {
+        if walking { return legacyMapped(items, on: line, cumulative: cumulative, walking: true) }
+        return DirectionalRoadControlMatcher.match(elements: items, on: line, cumulative: cumulative)
+    }
+
+    private static func legacyMapped(_ items: [[String: Any]], on line: [LatLng], cumulative: [Double], walking: Bool = false) -> [RouteControl] {
         var candidates: [(at: Double, offset: Double, kind: RouteControl.Kind)] = []
         var waysByNode: [Int64: [(before: LatLng?, after: LatLng?, oneway: String?)]] = [:]
         let knownCrossings = Dictionary(nodeControls(items).map { ($0.location, $0.kind) }, uniquingKeysWith: { first, _ in first })

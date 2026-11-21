@@ -401,7 +401,7 @@ struct DepartureBoard: View {
             if let b = board {
                 ForEach(Array(b.departures.prefix(8).enumerated()), id: \.offset) { _, d in
                     HStack(spacing: 10) {
-                        LineChip(leg: TransitLeg(isWalk: false, mode: d.mode, line: d.line, color: d.color, textColor: d.textColor))
+                        LineChip(leg: TransitLeg(isWalk: false, mode: d.mode, line: d.line, color: d.color, textColor: d.textColor, lineIdentity: d.identity))
                         Text(d.headsign).font(.subheadline).lineLimit(1)
                         Spacer()
                         VStack(alignment: .trailing, spacing: 1) {

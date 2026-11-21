@@ -293,11 +293,13 @@ extension StepMerge {
             // Another of the router's steps is nearer that one of Google's: it belongs to that step.
             if steps.indices.contains(where: { $0 != i && !steps[$0].silent && abs(steps[$0].alongMeters - g.alongMeters) < abs(steps[i].alongMeters - g.alongMeters) }) { continue }
             let road = steps[i].road
-            if g.type == .roundabout, let n = g.exit, [.turnLeft, .turnRight, .slightLeft, .slightRight, .sharpLeft, .sharpRight, .straight].contains(steps[i].type) {
+            if g.type == .roundabout, let n = g.exit ?? g.alternativeExit,
+               [.turnLeft, .turnRight, .slightLeft, .slightRight, .sharpLeft, .sharpRight, .straight].contains(steps[i].type) {
                 steps[i].type = .roundabout
-                steps[i].exit = n
+                steps[i].exit = g.exit
+                steps[i].alternativeExit = n
                 steps[i].lanes = []
-                steps[i].instruction = OSRM.instruction(type: "roundabout", modifier: nil, road: road, exit: n, mode: .drive)
+                steps[i].instruction = OSRM.instruction(type: "roundabout", modifier: nil, road: road, exit: g.exit, mode: .drive)
             } else if side(steps[i].type) != 0, side(g.type) != 0, side(g.type) != side(steps[i].type),
                       let b = bend(steps[i].alongMeters), b * Double(side(g.type)) > 30 {
                 // "Keep right at the fork onto Castle Lane West" where the road really goes 45 degrees

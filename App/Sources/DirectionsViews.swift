@@ -915,24 +915,23 @@ private let clock: DateFormatter = {
 struct TripRow: View {
     let trip: TransitTrip
     let picked: Bool
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline) {
-                if let a = trip.depart, let b = trip.arrive {
-                    Text("\(clock.string(from: a)) – \(clock.string(from: b))").font(.subheadline.weight(.semibold))
-                }
-                Spacer()
-                Text(Fmt.duration(trip.durationSeconds)).font(.headline)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(times).font(.title3.weight(.bold)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.8)
+                Spacer(minLength: 4)
+                Text(Fmt.duration(trip.durationSeconds)).font(.headline.weight(.semibold)).monospacedDigit()
             }
-            // Wraps onto more lines for trips with many changes, like Google Maps does.
-            WrapLayout(spacing: 4, lineSpacing: 6) {
+            // Every ride on its own official color, every walk neutral: one glance says what to take.
+            WrapLayout(spacing: 5, lineSpacing: 6) {
                 ForEach(Array(trip.legs.enumerated()), id: \.offset) { i, leg in
                     HStack(spacing: 4) {
                         if i > 0 { Image(systemName: "chevron.right").font(.system(size: 9, weight: .bold)).foregroundColor(.secondary) }
                         if leg.isWalk {
                             HStack(spacing: 1) {
-                                Image(systemName: "figure.walk").font(.system(size: 13))
+                                Image(systemName: TransitMode.walk.symbol).font(.system(size: 13))
                                 if leg.durationSeconds >= 60 { Text("\(Int((leg.durationSeconds / 60).rounded()))").font(.caption2) }
                             }
                             .foregroundColor(.secondary)
@@ -944,9 +943,17 @@ struct TripRow: View {
             }
             .lineLimit(1)
             HStack(spacing: 6) {
+                Label(summary, systemImage: "arrow.triangle.swap")
                 if let first = trip.rides.first, let dep = first.depart {
-                    Text(L10n.format("%@ from %@", String(describing: clock.string(from: dep)), String(describing: first.fromName))).lineLimit(1)
+                    Text(L10n.format("from %@", String(describing: clock.string(from: dep)))).lineLimit(1)
                 }
+            }
+            .font(.caption).foregroundColor(.secondary)
+            if let first = trip.rides.first, let direction = first.headsign, !direction.isEmpty {
+                Label(direction, systemImage: "arrow.forward.circle")
+                    .font(.caption.weight(.medium)).lineLimit(1).foregroundStyle(.secondary)
+            }
+            HStack(spacing: 8) {
                 if let late = trip.rides.first?.delayMinutes {
                     Text(late > 0 ? "\(late) min late" : late < 0 ? "\(-late) min early" : "On time")
                         .foregroundColor(late > 1 ? Vela.closed : Vela.open)
@@ -959,14 +966,33 @@ struct TripRow: View {
                     Label("Tight transfer", systemImage: "exclamationmark.triangle.fill")
                         .foregroundColor(Vela.closed)
                 }
+                Spacer(minLength: 0)
             }
-            .font(.caption).foregroundColor(.secondary)
+            .font(.caption2.weight(.medium))
         }
-        .padding(.vertical, 10)
-        .padding(.horizontal, 8)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 12).fill(picked ? Color.secondary.opacity(0.14) : Color.clear))
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .fill(picked ? Vela.routeBlue.opacity(scheme == .dark ? 0.24 : 0.10)
+                         : Color(uiColor: .secondarySystemGroupedBackground)))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .strokeBorder(picked ? Vela.routeBlue.opacity(0.55) : Color.secondary.opacity(0.12), lineWidth: 1))
         .contentShape(Rectangle())
+    }
+
+    private var times: String {
+        guard let a = trip.depart, let b = trip.arrive else { return Fmt.duration(trip.durationSeconds) }
+        return "\(clock.string(from: a)) – \(clock.string(from: b))"
+    }
+
+    /// "2 changes · 6 min walk", the two things that decide between two trips.
+    private var summary: String {
+        let changes = max(0, trip.transfers)
+        let walk = Int((trip.walkSeconds / 60).rounded())
+        var parts: [String] = []
+        parts.append(changes == 0 ? L10n.text("Direct") : L10n.format("%@ changes", String(changes)))
+        if walk > 0 { parts.append(L10n.format("%@ min walk", String(walk))) }
+        return parts.joined(separator: " · ")
     }
 
     /// Freshness matters more than the bare "live" flag: a feed can be live but a few minutes old.
@@ -1035,33 +1061,71 @@ struct WrapLayout: Layout {
     }
 }
 
-/** A line's name on its own color, the way stations sign it. */
+/** A line's name on its own color, with the vehicle kind visible at a glance. */
 struct LineChip: View {
     let leg: TransitLeg
 
     var body: some View {
-        let bg = leg.color.map { Color(hex: $0) } ?? Vela.routeBlue
-        let fg = leg.textColor.map { Color(hex: $0) } ?? .white
-        HStack(spacing: 3) {
-            Image(systemName: vehicleSymbol(leg.vehicle)).font(.system(size: 10, weight: .bold))
-            Text(leg.line.isEmpty ? leg.mode.capitalized : leg.line).font(.caption.weight(.bold))
+        let identity = leg.identity
+        let bg = Color(hex: identity.color)
+        let fg = Color(hex: identity.textColor)
+        HStack(spacing: 4) {
+            TransitModeGlyph(mode: identity.mode, tint: fg, size: 11)
+            Text(identity.shortName.isEmpty ? identity.mode.shortLabel : identity.shortName)
+                .font(.caption.weight(.bold))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: 120, alignment: .leading)
         }
-        .padding(.horizontal, 6)
-        .frame(height: 22)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .frame(minHeight: 22)
         .foregroundColor(fg)
-        .background(RoundedRectangle(cornerRadius: 5).fill(bg))
+        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(bg))
+        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(fg.opacity(0.18), lineWidth: 0.5))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(L10n.text(identity.mode.label)) \(identity.shortName)")
+    }
+}
+
+/** The vehicle icon, with a small badge where two modes share an SF Symbol. */
+struct TransitModeGlyph: View {
+    let mode: TransitMode
+    var tint: Color = .primary
+    var size: CGFloat = 12
+
+    var body: some View {
+        ZStack(alignment: .bottomTrailing) {
+            Image(systemName: mode.symbol)
+                .font(.system(size: size, weight: .bold))
+            if let badge = mode.badge {
+                Image(systemName: badge)
+                    .font(.system(size: size * 0.55, weight: .black))
+                    .offset(x: size * 0.32, y: size * 0.18)
+            }
+        }
+        .foregroundColor(tint)
+        .frame(width: size * 1.3, height: size * 1.2)
     }
 }
 
 func vehicleSymbol(_ v: TransitLeg.Vehicle) -> String {
     switch v {
-    case .walk: return "figure.walk"
-    case .bus: return "bus.fill"
-    case .metro: return "tram.fill.tunnel"
-    case .tram: return "tram.fill"
-    case .train: return "train.side.front.car"
-    case .ferry: return "ferry.fill"
-    case .other: return "tram.fill"
+    case .walk: return TransitMode.walk.symbol
+    case .bus: return TransitMode.bus.symbol
+    case .trolleybus: return TransitMode.trolleybus.symbol
+    case .coach: return TransitMode.coach.symbol
+    case .tram: return TransitMode.tram.symbol
+    case .lightRail: return TransitMode.lightRail.symbol
+    case .metro: return TransitMode.metro.symbol
+    case .train: return TransitMode.regionalTrain.symbol
+    case .ferry: return TransitMode.ferry.symbol
+    case .funicular: return TransitMode.funicular.symbol
+    case .cableCar: return TransitMode.cableCar.symbol
+    case .aerialLift: return TransitMode.aerialLift.symbol
+    case .monorail: return TransitMode.monorail.symbol
+    case .bike: return TransitMode.bike.symbol
+    case .other: return TransitMode.other.symbol
     }
 }
 
@@ -1072,20 +1136,22 @@ struct TransitSteps: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(trip.legs.enumerated()), id: \.offset) { index, leg in
-                HStack(alignment: .top, spacing: 12) {
-                    Image(systemName: vehicleSymbol(leg.vehicle))
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundColor(leg.isWalk ? .secondary : (leg.color.map { Color(hex: $0) } ?? Vela.routeBlue))
-                        .frame(width: 24)
+                let transfer = leg.isWalk && index > 0 && index < trip.legs.count - 1
+                HStack(alignment: .top, spacing: 10) {
+                    TransitTimelineRail(
+                        color: leg.isWalk ? Color.secondary : Color(hex: leg.identity.color),
+                        node: leg.isWalk ? (transfer ? .transfer : .walk) : .ride,
+                        first: index == 0,
+                        last: index == trip.legs.count - 1)
+                        .frame(width: 26)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 6) {
-                        if leg.isWalk { walk(leg, passage: passages[index], transfer: index > 0 && index < trip.legs.count - 1) }
+                        if leg.isWalk { walk(leg, passage: passages[index], transfer: transfer) }
                         else { ride(leg) }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.bottom, 16)
                 }
-                .padding(.vertical, 10)
-                Divider().padding(.leading, 36)
             }
         }
         .task(id: trip.id) {
@@ -1165,6 +1231,47 @@ struct TransitSteps: View {
     }
 
 
+}
+
+/** The vertical journey timeline: a colored rail per ride, a dotted one per walk, a transfer node. */
+private struct TransitTimelineRail: View {
+    enum Node { case walk, ride, transfer }
+    let color: Color
+    let node: Node
+    let first: Bool
+    let last: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ZStack {
+                switch node {
+                case .ride:
+                    Circle().fill(color).frame(width: 15, height: 15)
+                    Circle().fill(.white.opacity(0.85)).frame(width: 5, height: 5)
+                case .walk:
+                    Circle().strokeBorder(color, lineWidth: 2).frame(width: 12, height: 12)
+                case .transfer:
+                    Circle().strokeBorder(color, lineWidth: 2).frame(width: 15, height: 15)
+                    Circle().fill(color).frame(width: 7, height: 7)
+                }
+            }
+            .frame(height: 22)
+            if !last {
+                if node == .walk {
+                    VStack(spacing: 3) {
+                        ForEach(0..<6, id: \.self) { _ in
+                            Capsule().fill(color.opacity(0.55)).frame(width: 3, height: 5)
+                        }
+                    }
+                    .frame(maxHeight: .infinity)
+                } else {
+                    Rectangle().fill(color.opacity(0.85)).frame(width: 4)
+                        .frame(maxHeight: .infinity)
+                }
+            }
+        }
+        .frame(maxHeight: .infinity)
+    }
 }
 
 struct TransitCallRow: View {

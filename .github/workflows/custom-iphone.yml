@@ -14,6 +14,7 @@ on:
   push:
     branches:
       - iphone-custom-v30-advanced-navigation
+      - iphone-custom-v31-navigation-transit
 
 permissions:
   contents: read
@@ -73,40 +74,40 @@ jobs:
       - name: Package both variants
         run: |
           APP=build/Build/Products/Release-iphoneos/Kite.app
-          bash .github/scripts/pack-ipa.sh "$APP" full Kite-v30-Full.ipa
-          bash .github/scripts/pack-ipa.sh "$APP" sidestore Kite-v30-SideStore.ipa
+          bash .github/scripts/pack-ipa.sh "$APP" full Kite-v31-Full.ipa
+          bash .github/scripts/pack-ipa.sh "$APP" sidestore Kite-v31-SideStore.ipa
       - name: Check the IPA structure and signatures
         run: |
-          bash .github/scripts/verify-ipa.sh Kite-v30-Full.ipa full | tee test-artifacts/ipa-full.txt
-          bash .github/scripts/verify-ipa.sh Kite-v30-SideStore.ipa sidestore | tee test-artifacts/ipa-sidestore.txt
+          bash .github/scripts/verify-ipa.sh Kite-v31-Full.ipa full | tee test-artifacts/ipa-full.txt
+          bash .github/scripts/verify-ipa.sh Kite-v31-SideStore.ipa sidestore | tee test-artifacts/ipa-sidestore.txt
       - name: Report the packages
         run: |
           {
-            echo "## Kite v30 build $BUILD_NUMBER"
+            echo "## Kite v31 build $BUILD_NUMBER"
             echo
             echo "| Variant | Size | Extensions | Live Activities |"
             echo "| --- | --- | --- | --- |"
-            echo "| Full | $(du -h Kite-v30-Full.ipa | cut -f1) | NavigationWidget | yes |"
-            echo "| SideStore | $(du -h Kite-v30-SideStore.ipa | cut -f1) | none | no |"
+            echo "| Full | $(du -h Kite-v31-Full.ipa | cut -f1) | NavigationWidget | yes |"
+            echo "| SideStore | $(du -h Kite-v31-SideStore.ipa | cut -f1) | none | no |"
             echo
             echo "Both come from commit \`${GITHUB_SHA}\`. Structure checks passed; physical SideStore install is still unverified."
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload Full IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Kite-v30-Full-ipa
-          path: Kite-v30-Full.ipa
+          name: Kite-v31-Full-ipa
+          path: Kite-v31-Full.ipa
           if-no-files-found: error
       - name: Upload SideStore IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Kite-v30-SideStore-ipa
-          path: Kite-v30-SideStore.ipa
+          name: Kite-v31-SideStore-ipa
+          path: Kite-v31-SideStore.ipa
           if-no-files-found: error
       - name: Upload build and test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Kite-v30-Test-Results
+          name: Kite-v31-Test-Results
           path: test-artifacts
           if-no-files-found: warn

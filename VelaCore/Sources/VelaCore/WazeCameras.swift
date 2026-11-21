@@ -77,8 +77,14 @@ public enum WazeCameras {
         guard packed > 6, at + 20 + packed <= d.count else { return nil }
         // Past zlib's two-byte header, without its four-byte check at the end.
         let body = Data(d[(at + 22)..<(at + 20 + packed - 4)])
+        #if canImport(Compression)
         guard let out = try? (body as NSData).decompressed(using: .zlib) as Data else { return nil }
         return cameras(tables: [UInt8](out))
+        #else
+        // Linux's Foundation has no zlib decompression: the app always builds with Compression.
+        _ = body
+        return nil
+        #endif
     }
 
     /**
