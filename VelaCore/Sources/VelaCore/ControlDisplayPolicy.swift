@@ -14,14 +14,17 @@ public enum ControlDisplayPolicy {
                                   distanceAhead: Double?, directionCertain: Bool = true) -> Bool {
         let distance = distanceAhead ?? .infinity
         guard distance >= -20 else { return false }
+        // The control's own evidence counts too: a light the matcher could not tie to our
+        // approach is never presented as ours, even if the caller forgot to say so.
+        let certain = directionCertain && control.directionCertain && control.relevance != .ambiguous
         switch activity {
         case .browsing:
             return control.kind != .oneWay || distance < 500
         case .freeDrive:
-            guard [.light, .stop, .railway].contains(control.kind) else { return false }
+            guard certain, [.light, .stop, .railway].contains(control.kind) else { return false }
             return distance <= 350
         case .navigatingDrive:
-            guard directionCertain else { return false }
+            guard certain else { return false }
             switch control.kind {
             case .light, .stop:
                 return distance <= 450
@@ -60,7 +63,7 @@ public enum ControlDisplayPolicy {
             let match = Geo.project(control.location, on: along, cumulative: cumulative)
             guard shouldShow(control, activity: activity,
                              distanceAhead: match.along,
-                             directionCertain: match.offset < 35) else { return nil }
+                             directionCertain: match.offset < 8 && control.directionCertain) else { return nil }
             return (control, match.along)
         }
         .sorted { $0.1 < $1.1 }

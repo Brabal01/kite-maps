@@ -3,9 +3,9 @@ name: iOS simulator smoke test
 on:
   workflow_dispatch:
   push:
-    branches: [iphone-custom-v30-advanced-navigation]
+    branches: [iphone-custom-v30-advanced-navigation, iphone-custom-v31-navigation-transit]
   pull_request:
-    branches: [iphone-custom-v29-redesign, iphone-custom-v30-advanced-navigation]
+    branches: [iphone-custom-v29-redesign, iphone-custom-v30-advanced-navigation, iphone-custom-v31-navigation-transit]
 
 permissions:
   contents: read
@@ -61,6 +61,21 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" | tee planning-ui-test.log | tail -n 120
+      - name: v31 roundabout, traffic-light and transit UI regression
+        # Deterministic demo data, so these three screens do not depend on routing
+        # servers or a live timetable.
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project Kite.xcodeproj \
+            -scheme Kite \
+            -configuration Debug \
+            -destination "id=${{ steps.simulator.outputs.udid }}" \
+            -derivedDataPath build \
+            -only-testing:KiteUITests/V31UITests \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" | tee v31-ui-test.log | tail -n 120
       - name: Install and launch repeatedly
         run: |
           set -euo pipefail
@@ -105,6 +120,12 @@ jobs:
         run: |
           set -euo pipefail
           UDID="${{ steps.simulator.outputs.udid }}"
+          # The safe-mode launch above persists its switch in the app container,
+          # which made every later screenshot show the safe-mode screen. A fresh
+          # install clears that switch and the launch marker.
+          xcrun simctl terminate "$UDID" app.vela.ios >/dev/null 2>&1 || true
+          xcrun simctl uninstall "$UDID" app.vela.ios >/dev/null 2>&1 || true
+          xcrun simctl install "$UDID" "build/Build/Products/Debug-iphonesimulator/Kite.app"
           # The denied-location test above revoked permission; give it back so
           # the place, planning and navigation screens are captured for real.
           xcrun simctl privacy "$UDID" grant location app.vela.ios >/dev/null 2>&1 || true
@@ -115,10 +136,12 @@ jobs:
           # A place search first warms up the simulated GPS; only then is the
           # navigation route planned. Otherwise the first request has no origin
           # and the screen honestly shows "No route found".
-          for step in home routes place uk directions settings; do
+          for step in home routes place uk directions roundaboutsynthetic roundaboutuncertainsynthetic signalsynthetic transitsynthetic settings; do
             case "$step" in
-              home|routes) wait=16;; place) wait=26;; uk) wait=52;;
-              directions) wait=45;; *) wait=12;;
+              home|routes) wait=16;; place) wait=26;;
+              uk) wait=52;; directions) wait=45;;
+              transitsynthetic) wait=30;;
+              *synthetic) wait=22;; *) wait=12;;
             esac
             if [ "$step" = "uk" ]; then
               xcrun simctl location "$UDID" set 56.3960,-3.4300 >/dev/null 2>&1 || true
@@ -144,13 +167,28 @@ jobs:
               cp ~/Library/Logs/DiagnosticReports/*Kite* . 2>/dev/null || true
               exit 1
             fi
-            xcrun simctl io "$UDID" screenshot "demo-$step.png" >/dev/null || true
+            case "$step" in
+              roundaboutsynthetic) name=roundabout;;
+              roundaboutuncertainsynthetic) name=roundaboutuncertain;;
+              signalsynthetic) name=signals;;
+              transitsynthetic) name=transitcolors;;
+              *) name=$step;;
+            esac
+            xcrun simctl io "$UDID" screenshot "demo-$name.png" >/dev/null || true
           done
 
           # The same home and navigation screens in dark mode.
           xcrun simctl ui "$UDID" appearance dark >/dev/null 2>&1 || true
-          for step in home uk; do
-            wait=16; [ "$step" = "uk" ] && wait=48
+          for step in home uk roundaboutsynthetic transitsynthetic; do
+            wait=16
+            if [ "$step" = "uk" ]; then wait=48; fi
+            if [ "$step" = "roundaboutsynthetic" ]; then wait=22; fi
+            if [ "$step" = "transitsynthetic" ]; then wait=30; fi
+            if [ "$step" = "uk" ]; then
+              xcrun simctl location "$UDID" set 56.3960,-3.4300 >/dev/null 2>&1 || true
+            else
+              xcrun simctl location "$UDID" set 38.5449,-121.7405 >/dev/null 2>&1 || true
+            fi
             xcrun simctl terminate "$UDID" app.vela.ios >/dev/null 2>&1 || true
             xcrun simctl launch "$UDID" app.vela.ios -demo "$step" | tee "demo-dark-$step.txt"
             PID=$(sed -n 's/.*app.vela.ios: \([0-9][0-9]*\).*/\1/p' "demo-dark-$step.txt")
@@ -161,8 +199,24 @@ jobs:
                 --predicate 'process == "Kite"' > "crash-dark-$step.log" || true
               exit 1
             fi
-            xcrun simctl io "$UDID" screenshot "demo-dark-$step.png" >/dev/null || true
+            case "$step" in
+              roundaboutsynthetic) name=roundabout;;
+              transitsynthetic) name=transitcolors;;
+              *) name=$step;;
+            esac
+            xcrun simctl io "$UDID" screenshot "demo-dark-$name.png" >/dev/null || true
           done
+
+          # A large Dynamic Type transit card, to check the line chips and the timeline
+          # do not clip or overlap at accessibility sizes.
+          xcrun simctl ui "$UDID" appearance light >/dev/null 2>&1 || true
+          xcrun simctl ui "$UDID" content_size accessibility-extra-large >/dev/null 2>&1 || true
+          xcrun simctl location "$UDID" set 38.5449,-121.7405 >/dev/null 2>&1 || true
+          xcrun simctl terminate "$UDID" app.vela.ios >/dev/null 2>&1 || true
+          xcrun simctl launch "$UDID" app.vela.ios -demo transitsynthetic | tee demo-transit-large-type.txt
+          sleep 30
+          xcrun simctl io "$UDID" screenshot "demo-transit-large-type.png" >/dev/null || true
+          xcrun simctl ui "$UDID" content_size large >/dev/null 2>&1 || true
 
       - name: Check the screenshots
         run: |
@@ -180,7 +234,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Kite-v30-Simulator-Screenshots
+          name: Kite-v31-Simulator-Screenshots
           path: |
             demo-*.png
             screenshots-check.txt
@@ -189,10 +243,11 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: simulator-smoke-logs-v30
+          name: simulator-smoke-logs-v31
           path: |
             simulator-build.log
             planning-ui-test.log
+            v31-ui-test.log
             launch-*.txt
             kite-*.log
             demo-*.txt

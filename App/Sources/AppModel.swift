@@ -197,8 +197,14 @@ final class AppModel: ObservableObject {
             let controls: [RouteControl]?
             if let leg, leg.count >= 2 {
                 let at = Geo.project(point, on: leg).along
-                controls = await RouteControls.lookup(on: Geo.slice(leg, from: max(0, at - 80), to: at + 1200))
-            } else { controls = await RouteControls.nearby(point) }
+                controls = await RouteControls.lookup(on: Geo.slice(leg, from: max(0, at - 80), to: at + 1200),
+                                                       walking: true)
+            } else {
+                // Free drive: a confirmed course lets the matcher reject the other
+                // carriageway. A slow or invalid course falls back to context only.
+                let heading = fix.course >= 0 && fix.speed >= 1.5 ? fix.course : nil
+                controls = await RouteControls.nearby(point, heading: heading)
+            }
             guard !Task.isCancelled else { return }
             nearbyControlsTask = nil
             nearbyControlsStatus = controls == nil ? "Road data temporarily unavailable" : "No mapped road events ahead"
@@ -1283,6 +1289,28 @@ final class AppModel: ObservableObject {
         } else if directions?.trips != nil {
             frameRoute()
         }
+    }
+
+    /** The build's screenshots: three deterministic trips with real-looking line colors and modes. */
+    func installDemoTransitTrips() {
+        guard var state = directions else { return }
+        let from = state.fromPlace?.location ?? userLatLng ?? LatLng(38.5449, -121.7405)
+        let to = state.toPlace?.location ?? state.destination.location
+        // Stop any real transit request and planning effects: they must not replace
+        // the deterministic fixture while the UI test or screenshot is running.
+        transitRequest += 1
+        transitTask?.cancel()
+        transitTask = nil
+        state.planning = nil
+        state.loading = []
+        state.errors = [:]
+        state.transit = true
+        state.trips = UITestSupport.demoTransitTrips(from: from, to: to)
+        state.trip = 0
+        state.tripsError = nil
+        directions = state
+        detent = .full
+        frameRoute()
     }
 
     func selectTrip(_ i: Int) {

@@ -21,6 +21,9 @@ except ImportError:
 EXPECTED = [
     "demo-home", "demo-routes", "demo-place", "demo-directions",
     "demo-uk", "demo-settings", "demo-dark-home", "demo-dark-uk",
+    "demo-roundabout", "demo-roundaboutuncertain", "demo-signals",
+    "demo-transitcolors", "demo-dark-roundabout", "demo-dark-transitcolors",
+    "demo-transit-large-type",
 ]
 
 def check(path: Path) -> tuple[bool, str]:

@@ -26,35 +26,83 @@ public enum Roundabouts {
     public static func apply(to route: Route) async -> Route? {
         let spots = route.maneuvers.filter { $0.type == .roundabout && !$0.leavesRoundabout }.map(\.location)
         guard !spots.isEmpty, let data = await fetch(spots) else { return nil }
-        var r = route
         let ways = parse(data)
         guard !ways.isEmpty else { return nil }
-        let clockwise = Geo.drivesOnLeft(spots[0])
+        return resolved(route, ways: ways, clockwise: Geo.drivesOnLeft(spots[0]))
+    }
+
+    /**
+     * The same work without the network: rebuilds every roundabout from [ways] and makes the exit
+     * number, the words and the picture agree. Internal so the resolver can be tested against
+     * fixture geometry without Overpass.
+     */
+    static func resolved(_ route: Route, ways: [Way], clockwise: Bool) -> Route? {
+        var r = route
         let cum = Geo.cumulative(route.polyline)
         var changed = false
         for i in r.maneuvers.indices where r.maneuvers[i].type == .roundabout {
             let m = r.maneuvers[i]
             if m.leavesRoundabout {
-                // The way off: the same picture as the way on.
-                if i > 0, r.maneuvers[i - 1].type == .roundabout, let prev = r.maneuvers[i - 1].roundabout {
-                    r.maneuvers[i].roundabout = prev
-                    r.maneuvers[i].exit = r.maneuvers[i].exit ?? r.maneuvers[i - 1].exit
+                // The way off: the same picture and number as the way on, so every view agrees.
+                if i > 0, r.maneuvers[i - 1].type == .roundabout {
+                    let on = r.maneuvers[i - 1]
+                    r.maneuvers[i].roundabout = on.roundabout
+                    r.maneuvers[i].exit = on.exit ?? r.maneuvers[i].exit
+                    r.maneuvers[i].routerExit = on.routerExit
+                    r.maneuvers[i].alternativeExit = on.alternativeExit
+                    r.maneuvers[i].exitSource = on.exitSource
+                    r.maneuvers[i].exitConfidence = on.exitConfidence
+                    r.maneuvers[i].exitAmbiguous = on.exitAmbiguous
                 }
                 continue
             }
+            // A mini-roundabout was counted from its own mapped point already; a ring query here
+            // would find nothing and wrongly erase its number.
+            if m.roundabout?.mini == true { continue }
+            // Keep what the router said as evidence; it no longer decides the number on its own.
+            if r.maneuvers[i].routerExit == nil { r.maneuvers[i].routerExit = m.exit }
             // Where the route comes off the circle, from the circle itself; the router's step otherwise.
             let leave = leaving(ways, entry: m.location, line: route.polyline, cumulative: cum, along: m.alongMeters) ?? wayOff(r.maneuvers, i)
             let out = exitAngle(route.polyline, cumulative: cum, along: m.alongMeters, leaving: leave)
-            // The map's picture only if it counts the exits the way the spoken "Nth exit" does; on
-            // 2026-10-25's Hampshire drives that held for 17 of 24, and the rest keep the router's sketch.
-            if let s = shape(ways, entry: m.location, line: route.polyline, cumulative: cum, along: m.alongMeters,
-                             clockwise: clockwise, exitNumber: m.exit), m.exit == nil || s.taken + 1 == m.exit {
+            let nextStep = i + 1 < r.maneuvers.count && r.maneuvers[i + 1].leavesRoundabout ? r.maneuvers[i + 1] : nil
+            let exitPoint = nextStep?.location ?? leave.map { Geo.point(along: route.polyline, meters: $0, cumulative: cum) }
+            let evidence = RoundaboutExitEvidence(entry: m.location, exitPoint: exitPoint, line: route.polyline,
+                                                  cumulative: cum, along: m.alongMeters, clockwise: clockwise,
+                                                  routerExit: r.maneuvers[i].routerExit,
+                                                  googleExit: m.alternativeExit, ways: ways)
+            let resolved = RoundaboutExitResolver.resolve(evidence)
+            r.maneuvers[i].exitSource = resolved.source
+            r.maneuvers[i].exitConfidence = resolved.confidence
+            r.maneuvers[i].exitAmbiguous = resolved.ambiguous
+            // The picture: the map's when it was good enough, else the router's sketch pointed at
+            // the way out the line really takes.
+            if let s = resolved.shape {
                 r.maneuvers[i].roundabout = out.map { aim(s, at: $0) } ?? s
                 changed = true
             } else if let out, let s = m.roundabout, s.exits.indices.contains(s.taken), angleGap(s.exits[s.taken], out) > 1 {
-                // The router's sketch, pointed at the way out found from the circle.
-                r.maneuvers[i].roundabout = angleGap(s.exits[s.taken], out) < 50 && (m.exit == nil || s.taken + 1 == m.exit) ? aim(s, at: out)
-                    : spread(to: out, exit: m.exit ?? 1, clockwise: clockwise)
+                r.maneuvers[i].roundabout = angleGap(s.exits[s.taken], out) < 50 && (m.exit == nil || s.taken + 1 == m.exit)
+                    ? aim(s, at: out) : spread(to: out, exit: m.exit ?? 1, clockwise: clockwise)
+                changed = true
+            }
+            // The one number every view reads: banner, diagram, voice and Live Activity.
+            let final = resolved.exit
+            if r.maneuvers[i].exit != final {
+                r.maneuvers[i].exit = final
+                changed = true
+            }
+            // Keep the signed destinations the router or Google gave: the number changes,
+            // the "toward Eastleigh" does not.
+            let signs = OSRM.Signs(destinations: m.exitSign?.destinations.joined(separator: ", "),
+                                   exits: m.exitSign?.number, from: nil)
+            var words = OSRM.instruction(type: "roundabout", modifier: nil, road: m.road, exit: final,
+                                         mode: route.mode, signs: signs)
+            // A provider that put the destination only in its words keeps it.
+            if !words.contains(" toward"), !words.contains(" towards"),
+               let r = m.instruction.range(of: " toward ") ?? m.instruction.range(of: " towards ") {
+                words += String(m.instruction[r.lowerBound...])
+            }
+            if r.maneuvers[i].instruction != words {
+                r.maneuvers[i].instruction = words
                 changed = true
             }
             // How many lanes the road in has at the give-way line, for the lane advice.

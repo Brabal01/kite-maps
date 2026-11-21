@@ -77,6 +77,64 @@ enum UITestSupport {
                       summary: "Test route", maneuvers: maneuvers, source: "test")]
     }
 
+    /**
+     * Three synthetic trips with the colors and modes the real feeds send: an official metro
+     * yellow, a tram red, a bus with no official color (so Kite's mode fallback), and a suburban
+     * train. Used by the v31 screenshots so they do not depend on a live timetable.
+     */
+    static func demoTransitTrips(from: LatLng, to: LatLng) -> [TransitTrip] {
+        let now = Date()
+        let middle = LatLng((from.lat + to.lat) / 2, (from.lng + to.lng) / 2)
+        func walk(_ minutes: Double, _ fromName: String, _ toName: String, _ a: LatLng, _ b: LatLng) -> TransitLeg {
+            TransitLeg(isWalk: true, mode: "WALK", line: "", fromName: fromName, toName: toName,
+                       depart: now, arrive: now.addingTimeInterval(minutes * 60),
+                       durationSeconds: minutes * 60, distanceMeters: a.distance(to: b), path: [a, b])
+        }
+        func ride(_ mode: String, _ line: String, _ color: UInt32?, _ text: UInt32?,
+                  _ headsign: String, _ fromName: String, _ toName: String,
+                  _ depart: Date, _ minutes: Double, _ a: LatLng, _ b: LatLng,
+                  _ agency: String, _ routeId: String) -> TransitLeg {
+            var leg = TransitLeg(isWalk: false, mode: mode, line: line, color: color, textColor: text,
+                                 headsign: headsign, fromName: fromName, toName: toName, depart: depart,
+                                 arrive: depart.addingTimeInterval(minutes * 60),
+                                 durationSeconds: minutes * 60, distanceMeters: a.distance(to: b),
+                                 stops: 5, path: [a, b])
+            leg.agency = agency
+            leg.routeId = routeId
+            leg.agencyId = agency
+            leg.lineIdentity = TransitLineIdentity.resolve(
+                shortName: line, headsign: headsign, mode: TransitMode(mode: mode),
+                officialColor: color, officialTextColor: text, provider: "transitous.org",
+                agencyID: agency, routeID: routeId, operatorName: agency, source: .provider)
+            return leg
+        }
+        let metro = TransitTrip(
+            depart: now.addingTimeInterval(4 * 60), arrive: now.addingTimeInterval(34 * 60),
+            durationSeconds: 30 * 60, transfers: 0,
+            legs: [walk(5, "Home", "Central", from, middle),
+                   ride("SUBWAY", "A", 0xFCCC0A, 0x000000, "Downtown", "Central", "Market St",
+                        now.addingTimeInterval(10 * 60), 18, middle, to, "City Metro", "A"),
+                   walk(4, "Market St", "Work", to, to)])
+        let tramBus = TransitTrip(
+            depart: now.addingTimeInterval(9 * 60), arrive: now.addingTimeInterval(45 * 60),
+            durationSeconds: 36 * 60, transfers: 1,
+            legs: [walk(3, "Home", "Central", from, middle),
+                   ride("TRAM", "4", 0xB91C1C, 0xFFFFFF, "North Station", "Central", "Transfer",
+                        now.addingTimeInterval(14 * 60), 12, middle, middle, "City Transit", "4"),
+                   walk(2, "Transfer", "Bus stop", middle, middle),
+                   ride("BUS", "52", nil, nil, "Riverside", "Bus stop", "Riverside",
+                        now.addingTimeInterval(30 * 60), 10, middle, to, "City Transit", "52"),
+                   walk(5, "Riverside", "Work", to, to)])
+        let train = TransitTrip(
+            depart: now.addingTimeInterval(15 * 60), arrive: now.addingTimeInterval(58 * 60),
+            durationSeconds: 43 * 60, transfers: 0,
+            legs: [walk(6, "Home", "Station", from, middle),
+                   ride("RAIL", "S1", 0x008D4F, 0xFFFFFF, "Airport", "Station", "Airport",
+                        now.addingTimeInterval(25 * 60), 24, middle, to, "Regional Rail", "S1"),
+                   walk(7, "Airport", "Work", to, to)])
+        return [metro, tramBus, train]
+    }
+
     static func transitTrips(from: LatLng, to: LatLng) -> [TransitTrip] {
         let walk = TransitLeg(isWalk: true, mode: "WALK", line: "", fromName: "Home", toName: "Central",
                               durationSeconds: 6 * 60, distanceMeters: 480, path: [from, to])

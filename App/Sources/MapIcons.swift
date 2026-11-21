@@ -52,8 +52,12 @@ enum MapIcons {
         add(dot("stop.octagon.fill", UIColor(hex: 0xB91C1C)), "route-stop")
         add(dot("train.side.front.car", UIColor(hex: 0x6D28D9)), "route-crossing")
         add(dot("tram.fill", UIColor(hex: 0x6D28D9)), "tram-crossing")
-        // A live vehicle from a GTFS-Realtime feed, when that feed sends positions.
+        // A live vehicle from a GTFS-Realtime feed, when that feed sends positions. Each mode
+        // keeps its own icon: a metro vehicle must not look like a tram on the map.
         add(dot("tram.fill", UIColor(hex: 0x6D28D9)), "transit-vehicle")
+        for mode in TransitMode.allCases where mode != .walk {
+            add(dot(mode.symbol, UIColor(hex: mode.fallbackColor)), "transit-\(mode.rawValue)")
+        }
         // Live camera photos: sky blue for road cameras, violet for Windy's scenic webcams.
         add(dot("web.camera.fill", UIColor(hex: 0x0284C7)), "livecam-road")
         add(dot("sun.horizon.fill", UIColor(hex: 0x7C3AED)), "livecam-web")

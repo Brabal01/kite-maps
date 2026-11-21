@@ -1,5 +1,83 @@
 # Test results
 
+## v31 navigation, traffic lights and transit (branch `iphone-custom-v31-navigation-transit`)
+
+### Unit tests (VelaCore, Linux Swift 6.0.3)
+
+- **336 tests, 0 failures, 3 skipped** on the local Linux harness.
+  - The 3 skips are Darwin-only: the Waze zlib fixture (Compression is not in
+    Linux Foundation) and two tests that call the compression helper. They run
+    on macOS CI.
+- New deterministic suites:
+  - `RoundaboutExitResolverTests` (16) — topology correction, corroboration,
+    entrance-only arms, dual carriageway, reverse traversal, left-hand traffic,
+    provider conflict, router-only, no evidence, missing branch, close exits,
+    route integration, diagnostics.
+  - `DirectionalRoadControlMatcherTests` (19) — our road, opposite carriageway,
+    crossing road, two junctions 20 m apart, two heads on one stop line,
+    turn-lane head, overpass, under-bridge, one-way junction, missing direction,
+    reversed travel, route change, passed light, parallel road, empty answer,
+    Postpass node, duplicate nodes, browsing-only ambiguity.
+  - `TransitLineIdentityTests` (13) — GTFS/Transitous modes, name-vs-mode,
+    fallback colours, official colour source, invalid hex, contrast, agency
+    identity, parser identity, shared track offsets, bus zoom, departure board,
+    icons.
+- Existing suites (288 tests) still pass unchanged, including `RoundaboutTests`,
+  `ControlDisplayPolicyTests`, `RoutingTests`, `WalkEventsTests`, `TransitTests`,
+  `TransitRealtimeTests`, `NavigationStateTests`, `AlertCoordinatorTests`,
+  `LaneGuidanceTests`, `JunctionGuideTests`, `PlanningSessionTests`.
+
+### App / simulator
+
+- `simulator-smoke.yml` captures:
+  - `roundabout` (confirmed exit, source and confidence),
+  - `roundaboutuncertain` (conflicting sources, no ordinal),
+  - `signals` (two close signalised junctions),
+  - `transitcolors` (metro/tram/bus/train colours and modes),
+  - the same roundabout and transit screens in dark mode,
+  - a transit card at accessibility-extra-large Dynamic Type.
+- The workflow still runs `PlanningUITests` and the launch/safe-mode checks.
+- **v31 CI run 44928133681 passed every step.**
+  - `PlanningUITests`: 1/1 passed.
+  - `V31UITests`: **3/3 passed** — roundabout banner (24.8 s), directional
+    lights (18.5 s), official line chips (23.4 s).
+  - Screenshots captured: `demo-roundabout.png`,
+    `demo-roundaboutuncertain.png`, `demo-signals.png`,
+    `demo-transitcolors.png`, `demo-dark-roundabout.png`,
+    `demo-dark-transitcolors.png`, `demo-transit-large-type.png`.
+  - Screenshot artifact:
+    [Kite-v31-Simulator-Screenshots](https://github.com/Brabal01/kite-maps/actions/runs/44928133681/artifacts/14716919377).
+
+### v31 IPA build
+
+- **CI run 44928133658 passed.**
+- Build number **1118**.
+- Full: `Kite-v31-Full.ipa` (8.4 MB) — app `app.vela.ios 0.8.0 (1118)`,
+  iOS ≥ 16.2, arm64, MapLibre arm64 signed, embedded
+  `app.vela.ios.navigation 0.8.0 (1118)` signed.
+- SideStore: `Kite-v31-SideStore.ipa` (8.3 MB) — same app, no extension.
+- Both variants passed the structure checks. Both come from commit
+  `605793f`.
+- Artifacts:
+  [Full IPA](https://github.com/Brabal01/kite-maps/actions/runs/44928133658/artifacts/14716234595),
+  [SideStore IPA](https://github.com/Brabal01/kite-maps/actions/runs/44928133658/artifacts/14716900527),
+  [test results](https://github.com/Brabal01/kite-maps/actions/runs/44928133658/artifacts/14716463885).
+- The macOS VelaCore step also ran **336 tests, 0 failures** (no Linux skips).
+
+### v30 reference
+
+The last verified v30 build is
+[run 44886980456](https://github.com/Brabal01/kite-maps/actions/runs/44886980456)
+on `iphone-custom-v30-advanced-navigation`. v30 documented 288 VelaCore tests;
+v31 adds 48 and keeps the same 3 Darwin-only skips on Linux.
+
+### Not verified here
+
+- Physical SideStore installation of the v31 SideStore IPA.
+- A physical drive through the roundabout/signal fixtures.
+- Live Transitous feeds for the eight sample cities; the transit tests use
+  deterministic fixtures with real-looking official colours.
+
 ## v30 advanced navigation (branch `iphone-custom-v30-advanced-navigation`)
 
 ### Unit tests (VelaCore, Linux Swift 6.0)

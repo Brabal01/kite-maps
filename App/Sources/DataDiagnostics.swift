@@ -40,12 +40,18 @@ final class DataDiagnostics: ObservableObject {
                 "Speed cameras: \(s.speedCameras), plate cameras: \(s.plateCameras), surveillance: \(s.surveillanceCameras)",
                 "Live cameras: \(s.liveCams) (road \(s.liveRoadCams), webcams \(s.liveWebcams), route \(s.liveCamsOnRoute)), list: \(LiveCamStore.shared.status ?? "not loaded")",
                 "Navigating: \(model.nav != nil)",
+                "Roundabout resolutions: \(model.nav?.roundaboutDiagnostics.count ?? 0)",
                 "Map picture included: \(mapImage != nil) (it can show where you are).",
                 "No GPS position, searches, saved places or accounts are in this file.",
                 "",
                 "Service tests (fixed box in central London):",
             ]
             if let mapImage { entries.append(.init(name: "map.png", data: mapImage)) }
+            if let nav = model.nav, !nav.roundaboutDiagnostics.isEmpty {
+                lines.append("")
+                lines.append("Roundabout resolutions (route distances only, no coordinates):")
+                lines += nav.roundaboutDiagnostics
+            }
 
             @MainActor func timed<T>(_ name: String, _ work: () async -> T?, describe: (T) -> String) async {
                 status = L10n.format("Testing %@…", name)
@@ -101,6 +107,13 @@ struct DataDiagnosticsView: View {
                 }
             } footer: {
                 Text("Checks that Waze and OpenStreetMap answer, and puts that with your Kite version, iPhone model and settings into a small file to send with a bug report. Nothing is sent until you share it. The map picture can show where you are, so leave it off unless it helps.")
+            }
+            if let nav = model.nav, !nav.roundaboutDiagnostics.isEmpty {
+                Section("Roundabouts on this route") {
+                    ForEach(nav.roundaboutDiagnostics, id: \.self) { line in
+                        Text(line).font(.caption.monospaced())
+                    }
+                }
             }
         }
         .kiteList()

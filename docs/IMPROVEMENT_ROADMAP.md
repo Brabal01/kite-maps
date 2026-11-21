@@ -3,6 +3,32 @@
 This is a living backlog, not a claim that everything below exists. Items already shipped are
 marked **done**; everything else needs code and tests.
 
+## v31 status
+
+- **Done (v31)**: `RoundaboutExitResolver` with evidence ordering, legal-exit
+  counting, dual-carriageway merge, ambiguity handling, one authoritative
+  maneuver, diagnostics.
+- **Done (v31)**: `DirectionalRoadControlMatcher` with way/direction matching,
+  stop-line de-duplication, route-distance display, browsing vs driving policy.
+- **Done (v31)**: `TransitLineIdentity`, mode classification, official colours,
+  contrast-safe text, LineChip 3.0, TripRow 3.0, journey timeline, shared-track
+  map offsets, mode-specific vehicle icons.
+- **Done (v31)**: 48 new VelaCore tests (336 total on Linux, 3 Darwin-only skips)
+  and v31 screenshot steps.
+- **Partial (v31)**: roundabout diagnostics are in Settings → Diagnostics and
+  the shared ZIP; there is no standalone roundabout debug map overlay.
+- **Partial (v31)**: simulator screenshots and IPA builds are wired into CI but
+  physical SideStore installation is still unverified.
+- Next (P1): in-app GPS replay UI with recorded/synthetic drives and golden
+  fixtures for roundabout/signal/transit scenarios.
+- Next (P1): physical-device verification of the v31 checklist.
+- Next (P2): offline journey persistence with the saved route geometry and
+  maneuvers; transit map filters; user-adjustable control density and transit
+  icon size.
+- Next (P2): transit Live Activity card with line colours.
+- Next (P3): turbo/spiral roundabout lane modelling from painted arrows.
+
+
 ## v30 status
 
 - **Done (v30)**: explicit `NavigationSessionState` and navigation-grade entry

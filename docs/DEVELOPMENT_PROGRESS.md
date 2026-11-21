@@ -2,6 +2,96 @@
 
 Updated: 2026-11-21
 
+## v31 navigation, traffic lights and transit (branch `iphone-custom-v31-navigation-transit`)
+
+Base: `804822f` on `iphone-custom-v29-redesign`, which already contains the v30
+PR #8. The v30 planning, navigation, lane, alert, map and HUD work is preserved.
+
+### P0 — Roundabout exit accuracy
+
+- **`RoundaboutExitResolver`** (`VelaCore/Sources/VelaCore/RoundaboutExitResolver.swift`)
+  is a pure, testable component. It rebuilds the circle from OSM ways, counts
+  only legally usable exits in the direction of travel, merges dual
+  carriageways, rejects private/access-restricted arms, and finds the route's
+  actual way off the circle.
+- Evidence order: complete OSM topology + route geometry → router + OSM agree →
+  OSM alone → router alone → Google alone → unresolved conflict (no number).
+- One authoritative maneuver: `exit`, `instruction`, `roundabout`,
+  `routerExit`, `alternativeExit`, `exitSource`, `exitConfidence` and
+  `exitAmbiguous` are written together. Banner, diagram, voice and Live
+  Activity all read the same `Maneuver`.
+- `Navigator.loadRoundabouts` freezes a maneuver that has already been spoken
+  (`spokenStage >= 2`), so late map evidence cannot contradict the driver.
+- Reroute identity guards (`route.id == r.id`) are unchanged; an old OSM answer
+  cannot touch a new route.
+- Mini-roundabouts keep their own count; the ring query no longer erases it.
+- Diagnostics: per-roundabout source/confidence/eligible/rejected lines are
+  available in Settings → Diagnostics and in the explicitly shared ZIP.
+- 16 new resolver tests plus the existing `RoundaboutTests`.
+
+### P0 — Directional traffic lights
+
+- **`DirectionalRoadControlMatcher`**
+  (`VelaCore/Sources/VelaCore/DirectionalRoadControlMatcher.swift`) asks whether
+  the route actually follows the OSM way the control is on, in a legal
+  direction, with a matching bearing. Proximity alone no longer qualifies.
+- `RouteControl` now keeps OSM id, way id, direction tag, route distance,
+  offset, confidence, source, `directionCertain`, `relevance` and a stop-line
+  key.
+- The 30 m merge is replaced by a 12 m/stop-line rule: two heads on one line
+  merge; two junctions 20 m apart do not.
+- `ControlDisplayPolicy` reads the control's own evidence; ambiguous controls
+  are browsing-only and hidden in active driving guidance.
+- The map layer uses route distance from `Navigator.allUpcomingControls`, not
+  straight-line distance, and drops passed controls.
+- `RouteEventCoverage` uses the matcher's `alongMeters` instead of re-projecting
+  each point at section boundaries.
+- 19 new matcher tests plus the existing policy, routing and walking tests.
+
+### P1 — Transit Design 3.0
+
+- **`TransitLineIdentity`** keeps provider/feed/agency/route ids, short/long
+  name, headsign, mode, route type, official colour/text colour, operator,
+  colour source and freshness.
+- `TransitMode` separates walk, bus, trolleybus, coach, tram, light rail, metro,
+  subway, suburban/regional/long-distance/high-speed rail, ferry, funicular,
+  cable car, aerial lift, monorail, bike and unknown. It maps Transitous strings
+  and GTFS route types; a line name never decides the mode.
+- Official `routeColor` wins; otherwise a mode-specific fallback is used and
+  clearly marked as non-official. `routeTextColor` is kept when its contrast is
+  at least 3:1, otherwise black/white is chosen.
+- `LineChip` 3.0: mode icon + line name + official colour + readable text.
+- `TripRow` 3.0: card with times, duration, wrapped line chips, changes/walk
+  summary, direction, delay, freshness and tight transfer.
+- `TransitSteps` is a vertical timeline with coloured ride rails, dotted walk
+  rails and a transfer node.
+- Map: one feature per line on a shared track, with pixel offsets and
+  mode-dependent widths; live vehicles use the mode icon.
+- 13 new identity tests plus the existing transit parser tests.
+
+### Tooling and CI
+
+- `custom-iphone.yml` builds `Kite-v31-Full.ipa` and
+  `Kite-v31-SideStore.ipa` from the same commit and uploads
+  `Kite-v31-Test-Results`.
+- `simulator-smoke.yml` captures `roundabout`, `roundaboutuncertain`, `signals`
+  and `transitcolors` in light mode, dark mode and large Dynamic Type, and
+  uploads `Kite-v31-Simulator-Screenshots`.
+- **Verified:** CI run 44928133658 built `Kite-v31-Full.ipa` and
+  `Kite-v31-SideStore.ipa` from `605793f`, build 1118; both passed structure
+  checks. CI run 44928133681 ran `V31UITests` (3/3) and captured the v31
+  screenshots.
+- Linux test portability: `WazeCameras`, the `vela-probe` HTTP imports and the
+  zlib fixture are guarded, so the same 336-test suite runs on Linux and macOS.
+
+### Not shipped in v31
+
+- A new in-app GPS replay UI. The existing `vela-probe` drive replay remains the
+  developer tool.
+- Offline journey persistence, transit map filters, and user-adjustable control
+  density. These stay on the roadmap.
+
+
 ## v30 advanced navigation (branch `iphone-custom-v30-advanced-navigation`, base `bb0cdfe`)
 
 The P0 planning fix from v29 is preserved. v30 adds:

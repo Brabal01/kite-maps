@@ -3,6 +3,33 @@
 Every version of Kite Maps, newest first. The small number goes up for fixes and polish, and
 the middle number for big milestones.
 
+## v31 navigation, traffic lights and transit (iPhone custom, branch `iphone-custom-v31-navigation-transit`)
+
+Built on `804822f` (v29 base with the v30 PR #8 merged). App version stays 0.8.0
+until the v31 release number is chosen.
+
+- **Roundabout Exit Resolver:** one tested component decides the exit from OSM
+  topology and the route's own way off the circle, with router and Google as
+  corroborating evidence. It corrects wrong router numbers, refuses to invent a
+  number when the map is ambiguous, and keeps the banner, diagram, voice and
+  Live Activity on the same maneuver. A spoken prompt is frozen against late
+  map evidence.
+- **Directional traffic lights:** a light is shown only when the route follows
+  its OSM way in a legal direction. Opposite carriageways, crossing roads,
+  parallel roads and overpasses are filtered out; two heads on one stop line
+  merge, two junctions 20 m apart do not. Navigation uses route distance, not
+  crow-flight distance.
+- **Transit Design 3.0:** line identity with provider/agency/route ids, official
+  colours and text contrast, 19 vehicle modes, distinct icons, a new LineChip,
+  trip cards, a vertical journey timeline, shared-track map offsets and
+  mode-specific live vehicle icons.
+- **Diagnostics:** per-roundabout source, confidence and eligible-exit lines in
+  Settings → Diagnostics and the explicitly shared ZIP.
+- **CI:** v31 Full and SideStore IPAs from the same commit, v31 test results,
+  and v31 simulator screenshots including dark mode and large Dynamic Type.
+- **Linux test portability:** guarded the Darwin-only compression paths so the
+  full VelaCore suite runs on Linux (336 tests, 3 Darwin-only skips).
+
 ## v30 advanced navigation (iPhone custom, branch `iphone-custom-v30-advanced-navigation`)
 
 Built on the v29 planning fix (`bb0cdfe`); the app version stays 0.8.0 until

@@ -10,6 +10,9 @@ enum SafeMode {
     static let active: Bool = {
         let defaults = UserDefaults.standard
         if ProcessInfo.processInfo.arguments.contains("--safe-mode") { return true }
+        // The screenshot and UI-test demo launches must always show the real
+        // screens, even when an earlier debug launch left the switch on.
+        if ProcessInfo.processInfo.arguments.contains("-demo") { return false }
         if defaults.bool(forKey: "safeMode") { return true }
         if let marker = defaults.object(forKey: "launchMarker") as? Date,
            Date().timeIntervalSince(marker) < 120 {
