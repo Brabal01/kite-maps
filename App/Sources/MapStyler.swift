@@ -1,5 +1,6 @@
 import MapLibre
 import UIKit
+import VelaCore
 
 /** Restyles the Liberty basemap while preserving its layers and zoom ranges. */
 enum MapStyler {
