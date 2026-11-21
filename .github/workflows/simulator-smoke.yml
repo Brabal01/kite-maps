@@ -3,9 +3,9 @@ name: iOS simulator smoke test
 on:
   workflow_dispatch:
   push:
-    branches: [iphone-custom-v30-advanced-navigation, iphone-custom-v31-navigation-transit, iphone-custom-v32-refinement]
+    branches: [iphone-custom-v30-advanced-navigation, iphone-custom-v31-navigation-transit, iphone-custom-v32-refinement, iphone-custom-v33-reliability-ux]
   pull_request:
-    branches: [iphone-custom-v29-redesign, iphone-custom-v30-advanced-navigation, iphone-custom-v31-navigation-transit, iphone-custom-v32-refinement]
+    branches: [iphone-custom-v29-redesign, iphone-custom-v30-advanced-navigation, iphone-custom-v31-navigation-transit, iphone-custom-v32-refinement, iphone-custom-v33-reliability-ux]
 
 permissions:
   contents: read
@@ -247,7 +247,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Kite-v32-Simulator-Screenshots
+          name: Kite-v33-Simulator-Screenshots
           path: |
             demo-*.png
             screenshots-check.txt
@@ -256,7 +256,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: simulator-smoke-logs-v32
+          name: simulator-smoke-logs-v33
           path: |
             simulator-build.log
             planning-ui-test.log
