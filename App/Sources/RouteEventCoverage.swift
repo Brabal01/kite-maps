@@ -33,7 +33,8 @@ final class RouteEventCoverage {
                         let distances = Geo.cumulative(section)
                         let batch = result.compactMap { event -> UpcomingRoadControl? in
                             if route.mode == .drive && !event.kind.showsDuringDriving { return nil }
-                            let at = from + Geo.project(event.location, on: section, cumulative: distances).along
+                            let at = from + (event.alongMeters
+                                ?? Geo.project(event.location, on: section, cumulative: distances).along)
                             guard at >= start, at < end || end == total else { return nil }
                             return UpcomingRoadControl(control: event, meters: at)
                         }

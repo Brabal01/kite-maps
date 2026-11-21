@@ -1040,7 +1040,7 @@ enum DemoScript {
             model.startNavigation()
             return
         }
-        if step == "roundabout" {
+        if step == "roundabout" || step == "roundaboutuncertain" || step == "signals" {
             // Matteo's M27 roundabout drawn in the banner, in miles and yards, with the camera alert.
             model.settings.units = .yards
             let to = Place(id: "demo-pitlochry", name: "Pitlochry", location: LatLng(56.7030, -3.7340), source: "demo")
@@ -1050,7 +1050,13 @@ enum DemoScript {
             await wait(10)
             model.startNavigation()
             await wait(5)
-            model.nav?.showDemoRoundabout()
+            if step == "roundaboutuncertain" {
+                model.nav?.showDemoRoundaboutUncertain()
+            } else if step == "signals" {
+                model.nav?.showDemoSignals()
+            } else {
+                model.nav?.showDemoRoundabout()
+            }
             model.nav?.showDemoAlerts()
             return
         }
@@ -1086,13 +1092,18 @@ enum DemoScript {
             model.nav?.showDemoSpeed(limitKmh: 96.6, mph: 57)
             return
         }
-        if step == "transit" {
+        if step == "transit" || step == "transitcolors" {
             // Davis to Sacramento Valley Station: buses and Amtrak.
             let station = Place(id: "demo-sac", name: "Sacramento Valley Station", location: LatLng(38.5843, -121.5006), source: "demo")
             model.select(station)
             await wait(2)
             model.openDirections(to: station)
             model.showTransit()
+            if step == "transitcolors" {
+                // Deterministic metro/tram/bus/train colors and modes, not a live timetable.
+                await wait(1)
+                model.installDemoTransitTrips()
+            }
             return
         }
         if step == "streetview" {

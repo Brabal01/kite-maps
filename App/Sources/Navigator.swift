@@ -75,6 +75,9 @@ final class Navigator: ObservableObject {
     /** Traffic lights on the route, one per junction, drawn on the map like Waze. */
     @Published private(set) var routeSignals: [LatLng] = []
     @Published private(set) var routeControls: [RouteControl]?
+    /** The resolved exit number and its evidence for each roundabout on this route, for the
+        optional developer panel and an explicitly shared diagnostics file. No coordinates. */
+    @Published private(set) var roundaboutDiagnostics: [String] = []
     private var coverage: RouteEventCoverage?
     @Published private(set) var controlsUnavailable = false
     @Published private(set) var upcomingControls: [UpcomingRoadControl] = []
@@ -86,7 +89,9 @@ final class Navigator: ObservableObject {
             let line = route.polyline
             let cumulative = Geo.cumulative(line)
             events = routeSignals.map { signal in
-                UpcomingRoadControl(control: RouteControl(kind: .light, location: signal),
+                UpcomingRoadControl(control: RouteControl(kind: .light, location: signal,
+                                                          confidence: 0.45, source: "proximity",
+                                                          directionCertain: false, relevance: .ambiguous),
                                     meters: Geo.project(signal, on: line, cumulative: cumulative).along)
             }.sorted { $0.meters < $1.meters }
         } else {
@@ -568,6 +573,7 @@ final class Navigator: ObservableObject {
         guard route.mode != .walk else { return }
         let start = route
         quietMerges = []
+        roundaboutDiagnostics = []
         // "Merge onto…" only where a lane really ends: a slip road that becomes a lane of its own is said nothing.
         if route.mode == .drive, start.maneuvers.contains(where: { $0.type == .merge && !$0.silent }) {
             Task {
@@ -585,12 +591,35 @@ final class Navigator: ObservableObject {
             }
             guard r.maneuvers.contains(where: { $0.type == .roundabout }),
                   let drawn = await Roundabouts.apply(to: r), self.route.id == r.id, self.route.maneuvers.count == drawn.maneuvers.count else { return }
-            // Only the roundabout layouts change; the line and steps are the same.
+            // The number, the words and the picture change together, so banner, diagram, voice and
+            // Live Activity read one authoritative maneuver. A prompt already spoken is frozen:
+            // late map evidence must not contradict what the driver has just heard.
             for i in self.route.maneuvers.indices where i < drawn.maneuvers.count {
-                self.route.maneuvers[i].roundabout = drawn.maneuvers[i].roundabout
+                let d = drawn.maneuvers[i]
+                guard d.type == .roundabout, (self.spokenStage[i] ?? 0) < 2 else { continue }
+                self.route.maneuvers[i].roundabout = d.roundabout
+                self.route.maneuvers[i].exit = d.exit
+                self.route.maneuvers[i].instruction = d.instruction
+                self.route.maneuvers[i].routerExit = d.routerExit
+                self.route.maneuvers[i].alternativeExit = d.alternativeExit
+                self.route.maneuvers[i].exitSource = d.exitSource
+                self.route.maneuvers[i].exitConfidence = d.exitConfidence
+                self.route.maneuvers[i].exitAmbiguous = d.exitAmbiguous
             }
             // The road matcher's lane counts, where OpenStreetMap's layout came without them.
             if let steps = Roundabouts.withEntryLanes(self.route.maneuvers, self.entryLanes) { self.route.maneuvers = steps }
+            self.roundaboutDiagnostics = drawn.maneuvers
+                .filter { $0.type == .roundabout && !$0.leavesRoundabout }
+                .flatMap { m -> [String] in
+                    ["— \(m.road ?? "roundabout") at \(Int(m.alongMeters)) m",
+                     "final: \(m.exit.map(String.init) ?? "-")",
+                     "source: \(m.exitSource?.rawValue ?? "-")",
+                     "confidence: \(String(format: "%.2f", m.exitConfidence ?? 0))",
+                     "router: \(m.routerExit.map(String.init) ?? "-")",
+                     "google: \(m.alternativeExit.map(String.init) ?? "-")",
+                     "eligible exits: \(m.roundabout?.exits.count ?? 0)",
+                     "ambiguous: \(m.exitAmbiguous)"]
+                }
         }
     }
 
@@ -977,9 +1006,45 @@ final class Navigator: ObservableObject {
         var m = Maneuver(type: .roundabout, instruction: "At the roundabout, take the 6th exit onto M27",
                          location: LatLng(50.87, -1.27), alongMeters: 0, distanceMeters: 400, road: "M27", laneHint: nil)
         m.exit = 6
+        m.routerExit = 6
+        m.exitSource = .routerCorroborated
+        m.exitConfidence = 0.96
         m.roundabout = RoundaboutShape(exits: [262, 300, 338, 20, 62, 108], taken: 5, entriesOnly: [150],
                                        clockwise: true, complete: true)
         demoManeuver = m
+        objectWillChange.send()
+    }
+
+    /** For the build's screenshots: the same roundabout when the sources disagree, so no number is claimed. */
+    func showDemoRoundaboutUncertain() {
+        var m = Maneuver(type: .roundabout, instruction: "At the roundabout, take the exit onto A33",
+                         location: LatLng(50.87, -1.27), alongMeters: 0, distanceMeters: 400, road: "A33", laneHint: nil)
+        m.exit = nil
+        m.routerExit = 2
+        m.alternativeExit = 4
+        m.exitSource = .ambiguous
+        m.exitConfidence = 0.35
+        m.exitAmbiguous = true
+        m.roundabout = RoundaboutShape(exits: [262, 300, 338, 20, 62], taken: 2, clockwise: true, complete: true)
+        demoManeuver = m
+        objectWillChange.send()
+    }
+
+    /** For the build's screenshots: two signalised junctions close together, both on our approach. */
+    func showDemoSignals() {
+        let along = progress?.alongMeters ?? 0
+        let total = Geo.length(route.polyline)
+        let cum = Geo.cumulative(route.polyline)
+        func at(_ meters: Double) -> LatLng {
+            Geo.point(along: route.polyline, meters: min(total, along + meters), cumulative: cum)
+        }
+        func light(_ meters: Double, _ confidence: Double) -> RouteControl {
+            RouteControl(kind: .light, location: at(meters), alongMeters: along + meters,
+                         confidence: confidence, source: "osm", directionCertain: true)
+        }
+        let controls = [light(90, 0.95), light(110, 0.93), light(320, 0.9)]
+        orderedControls = controls.map { UpcomingRoadControl(control: $0, meters: $0.alongMeters ?? 0) }
+        refreshUpcomingControls(along)
         objectWillChange.send()
     }
 

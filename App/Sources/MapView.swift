@@ -315,12 +315,15 @@ struct VelaMapView: UIViewRepresentable {
             let ride = line("vela-transit-ride", transitSrc, UIColor(hex: 0x1F6FEB), width: 7)
             ride.predicate = NSPredicate(format: "walk == 0")
             ride.lineColor = NSExpression(mglJSONObject: ["to-color", ["get", "color"]])
+            // A metro, a tram and a bus stay visibly different even when two operators pick
+            // similar colors: the line's own width carries the mode.
+            ride.lineWidth = NSExpression(mglJSONObject: Self.transitWidth(extra: 1.5))
             [walk, rideEdge, ride].forEach(insert)
             // Live vehicle positions from an optional GTFS-Realtime feed.
             let vehicleSrc = MLNShapeSource(identifier: "vela-transit-vehicle", shape: nil, options: nil)
             style.addSource(vehicleSrc)
             let vehicle = MLNSymbolStyleLayer(identifier: "vela-transit-vehicle", source: vehicleSrc)
-            vehicle.iconImageName = NSExpression(forConstantValue: "transit-vehicle")
+            vehicle.iconImageName = NSExpression(forKeyPath: "icon")
             vehicle.iconAllowsOverlap = NSExpression(forConstantValue: true)
             vehicle.text = NSExpression(forKeyPath: "label")
             vehicle.textFontNames = NSExpression(forConstantValue: ["Noto Sans Bold"])
@@ -343,6 +346,11 @@ struct VelaMapView: UIViewRepresentable {
             let railCase = line("vela-rail-case", railSrc, UIColor(white: dark ? 0 : 1, alpha: 0.9), width: 5.5)
             let rail = line("vela-rail", railSrc, .gray, width: 3.2)
             rail.lineColor = NSExpression(format: "CAST(color, 'UIColor')")
+            // Lines sharing one track are drawn side by side instead of the last one winning.
+            rail.lineOffset = NSExpression(forKeyPath: "offset")
+            railCase.lineOffset = NSExpression(forKeyPath: "offset")
+            rail.lineWidth = NSExpression(mglJSONObject: Self.transitWidth(extra: 0))
+            railCase.lineWidth = NSExpression(mglJSONObject: Self.transitWidth(extra: 2.2))
             for l in [railCase, rail] {
                 l.minimumZoomLevel = 10
                 l.isVisible = false
@@ -572,6 +580,20 @@ struct VelaMapView: UIViewRepresentable {
             return trimmed
         }
 
+        /** Line width by vehicle kind: a metro reads heavier than a tram, a bus lighter still. */
+        private static func transitWidth(extra: Double) -> [Any] {
+            func w(_ metro: Double, _ tram: Double, _ rail: Double, _ bus: Double, _ other: Double) -> [Any] {
+                ["match", ["get", "mode"],
+                 "metro", metro + extra, "subway", metro + extra,
+                 "tram", tram + extra, "lightRail", tram + extra, "monorail", tram + extra,
+                 "suburbanRail", rail + extra, "regionalTrain", rail + extra,
+                 "longDistanceTrain", rail + extra, "highSpeedRail", rail + extra,
+                 "bus", bus + extra, "trolleybus", bus + extra, "coach", bus + extra,
+                 other + extra]
+            }
+            return w(5.2, 4.6, 4.2, 3.6, 3.2)
+        }
+
         private func line(_ id: String, _ src: MLNSource, _ color: UIColor, width: Double) -> MLNLineStyleLayer {
             let l = MLNLineStyleLayer(identifier: id, source: src)
             l.lineColor = NSExpression(forConstantValue: color)
@@ -758,25 +780,40 @@ struct VelaMapView: UIViewRepresentable {
         }
 
         private func renderSignals() {
-            let routeControls = model.nav?.routeControls ?? (model.nav == nil && model.hasActiveJourney
-                ? model.nearbyControls.filter { !model.justDrive || $0.kind.showsDuringDriving } : (model.nav == nil ? model.previewCoverage?.events.map(\.control) : nil))
-            let walking = model.nav?.route.mode == .walk ||
-                (model.nav == nil && (model.directions?.route?.mode == .walk || model.transitJourney?.leg.isWalk == true))
-            let cycling = model.nav?.route.mode == .bike
-            let activity: MapActivity = model.nav != nil
+            let nav = model.nav
+            let walking = nav?.route.mode == .walk ||
+                (nav == nil && (model.directions?.route?.mode == .walk || model.transitJourney?.leg.isWalk == true))
+            let cycling = nav?.route.mode == .bike
+            let activity: MapActivity = nav != nil
                 ? (walking ? .navigatingWalk : cycling ? .navigatingBike : .navigatingDrive)
                 : (model.justDrive ? .freeDrive : .browsing)
-            let here = model.nav?.progress?.snapped ?? model.userLatLng
-            func relevant(_ controls: [RouteControl]?) -> [RouteControl]? {
-                controls?.filter { control in
-                    let distance = here.map { $0.distance(to: control.location) }
-                    return ControlDisplayPolicy.shouldShow(control, activity: activity,
-                                                           distanceAhead: distance)
+            let here = nav?.progress?.snapped ?? model.userLatLng
+            func shown(_ control: RouteControl, distance: Double?) -> Bool {
+                ControlDisplayPolicy.shouldShow(control, activity: activity, distanceAhead: distance,
+                                                directionCertain: control.directionCertain)
+            }
+            let controls: [RouteControl]?
+            if let nav {
+                // Route distance, not the crow's flight: a signal 40 m ahead along a bend is not
+                // 8 m ahead, and one already passed must not come back.
+                controls = nav.allUpcomingControls.compactMap { event in
+                    shown(event.control, distance: event.meters) ? event.control : nil
+                }
+            } else {
+                let source = nav == nil && model.hasActiveJourney
+                    ? model.nearbyControls.filter { !model.justDrive || $0.kind.showsDuringDriving }
+                    : (nav == nil ? model.previewCoverage?.events.map(\.control) : nil)
+                controls = source?.filter { control in
+                    shown(control, distance: here.map { $0.distance(to: control.location) })
                 }
             }
-            let controls = relevant(routeControls)
+            // A proximity-only fallback when the directional lookup failed: browsing context only,
+            // never dressed up as a confirmed light for our approach.
             let signals = controls?.isEmpty != false
-                ? relevant((model.nav?.routeSignals ?? []).map { RouteControl(kind: .light, location: $0) })?.map(\.location) ?? []
+                ? (nav?.routeSignals ?? []).filter { signal in
+                    guard let here else { return true }
+                    return here.distance(to: signal) <= 350
+                }
                 : []
             guard controls != drawnControls || signals != drawnSignals else { return }
             drawnControls = controls
@@ -918,7 +955,8 @@ struct VelaMapView: UIViewRepresentable {
                 if let lines {
                     self.railBox = box
                     let shapes = lines.map { l in
-                        self.polyline(l.points, ["color": String(format: "#%06X", l.color)])
+                        self.polyline(l.points, ["color": String(format: "#%06X", l.color),
+                                                 "offset": l.offset, "mode": l.mode.rawValue])
                     }
                     self.publish(MLNShapeCollectionFeature(shapes: shapes), to: "vela-rail")
                 }
@@ -1127,7 +1165,9 @@ struct VelaMapView: UIViewRepresentable {
             publish(MLNShapeCollectionFeature(shapes: alts.map { polyline($0.polyline) }), to: "vela-route-alt")
             publish(trip.map { t in
                 MLNShapeCollectionFeature(shapes: t.legs.dropFirst(firstLeg).filter { $0.path.count >= 2 }.map { leg in
-                    polyline(leg.path, ["walk": leg.isWalk ? 1 : 0, "color": String(format: "#%06X", leg.color ?? 0x1F6FEB)])
+                    polyline(leg.path, ["walk": leg.isWalk ? 1 : 0,
+                                        "color": String(format: "#%06X", leg.identity.color),
+                                        "mode": leg.identity.mode.rawValue])
                 })
             }, to: "vela-transit")
             guard let r = main else {
@@ -1236,7 +1276,7 @@ struct VelaMapView: UIViewRepresentable {
                 guard let vehicle = leg.liveVehicle else { return nil }
                 let f = MLNPointFeature()
                 f.coordinate = CLLocationCoordinate2D(latitude: vehicle.location.lat, longitude: vehicle.location.lng)
-                f.attributes = ["icon": "transit-vehicle", "label": leg.line]
+                f.attributes = ["icon": "transit-\(leg.identity.mode.rawValue)", "label": leg.line]
                 return f
             }
             let key = features.map {
