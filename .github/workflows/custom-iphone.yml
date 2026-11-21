@@ -47,6 +47,18 @@ jobs:
         run: |
           mkdir -p ../test-artifacts
           KITE_VERIFY_GOOGLE=1 swift test 2>&1 | tee ../test-artifacts/velacore-tests.log
+      - name: Reproducible core benchmarks
+        working-directory: VelaCore
+        run: |
+          mkdir -p ../test-artifacts
+          swift run vela-bench > ../test-artifacts/v33-benchmarks.json
+          python3 -c "import json; d=json.load(open('../test-artifacts/v33-benchmarks.json')); assert len(d['results']) >= 8"
+      - name: Upload performance results
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kite-v33-Performance-Results
+          path: test-artifacts/v33-benchmarks.json
+          if-no-files-found: error
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Make the Xcode project
