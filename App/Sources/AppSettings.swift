@@ -265,10 +265,11 @@ final class AppSettings: ObservableObject {
         plateCameras = d.object(forKey: "plateCameras") as? Bool ?? true
         // On for new users, except where warning of cameras is against the law.
         cameraWarnings = d.object(forKey: "cameraWarnings") as? Bool ?? true
-        cameraJurisdictionResponsible = d.bool(forKey: "cameraJurisdictionResponsible")
+        let responsible = d.bool(forKey: "cameraJurisdictionResponsible")
+        cameraJurisdictionResponsible = responsible
         // An offline first launch has no verified country. The device region is a hint only, and only
         // for someone who has explicitly accepted responsibility for checking the local law.
-        if cameraJurisdictionResponsible {
+        if responsible {
             cameraJurisdiction = CameraJurisdiction.policy(isoCountryCode: Locale.current.region?.identifier)
         }
         speedingAlert = d.bool(forKey: "speedingAlert")
