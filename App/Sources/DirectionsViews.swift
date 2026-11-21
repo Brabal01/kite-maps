@@ -351,6 +351,7 @@ struct TripHeader: View {
         }
         .buttonStyle(KitePrimaryButtonStyle(height: 62))
         .accessibilityLabel("Start navigation")
+        .accessibilityIdentifier("start-navigation")
     }
 
     @ViewBuilder private func closingLine(_ d: DirectionsState) -> some View {

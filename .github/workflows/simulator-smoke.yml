@@ -76,6 +76,19 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" | tee v31-ui-test.log | tail -n 120
+      - name: v33 replay, settings search and route preview UI regression
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project Kite.xcodeproj \
+            -scheme Kite \
+            -configuration Debug \
+            -destination "id=${{ steps.simulator.outputs.udid }}" \
+            -derivedDataPath build \
+            -only-testing:KiteUITests/V33UITests \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" | tee v33-ui-test.log | tail -n 120
       - name: Install and launch repeatedly
         run: |
           set -euo pipefail
@@ -248,6 +261,7 @@ jobs:
             simulator-build.log
             planning-ui-test.log
             v31-ui-test.log
+            v33-ui-test.log
             launch-*.txt
             kite-*.log
             demo-*.txt
