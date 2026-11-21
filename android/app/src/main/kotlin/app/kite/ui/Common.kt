@@ -134,7 +134,7 @@ fun BottomSheet(
             .height(with(density) { current.toDp() })
             .shadow(14.dp, shape)
             .clip(shape)
-            .background(Vela.sheet(dark).copy(alpha = 0.97f))
+            .background(interfaceSheet.copy(alpha = 0.97f))
             .border(0.75.dp, Color.White.copy(alpha = if (dark) 0.12f else 0.5f), shape)
             .nestedScroll(connection)
     ) {

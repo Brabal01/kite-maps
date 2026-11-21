@@ -40,6 +40,7 @@ class NavGlide : Choreographer.FrameCallback {
     }
     /** The map's height in dp. */
     var heightDp = 800f
+    var widthDp = 400f
     /**
      * True while the camera follows the car: the car then always sits at the same spot on screen,
      * so the navigation screen draws it there itself (steady, never fading) instead of the map.
@@ -196,7 +197,6 @@ class NavGlide : Choreographer.FrameCallback {
         shownAcross += (targetAcross - shownAcross) * (if (dt == 0.0) 1.0 else 1 - exp(-dt / zoomTime))
         shownPitch += (targetPitch - shownPitch) * (if (dt == 0.0) 1.0 else 1 - exp(-dt / zoomTime))
 
-        val style = m.style
         val entering = cameraEntry != null
         if (n.following && !entering) {
             if (!carOnScreen) carOnScreen = true
@@ -211,7 +211,7 @@ class NavGlide : Choreographer.FrameCallback {
             if (last == null || now - puckPushedAt > 1_000_000_000L || last.distanceTo(coordNow) > 25 || turned > 20) {
                 val marker = Feature.fromGeometry(Point.fromLngLat(coordNow.lng, coordNow.lat))
                     .apply { addNumberProperty("bearing", shownBearing) }
-                (style?.getSource(PUCK) as? GeoJsonSource)?.setGeoJson(marker)
+                (m.style?.getSource(PUCK) as? GeoJsonSource)?.setGeoJson(marker)
                 onMapPuck?.invoke(marker)
                 puckPushed = coordNow; puckPushedAt = now; puckPushedBearing = shownBearing; puckOnMap = true
             }
@@ -232,7 +232,7 @@ class NavGlide : Choreographer.FrameCallback {
             carTurn = carAngle.toFloat()
             carSquash = (1 - 0.36 * (shownPitch / 50.0).coerceIn(0.0, 1.0)).toFloat()
             // A pitched camera sees farther than the same zoom flat: zoom in a little to match the iPhone's distance.
-            val zoom = MapCam.zoomFor(shownAcross, coordNow.lat, 400f) + 0.35
+            val zoom = MapCam.zoomFor(shownAcross, coordNow.lat, widthDp) + 0.35
             val camera = CameraPosition.Builder().target(coordNow.ml()).zoom(zoom).tilt(shownPitch).bearing(heading)
                 .padding(0.0, topInset(heightDp) * (1 - northBlend) * d, 0.0, BOTTOM_INSET * d).build()
             val visible = enter(camera)

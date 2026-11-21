@@ -72,7 +72,7 @@ fun SavedPage(model: AppModel) {
     fun show(p: Place) { model.tab = AppTab.MAP; model.openSaved(p) }
     fun distance(p: Place) = model.userLatLng?.let { Fmt.distance(it.distanceTo(p.location)) }
 
-    Box(Modifier.fillMaxSize().background(Vela.ground(dark))) {
+    Box(Modifier.fillMaxSize().background(interfaceGround)) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).statusBarsPadding().padding(horizontal = 16.dp).padding(top = 12.dp, bottom = 140.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -90,7 +90,7 @@ fun SavedPage(model: AppModel) {
                     MineTile(model, Icons.Filled.Work, hex(0x8B5CF6), "Work", s.work, PickKind.WORK, ::go, ::distance)
                 }
                 s.parking?.let { car ->
-                    Box(Modifier.clip(RoundedCornerShape(24.dp)).background(Vela.surface(dark))) {
+                    Box(Modifier.clip(RoundedCornerShape(24.dp)).background(interfaceSurface)) {
                         SavedRow(car, Icons.Filled.LocalParking, Vela.routeBlue, distance(car), null, ::show, ::go)
                     }
                 }
@@ -127,7 +127,7 @@ fun SavedPage(model: AppModel) {
                     Text(if (folder == null) "Open any place and tap Save to keep it here." else "Hold a saved place and choose Lists to add it here.", fontSize = KType.body, color = Vela.muted(dark), textAlign = TextAlign.Center)
                 }
             } else {
-                Column(Modifier.clip(RoundedCornerShape(24.dp)).background(Vela.surface(dark))) {
+                Column(Modifier.clip(RoundedCornerShape(24.dp)).background(interfaceSurface)) {
                     places.forEachIndexed { i, p ->
                         if (i > 0) HorizontalDivider(Modifier.padding(start = 78.dp))
                         SavedRow(p, Icons.Filled.Bookmark, hex(0xF59E0B), distance(p), { action ->
@@ -200,7 +200,7 @@ private fun RowScope.MineTile(model: AppModel, icon: ImageVector, color: Color, 
     val dark = LocalDark.current
     var menu by remember { mutableStateOf(false) }
     Box(Modifier.weight(1f)) {
-        Column(Modifier.fillMaxWidth().heightIn(min = 118.dp).clip(RoundedCornerShape(24.dp)).background(Vela.surface(dark))
+        Column(Modifier.fillMaxWidth().heightIn(min = 118.dp).clip(RoundedCornerShape(24.dp)).background(interfaceSurface)
             .combinedClickable(onClick = { if (place != null) go(place) else model.picking = kind }, onLongClick = { if (place != null) menu = true })
             .padding(16.dp), verticalArrangement = Arrangement.SpaceBetween) {
             Box(Modifier.size(48.dp).clip(CircleShape).background(if (place == null) Color.Gray else color), contentAlignment = Alignment.Center) {
@@ -269,7 +269,7 @@ fun SettingsPage(model: AppModel) {
         "mapsettings" -> SettingsScreen.MAP
         else -> SettingsScreen.MENU
     }) }
-    Box(Modifier.fillMaxSize().background(Vela.ground(dark))) {
+    Box(Modifier.fillMaxSize().background(interfaceGround)) {
         Column(Modifier.fillMaxSize().statusBarsPadding()) {
             if (screen == SettingsScreen.MENU) {
                 Text("Settings", fontSize = 34.sp, fontWeight = FontWeight.ExtraBold, color = primaryText, modifier = Modifier.padding(start = 20.dp, top = 12.dp, bottom = 8.dp))
@@ -313,7 +313,7 @@ fun SettingsGroup(header: String? = null, footer: String? = null, content: @Comp
     Column(Modifier.padding(top = 10.dp)) {
         if (header != null) Text(header.uppercase(), fontSize = KType.caption, fontWeight = FontWeight.SemiBold, color = secondaryText,
             modifier = Modifier.padding(start = 16.dp, bottom = 6.dp))
-        Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Vela.surface(dark))) { content() }
+        Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(interfaceSurface)) { content() }
         if (footer != null) Text(footer, fontSize = KType.caption, color = secondaryText, modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 6.dp))
     }
 }
@@ -337,7 +337,7 @@ fun ToggleRow(title: String, icon: ImageVector?, color: Long, on: Boolean, enabl
         if (leading != null) { leading(); Spacer(Modifier.width(10.dp)); Text(title, fontSize = KType.body, color = primaryText, modifier = Modifier.weight(1f)) }
         else SettingLabel(title, icon, color, Modifier.weight(1f))
         Switch(on, { if (enabled) set(it) }, enabled = enabled,
-            colors = SwitchDefaults.colors(checkedTrackColor = Vela.accent(dark), checkedThumbColor = Color.White))
+            colors = SwitchDefaults.colors(checkedTrackColor = interfaceAccent, checkedThumbColor = interfaceOnAccent))
     }
 }
 
@@ -408,6 +408,13 @@ private fun DrivingSettings() {
         ToggleRow("Avoid tolls", Icons.Filled.Toll, 0xF59E0B, s.avoidTolls) { s.avoidTolls = it }
         RowDivider()
         ToggleRow(if (Fmt.yards) "Avoid motorways" else "Avoid highways", Icons.Filled.AddRoad, 0x1D4ED8, s.avoidHighways) { s.avoidHighways = it }
+        RowDivider()
+        ToggleRow("My car meets clean air zone rules", Icons.Filled.Eco, 0x16A34A, s.cleanCar) { s.cleanCar = it }
+    }
+    SettingsGroup(footer = "With Kite open and no route, the driving view comes up by itself once you're going faster than about 15 mph, " +
+        "with cameras, the speed limit and the road's name. It goes back to the map after a couple of minutes parked. " +
+        "Turn this off if you're often a passenger.") {
+        ToggleRow("Driving view when I set off", Icons.Filled.DirectionsCar, 0x0F766E, s.autoDrive) { s.autoDrive = it }
     }
 }
 
@@ -479,6 +486,13 @@ private fun MapSettings() {
         MapUiColorRow("Light interface panels", s.mapUiDayPanel, lightPanelColors) { s.mapUiDayPanel = it }
         RowDivider()
         MapUiColorRow("Dark interface panels", s.mapUiNightPanel, darkPanelColors) { s.mapUiNightPanel = it }
+    }
+    SettingsGroup(header = "Map icon sizes") {
+        PinSizeRow("Google Maps icons", s.googleIconPercent) { s.googleIconPercent = it }
+        RowDivider()
+        PinSizeRow("OpenStreetMap icons", s.osmIconPercent) { s.osmIconPercent = it }
+        RowDivider()
+        PinSizeRow("Search results", s.resultIconPercent) { s.resultIconPercent = it }
     }
     MapboxSettings()
     SettingsGroup(header = "Mapbox Standard", footer = "Mapbox Standard uses your Mapbox token. Street lamps use mapped posts and estimated placement on nearby streets at street zoom.") {
@@ -561,6 +575,19 @@ private fun MapSettings() {
                 s.roadWazeKinds = if (on) s.roadWazeKinds + kind else s.roadWazeKinds - kind
             }
         }
+    }
+}
+
+@Composable
+private fun PinSizeRow(title: String, percent: Int, save: (Int) -> Unit) {
+    var value by remember(percent) { mutableFloatStateOf(percent.coerceIn(60, 160).toFloat()) }
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 7.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(title, modifier = Modifier.weight(1f), color = primaryText)
+            Text("${value.toInt()}%", color = secondaryText)
+        }
+        Slider(value, { value = it }, valueRange = 60f..160f, steps = 9, onValueChangeFinished = { save(value.toInt()) },
+            modifier = Modifier.semantics { contentDescription = title })
     }
 }
 
@@ -927,7 +954,7 @@ private fun WazeSettings() {
 fun LayersSheet(liveCount: Int? = null, close: () -> Unit) {
     val s = AppSettings
     val dark = LocalDark.current
-    ModalBottomSheet(onDismissRequest = close, containerColor = Vela.sheet(dark), dragHandle = null) {
+    ModalBottomSheet(onDismissRequest = close, containerColor = interfaceSheet, dragHandle = null) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(20.dp).navigationBarsPadding(), verticalArrangement = Arrangement.spacedBy(18.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Layers", fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, color = primaryText, modifier = Modifier.weight(1f))

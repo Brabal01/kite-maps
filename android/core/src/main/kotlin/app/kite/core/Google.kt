@@ -101,7 +101,18 @@ class GoogleClient {
         }
         if (legacy.isNotEmpty()) return legacy
         val request = GooglePlaceMedia.reviewFeedRequest(featureId) ?: return emptyList()
-        return GooglePlaceMedia.reviewFeed(placeBatch("qv9Egd", request))
+        val feed = try {
+            GooglePlaceMedia.reviewFeed(placeBatch("qv9Egd", request))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            emptyList()
+        }
+        if (feed.isNotEmpty()) return feed
+        val releaseUrl = GoogleReviews.url(featureId) ?: return emptyList()
+        return GoogleReviews.parse(get(releaseUrl, "https://www.google.com/", true)).orEmpty().map {
+            PlaceReview(it.author, it.rating, it.whenText, it.text, emptyList())
+        }
     }
 
     suspend fun photos(featureId: String): List<String> {

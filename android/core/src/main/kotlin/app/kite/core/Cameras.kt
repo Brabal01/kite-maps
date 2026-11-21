@@ -69,6 +69,8 @@ object Overpass {
     )
 
     private val client = Http.client(45)
+    private val localClient = Http.client(8)
+    private val localEndpoints = listOf("https://overpass.openstreetmap.fr/api/interpreter") + endpoints
     private const val UA = "Kite-Maps-Android (https://github.com/matteofx1/kite-maps)"
 
     /** A mapped road with a posted limit (OSM `maxspeed`), in km/h, and its shape. */
@@ -213,17 +215,20 @@ object Overpass {
      * Asks the mirrors one after another, but without waiting out a slow one: each next mirror is
      * asked [stagger] seconds after the last, and the first good answer wins.
      */
-    suspend fun firstAnswer(q: String, stagger: Double = 8.0, valid: (ByteArray) -> Boolean): ByteArray? = coroutineScope {
-        val results = Channel<ByteArray?>(endpoints.size)
-        val jobs = endpoints.mapIndexed { i, ep ->
+    suspend fun firstAnswer(
+        q: String, stagger: Double = 8.0, useLocalMirrors: Boolean = false, valid: (ByteArray) -> Boolean,
+    ): ByteArray? = coroutineScope {
+        val mirrors = if (useLocalMirrors) localEndpoints else endpoints
+        val results = Channel<ByteArray?>(mirrors.size)
+        val jobs = mirrors.mapIndexed { i, ep ->
             launch {
                 if (i > 0) delay((i * stagger * 1000).toLong())
-                val r = fetch(ep, q)
+                val r = fetch(ep, q, get = useLocalMirrors)
                 results.send(if (r != null && r.second == 200 && !timedOut(r.first) && valid(r.first)) r.first else null)
             }
         }
         var answer: ByteArray? = null
-        repeat(endpoints.size) {
+        repeat(mirrors.size) {
             val r = results.receive()
             if (r != null && answer == null) {
                 answer = r
@@ -288,14 +293,20 @@ object Overpass {
         }
     }
 
-    /** The traffic lights on the route itself, one per junction (lights within 40 m along the route drawn once). */
+    /**
+     * The traffic lights for your own way through each junction, one per junction. A junction's
+     * lights are mapped once per road into it (yours, the side roads', the oncoming side's), and all
+     * of them lie near the route. Within 60 m along the route they're one junction, and the first one
+     * you reach is the one at your stop line. It's drawn on the route itself, on your road, rather
+     * than where it was mapped, which could be across the junction or up a side road.
+     */
     fun signalsOnRoute(signals: List<LatLng>, line: List<LatLng>): List<LatLng> {
         if (line.size < 2) return emptyList()
         val cum = Geo.cumulative(line)
-        val on = signals.map { it to Geo.project(it, line, cum) }.filter { it.second.offset < 20 }.sortedBy { it.second.along }
-        val out = mutableListOf<Pair<LatLng, Double>>()
-        for ((p, at) in on) if (out.lastOrNull()?.let { at.along - it.second >= 40 } != false) out.add(p to at.along)
-        return out.map { it.first }
+        val on = signals.map { Geo.project(it, line, cum) }.filter { it.offset < 20 }.map { it.along }.sorted()
+        val out = mutableListOf<Double>()
+        for (at in on) if (out.lastOrNull()?.let { at - it >= 60 } != false) out.add(at)
+        return out.map { Geo.point(line, it, cum) }
     }
 
     fun parseWays(data: ByteArray): List<LimitWay> {
@@ -383,14 +394,21 @@ object Overpass {
     }
 
     /** One request to one mirror. A POST, since a route's query is too long for a URL. Null on a network error. */
-    suspend fun fetch(endpoint: String, query: String): Pair<ByteArray, Int>? = try {
-        val r = Http.post(endpoint, ("data=" + urlEnc(query)).toByteArray(), "application/x-www-form-urlencoded",
-            mapOf("User-Agent" to UA), client)
+    suspend fun fetch(endpoint: String, query: String, get: Boolean = false): Pair<ByteArray, Int>? = try {
+        val form = "data=" + urlEnc(query)
+        val headers = mapOf("User-Agent" to UA)
+        val r = if (get) Http.get("$endpoint?$form", headers, localClient)
+            else Http.post(endpoint, form.toByteArray(), "application/x-www-form-urlencoded", headers, client)
         r.body to r.code
     } catch (e: CancellationException) { throw e } catch (e: Exception) { null }
 
     /** Any query, failing over across the mirrors; null when none answered with data. */
     suspend fun query(q: String): ByteArray? = firstAnswer(q) { Json.parse(it) != null }
+
+    /** Small viewport queries use a short GET, so nearby facilities needn't wait on slow POST mirrors. */
+    suspend fun queryLocal(q: String): ByteArray? = withTimeoutOrNull(14_000) {
+        firstAnswer(q, stagger = 2.0, useLocalMirrors = true) { Json.obj(it)?.get("elements").asList() != null }
+    }
 
     /** A busy server can answer 200 with a "remark" that the query ran out of time, and no data. */
     fun timedOut(data: ByteArray): Boolean {
@@ -532,5 +550,40 @@ object CameraAlerts {
         val a = Geo.point(line, max(min(meters - 20, total - 40), 0.0), cum)
         val b = Geo.point(line, min(max(meters + 20, 40.0), total), cum)
         return Geo.bearing(a, b)
+    }
+}
+
+/**
+ * Speed cameras while driving with no route ("just driving"): with no line to follow, a camera is
+ * "ahead" when it's roughly straight in front of you, close to the road you're on, and checks your
+ * way of travel. Kept narrow, so a camera on a parallel road or round a corner stays quiet.
+ */
+object CruiseCameras {
+    /** How far ahead to warn: about 15 seconds at your speed, between 250 and 700 m. */
+    fun lead(speedMps: Double): Double = kotlin.math.min(700.0, kotlin.math.max(250.0, speedMps * 15))
+
+    /** The nearest camera ahead within [lead], and how far it is; null when none. */
+    fun ahead(cameras: List<RoadCamera>, at: LatLng, heading: Double, speedMps: Double): Pair<RoadCamera, Double>? {
+        val reach = lead(speedMps)
+        var best: Pair<RoadCamera, Double>? = null
+        for (c in cameras) {
+            if (c.kind != RoadCamera.Kind.SPEED || !c.checks(heading)) continue
+            val d = distanceAhead(c.location, at, heading, reach) ?: continue
+            if (best == null || d < best.second) best = c to d
+        }
+        return best
+    }
+
+    /**
+     * How far [q] is in front of you, or null when it's behind, beside the road or beyond [reach].
+     * Straight ahead, give or take the bend of the road: within 25°, and never more than about 40 m
+     * to the side of your line.
+     */
+    fun distanceAhead(q: LatLng, at: LatLng, heading: Double, reach: Double): Double? {
+        val d = at.distanceTo(q)
+        if (d <= 15 || d > reach) return null
+        val off = Geo.diff(Geo.bearing(at, q), heading)
+        if (off > 25 || d * kotlin.math.sin(Math.toRadians(off)) > 40) return null
+        return d
     }
 }

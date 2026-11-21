@@ -82,6 +82,9 @@ data class MapChrome(val accent: Color?, val panel: Color?) {
         return custom.withContrast(Vela.muted(dark), fallback)
     }
 
+    fun primary(dark: Boolean): Color =
+        (accent ?: Vela.accentText(dark)).withContrast(panel(dark), Vela.primary(dark))
+
     fun icon(dark: Boolean, preferred: Color? = null): Color =
         (preferred ?: accent ?: Vela.primary(dark)).withContrast(panel(dark), Vela.primary(dark))
 }
@@ -99,6 +102,22 @@ private fun Color.withContrast(background: Color, fallback: Color): Color {
 val mapControlTint: Color
     @Composable get() = LocalMapChrome.current?.icon(LocalDark.current) ?: primaryText
 val LocalMapChrome = staticCompositionLocalOf<MapChrome?> { null }
+
+val interfaceSurface: Color @Composable get() =
+    LocalMapChrome.current?.panel(LocalDark.current) ?: Vela.surface(LocalDark.current)
+val interfaceSheet: Color @Composable get() =
+    LocalMapChrome.current?.takeIf { it.panel != null }?.panel(LocalDark.current) ?: Vela.sheet(LocalDark.current)
+val interfaceGround: Color @Composable get() {
+    val dark = LocalDark.current
+    val fallback = Vela.ground(dark)
+    return LocalMapChrome.current?.takeIf { it.panel != null }?.let { lerp(fallback, it.panel(dark), 0.66f) } ?: fallback
+}
+val interfaceAccent: Color @Composable get() =
+    LocalMapChrome.current?.accent ?: Vela.accent(LocalDark.current)
+val interfaceAccentText: Color @Composable get() =
+    LocalMapChrome.current?.primary(LocalDark.current) ?: Vela.accentText(LocalDark.current)
+val interfaceOnAccent: Color @Composable get() =
+    if (interfaceAccent.luminance() > 0.179f) Color(0xFF071525) else Color.White
 
 val LocalDark = staticCompositionLocalOf { true }
 
@@ -132,14 +151,20 @@ fun KiteTheme(content: @Composable () -> Unit) {
         ThemeMode.LIGHT -> false
         ThemeMode.DARK -> true
     }
+    fun parse(value: String?) = value?.let { Color(android.graphics.Color.parseColor(it)) }
+    val chrome = MapChrome(parse(AppSettings.mapUiAccent), parse(if (dark) AppSettings.mapUiNightPanel else AppSettings.mapUiDayPanel))
+    val panel = chrome.panel(dark)
+    val ground = if (chrome.panel != null) lerp(Vela.ground(dark), panel, 0.66f) else Vela.ground(dark)
+    val accent = if (chrome.accent != null) chrome.primary(dark) else if (dark) Vela.tealLight else Vela.teal
+    val onAccent = if (accent.luminance() > 0.179f) Color(0xFF071525) else Color.White
     val scheme = if (dark) darkColorScheme(
-        primary = Vela.tealLight, onPrimary = Vela.onAccent(true), background = Vela.ground(true),
-        surface = Vela.sheet(true), onSurface = Color.White, onBackground = Color.White,
+        primary = accent, onPrimary = onAccent, background = ground,
+        surface = if (chrome.panel != null) panel else Vela.sheet(true), onSurface = Color.White, onBackground = Color.White,
         surfaceVariant = Vela.chip(true), onSurfaceVariant = Vela.muted(true),
         secondaryContainer = Vela.tonal(true), onSecondaryContainer = Vela.onTonal(true),
     ) else lightColorScheme(
-        primary = Vela.teal, onPrimary = Color.White, background = Vela.ground(false),
-        surface = Color.White, onSurface = Vela.primary(false), onBackground = Vela.primary(false),
+        primary = accent, onPrimary = onAccent, background = ground,
+        surface = panel, onSurface = Vela.primary(false), onBackground = Vela.primary(false),
         surfaceVariant = Vela.chip(false), onSurfaceVariant = Vela.muted(false),
         secondaryContainer = Vela.tonal(false), onSecondaryContainer = Vela.onTonal(false),
     )
@@ -158,7 +183,7 @@ fun KiteTheme(content: @Composable () -> Unit) {
         labelMedium = base.labelMedium.copy(fontFamily = Rounded),
         labelSmall = base.labelSmall.copy(fontFamily = Rounded),
     )
-    CompositionLocalProvider(LocalDark provides dark) {
+    CompositionLocalProvider(LocalDark provides dark, LocalMapChrome provides chrome) {
         MaterialTheme(colorScheme = scheme, typography = type) {
             CompositionLocalProvider(
                 LocalContentColor provides scheme.onSurface,
@@ -260,6 +285,9 @@ object Fmt {
         val h = mins / 60; val m = mins % 60
         return if (m == 0) "${h}h" else "${h}h ${m}m"
     }
+
+    /** "4 min" on foot, from metres in a straight line (a little slower than walking pace for the corners). */
+    fun walkMinutes(meters: Double): String = "${maxOf(1, Math.round(meters / 70).toInt())} min"
 
     fun arrival(s: Double): String = time(Date(System.currentTimeMillis() + (s * 1000).toLong()))
 

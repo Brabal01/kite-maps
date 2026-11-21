@@ -1,11 +1,11 @@
 package app.kite
 
 enum class OpenPlaceGroup(val label: String, val icon: String, vararg val tags: String) {
-    WATER("Drinking water", "osm-drinking_water", "drinking_water", "water_point", "water_well"),
+    WATER("Drinking water", "osm-drinking_water", "drinking_water", "water_point", "water_well", "water_tap"),
     PARKING("Parking", "poi-parking", "parking", "parking_entrance", "parking_space"),
     TOILETS("Toilets", "osm-toilets", "toilets", "shower"),
     BIKE("Bicycle facilities", "osm-bicycle_parking", "bicycle", "bicycle_parking", "bicycle_rental", "bicycle_repair_station"),
-    OUTDOORS("Benches, shelters and viewpoints", "poi-park", "bench", "shelter", "viewpoint", "picnic_site", "picnic_table", "park", "camp_site"),
+    OUTDOORS("Benches, shelters and viewpoints", "poi-park", "bench", "shelter", "viewpoint", "picnic_site", "picnic_table", "park", "camp_site", "playground"),
     FOOD("Food and cafés", "poi-food", "restaurant", "cafe", "ice_cream", "food_court", "fast_food", "pub", "bar"),
     SHOP("Shops", "poi-shop", "shop", "supermarket", "bakery", "convenience", "mall", "clothes"),
     FUEL("Fuel and charging", "poi-gas", "fuel", "charging_station", "charging-station"),
@@ -23,12 +23,31 @@ object OpenMapStyle {
     const val ATTRIBUTION = "© OpenStreetMap contributors · Waymarked Trails, CC BY-SA 3.0"
     fun trailTile(kind: String) = "https://tile.waymarkedtrails.org/$kind/{z}/{x}/{y}.png"
 
+    val detailIcons = linkedMapOf(
+        "drinking_water" to "water", "water_point" to "water", "water_tap" to "water", "water_well" to "water",
+        "bench" to "bench", "shelter" to "shelter", "viewpoint" to "viewpoint", "picnic_site" to "picnic",
+        "picnic_table" to "picnic", "camp_site" to "camp", "toilets" to "toilets", "shower" to "toilets",
+        "bicycle_repair_station" to "bike-repair", "bicycle_parking" to "bike", "bicycle_rental" to "bike",
+        "charging_station" to "charging", "charging-station" to "charging", "cafe" to "coffee",
+        "bakery" to "bakery", "pharmacy" to "pharmacy", "hospital" to "health", "bus_stop" to "bus",
+        "bus_station" to "bus", "museum" to "culture", "library" to "library", "school" to "education",
+        "playground" to "playground", "fire_station" to "fire", "police" to "police", "post_office" to "post",
+        "recycling" to "recycling", "waste_basket" to "waste", "atm" to "bank", "bank" to "bank",
+        "fountain" to "fountain", "hotel" to "hotel",
+    )
     private val category = """["coalesce",["get","subclass"],["get","class"],""]"""
-    val group = """["match",$category,${OpenPlaceGroup.entries.filter { it.tags.isNotEmpty() }.joinToString(",") { g ->
-        "${g.tags.joinToString(",", "[", "]") { "\"$it\"" }},\"${g.name}\""
-    }},"MORE"]"""
-    val icon = """["match",$group,${OpenPlaceGroup.entries.filter { it != OpenPlaceGroup.MORE }
-        .joinToString(",") { "\"${it.name}\",\"${it.icon}\"" }},"poi-default"]"""
+    private fun quote(value: String) = '"' + value + '"'
+    private fun groupFor(field: String, otherwise: String): String =
+        """["match",$field,${OpenPlaceGroup.entries.filter { it.tags.isNotEmpty() }.joinToString(",") { g ->
+            g.tags.joinToString(",", "[", "]", transform = ::quote) + "," + quote(g.name)
+        }},$otherwise]"""
+    private val classField = """["coalesce",["get","class"],""]"""
+    val group = groupFor(category, groupFor(classField, quote("MORE")))
+    private val groupIcon = """["match",$group,${OpenPlaceGroup.entries.filter { it != OpenPlaceGroup.MORE }
+        .joinToString(",") { quote(it.name) + "," + quote("open-${it.name.lowercase()}") }},"open-more"]"""
+    val icon = """["match",$category,${detailIcons.entries.joinToString(",") { (tag, id) ->
+        quote(tag) + "," + quote("open-$id")
+    }},$groupIcon]"""
     fun filter(groups: Set<OpenPlaceGroup>): String {
         fun matches(values: Set<OpenPlaceGroup>): String {
             val names = values.joinToString(",") { '"' + it.name + '"' }

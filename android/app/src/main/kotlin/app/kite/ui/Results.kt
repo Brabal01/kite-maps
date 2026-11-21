@@ -75,8 +75,8 @@ fun FilterChipLabel(title: String, on: Boolean, menu: Boolean, onClick: () -> Un
 }
 
 @Composable
-fun ResultsList(model: AppModel, modifier: Modifier = Modifier) {
-    val list = androidx.compose.foundation.lazy.rememberLazyListState()
+fun ResultsList(model: AppModel, modifier: Modifier = Modifier,
+                list: androidx.compose.foundation.lazy.LazyListState = androidx.compose.foundation.lazy.rememberLazyListState()) {
     Box(modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(bottom = 60.dp)) {
             item { HorizontalDivider() }

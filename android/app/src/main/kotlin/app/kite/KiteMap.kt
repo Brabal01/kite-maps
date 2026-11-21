@@ -108,6 +108,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
 
     fun refreshScenery() {
         routeContext = ""
+        lastRoadNameKey = ""
         transitStopsKey = ""
         layerOptions = null
         policeHeatKey = null
@@ -156,6 +157,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
     private var lastPuckKey = ""
     private var lastHeadKey = ""
     private var lastNextRoadKey = ""
+    private var lastRoadNameKey = ""
     private var styledDriving: Boolean? = null
     private var lastCameraKey = ""
     private var lastSignalsKey = ""
@@ -356,10 +358,12 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         if (showingMapbox) addMapboxLayers(style)
         addVelaLayers(style)
         styleReady = true
+        applyPinSizes(style)
         heatTiles.styleReloaded()
         styledDriving = null
         repaint()
         routeContext = ""
+        lastRoadNameKey = ""
         transitStopsKey = ""
         layerOptions = null
         policeHeatKey = null
@@ -549,6 +553,18 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             shownTransitStops = stops
             setShape(style, TRANSIT_STOPS, features(stops))
         }
+    }
+
+    fun refreshPinSizes() { map?.style?.let(::applyPinSizes) }
+
+    private fun applyPinSizes(style: Style) {
+        val sizes = MapPinSizes.read()
+        for (id in listOf("kite-google-places", GOOGLE_UNREVIEWED))
+            (style.getLayer(id) as? SymbolLayer)?.setProperties(iconSize(sizes.google.toFloat()))
+        (style.getLayer(OpenMapStyle.POIS) as? SymbolLayer)?.setProperties(iconSize((0.55 * sizes.osm).toFloat()))
+        (style.getLayer("vela-results") as? SymbolLayer)?.setProperties(iconSize((0.72 * sizes.search).toFloat()),
+            textOffset(arrayOf((1.45 * sizes.search).toFloat(), 0f)))
+        (style.getLayer("kite-search-hit") as? CircleLayer)?.setProperties(circleRadius((14 * sizes.search).toFloat()))
     }
 
     fun refreshGooglePlaces() {
@@ -815,11 +831,11 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             textMaxWidth(8f)).apply { minZoom = 9f })
 
         src("vela-results")
-        style.addLayer(CircleLayer("kite-search-hit", "vela-results").withProperties(circleRadius(22f),
-            circleColor(c(0x164B9F)), circleStrokeColor(c(0xC4E1FF)), circleStrokeWidth(3f)))
+        style.addLayer(CircleLayer("kite-search-hit", "vela-results").withProperties(circleRadius(14f),
+            circleColor(c(0x164B9F, 0.12f))))
         style.addLayer(SymbolLayer("vela-results", "vela-results").withProperties(
-            iconImage(get("icon")), iconSize(1.15f), iconAllowOverlap(true), textField(get("label")), textFont(overlayFont),
-            textSize(14f), textAnchor(Property.TEXT_ANCHOR_LEFT), textOffset(arrayOf(2.0f, 0f)), textOptional(true),
+            iconImage(get("icon")), iconSize(0.72f), iconAllowOverlap(true), textField(get("label")), textFont(overlayFont),
+            textSize(12.5f), textAnchor(Property.TEXT_ANCHOR_LEFT), textOffset(arrayOf(1.45f, 0f)), textOptional(true),
             textMaxWidth(8f), textJustify(Property.TEXT_JUSTIFY_LEFT), symbolSortKey(get("rank"))))
 
         src(StopSearch.PINS)
@@ -870,6 +886,26 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             iconImage("road-pill"), iconTextFit(Property.ICON_TEXT_FIT_BOTH), iconTextFitPadding(arrayOf(5f, 11f, 5f, 11f)),
             textField(get("label")), textFont(overlayFont), textSize(16f), textColor(c(0x06201C)),
             textPitchAlignment(Property.TEXT_PITCH_ALIGNMENT_VIEWPORT), iconAllowOverlap(true), textAllowOverlap(true)))
+
+        // The road you're on, written on the road just ahead of the car like a painted marking
+        // (Matteo's pick over a box on the screen). Lies flat and follows the road's bends.
+        // The map's own named roads, drawn too faintly to see: read back in the driving view with no
+        // route, so the name follows the road you're on round its bends.
+        if (style.getSource("openmaptiles") != null) {
+            style.addLayer(LineLayer("vela-road-query", "openmaptiles").apply {
+                sourceLayer = "transportation_name"
+                // Not quite 0: a layer that draws nothing at all can't be asked what's under it.
+                setProperties(lineOpacity(0.01f), lineWidth(3f))
+            })
+        }
+        src("vela-road-name")
+        style.addLayer(SymbolLayer("vela-road-name", "vela-road-name").withProperties(
+            textField(get("label")), symbolPlacement(Property.SYMBOL_PLACEMENT_LINE_CENTER),
+            textPitchAlignment(Property.TEXT_PITCH_ALIGNMENT_MAP), textRotationAlignment(Property.TEXT_ROTATION_ALIGNMENT_MAP),
+            textKeepUpright(true), textFont(arrayOf("Noto Sans Bold")),
+            textSize(interpolate(linear(), zoom(), stop(13, 15f), stop(15, 18f), stop(17, 22f), stop(18, 26f))),
+            textLetterSpacing(0.08f), textTransform(Property.TEXT_TRANSFORM_UPPERCASE), textColor(c(0x0E3B36)),
+            textHaloColor("rgba(255,255,255,0.95)"), textHaloWidth(2f), textAllowOverlap(true), textIgnorePlacement(true)))
 
         src(NavGlide.PUCK)
         style.addLayer(SymbolLayer(NavGlide.PUCK, NavGlide.PUCK).withProperties(
@@ -936,12 +972,14 @@ class KiteMap(private val model: AppModel, private val context: Context) {
                 renderResults(null)
                 renderStopPins(null)
                 renderRoutes(null)
+                renderRoadName(null)
             }
             return
         }
         val s = model.settings
         val navigating = model.isGuiding
         val showPosition = model.mapNavigator == null
+        val driving = model.nav?.route?.mode == TravelMode.DRIVE || model.cruise != null
         if (m.locationComponent.isLocationComponentActivated) {
             if (m.locationComponent.isLocationComponentEnabled != showPosition) m.locationComponent.isLocationComponentEnabled = showPosition
         } else if (LocationService.authorized) enableLocation(style)
@@ -957,14 +995,14 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         visible(style, "vela-sat", s.satellite && !showingMapbox)
         visible(style, "vela-terrain", s.terrain && !s.satellite)
         for (id in listOf("vela-rail", "vela-rail-case")) visible(style, id, s.transitLines && !navigating)
-        if (styledDriving != navigating) {
-            if (!showingMapbox) MapStyler.drive(style, navigating)
-            styledDriving = navigating
+        if (styledDriving != driving) {
+            if (!showingMapbox) MapStyler.drive(style, driving)
+            styledDriving = driving
             (style.getLayer("vela-route-line") as? LineLayer)?.setProperties(lineWidth(if (navigating) 12f else 10f))
             (style.getLayer("vela-route-edge") as? LineLayer)?.setProperties(lineWidth(if (navigating) 17f else 15f))
             visible(style, "vela-route-chevrons", showingMapbox && navigating)
         }
-        if (!showingMapbox) for (id in listOf("building", "building-3d")) visible(style, id, !s.satellite && !navigating)
+        if (!showingMapbox) for (id in listOf("building", "building-3d")) visible(style, id, !s.satellite && !driving)
         renderResults(style)
         renderStopPins(style)
         renderMeasure(style)
@@ -973,11 +1011,64 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         renderCameras(style)
         renderLiveCams(m, style)
         renderSignals(style)
+        renderRoadName(style)
         renderWaze(style)
         updateHeat(m)
         renderMine(style)
         showGooglePlaces(style)
         if (s.transitLines) loadRail(m)
+    }
+
+    /**
+     * The road's name on the road ahead: 40 to 220 m along the route while navigating (left off
+     * when the next turn is close, where the turn arrow and the new road's name need the room),
+     * or straight ahead along your heading in the driving view with no route.
+     */
+    private var cruiseRoadAt = 0L
+    private fun renderRoadName(style: Style?) {
+        var line: List<LatLng> = emptyList()
+        var name: String? = null
+        val n = model.nav
+        val c = model.cruise
+        if (n != null) {
+            val p = n.progress
+            val road = n.currentRoad
+            val next = n.nextManeuver
+            if (n.following && !n.arrived && p != null && road != null &&
+                (next == null || next.alongMeters - p.alongMeters > 260 || next.type == ManeuverType.STRAIGHT)) {
+                val cum = if (routeGeometry === n.route.polyline) routeDistances else Geo.cumulative(n.route.polyline)
+                val total = cum.last()
+                val a = p.alongMeters + 40; val b = minOf(p.alongMeters + 220, total)
+                if (b - a > 80) { line = Geo.slice(n.route.polyline, a, b, cum); name = road }
+            }
+        } else if (c != null && model.browseFollowing) {
+            val time = android.os.SystemClock.elapsedRealtime()
+            if (time - cruiseRoadAt < 1_300L) return
+            cruiseRoadAt = time
+            val f = c.fix
+            val road = c.road ?: c.ref
+            val m = map
+            if (f != null && f.courseKnown && f.speed > 2 && road != null && m != null) {
+                // Along the map's own line for the road you're on, so it stays on the road round a bend;
+                // nothing when the map doesn't have it here (never floating off over a field).
+                val pt = m.projection.toScreenLocation(org.maplibre.android.geometry.LatLng(f.lat, f.lng))
+                val density = context.resources.displayMetrics.density
+                val box = RectF(pt.x - 300 * density, pt.y - 450 * density, pt.x + 300 * density, pt.y + 250 * density)
+                val match = any(eq(get("name"), c.road ?: ""), eq(get("ref"), c.ref ?: ""))
+                val lines = mutableListOf<List<LatLng>>()
+                for (feat in m.queryRenderedFeatures(box, match, "vela-road-query")) {
+                    when (val g = feat.geometry()) {
+                        is LineString -> lines.add(g.coordinates().map { LatLng(it.latitude(), it.longitude()) })
+                        is org.maplibre.geojson.MultiLineString -> g.coordinates().forEach { l -> lines.add(l.map { LatLng(it.latitude(), it.longitude()) }) }
+                    }
+                }
+                RoadAhead.path(lines, f.coord, f.course)?.let { line = it; name = road }
+            }
+        }
+        val key = (name ?: "") + (line.firstOrNull()?.let { "${(it.lat * 20_000).toInt()},${(it.lng * 20_000).toInt()}" } ?: "")
+        if (key == lastRoadNameKey) return
+        lastRoadNameKey = key
+        setShape(style, "vela-road-name", if (name != null && line.size >= 2) listOf(polyline(line, mapOf("label" to name))) else emptyList())
     }
 
     private fun renderMine(style: Style) {
@@ -1060,7 +1151,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         val s = model.settings
         val history = WazeHistory.all
         val kinds = (if (model.nav == null) s.wazeKinds else s.roadWazeKinds).map { it.key }.sorted().joinToString("")
-        val live = model.nav?.routeWaze.orEmpty().map { it.alert } + model.nav?.liveAlerts.orEmpty()
+        val live = model.nav?.routeWaze.orEmpty().map { it.alert } + model.nav?.liveAlerts.orEmpty() + model.routeReports.takeIf { model.directions != null }.orEmpty()
         // While driving, reports off your route fade back so the ones you'll meet stand out.
         val route = if (model.nav?.route?.mode == TravelMode.DRIVE) model.nav?.route?.polyline ?: emptyList() else emptyList()
         val key = "${s.wazeOn}${s.wazeOnMap}${s.aheadWaze}${s.wazeHeatmap}${s.wazeMaxAge}$kinds$wazeAt${history.size}${live.joinToString("") { it.id }}${route.size}${route.firstOrNull()?.lat ?: 0}"
@@ -1260,13 +1351,13 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         val stops = model.nav?.stops ?: plan?.drop(1)?.dropLast(1)?.filterNotNull().orEmpty()
         val searchSelection = target != null && list.any { it.id == target.id }
         fun cell(at: LatLng?) = at?.let { "${(it.lat * 7000).toInt()},${(it.lng * 7000).toInt()}" }
-        val destinationKey = target?.id ?: cell(destination)
+        val destinationKey = "${target?.id}:${cell(destination)}"
         val key = "${list.joinToString(",") { it.id }}|$destinationKey|${cell(origin)}|${stops.joinToString(",") { it.id }}"
         if (key == lastResultsKey) return
         lastResultsKey = key
         setShape(style, "vela-results", list.mapIndexed { i, p ->
             val rating = p.rating?.let { String.format(java.util.Locale.US, "%.1f", it) }
-            point(p.location, mapOf("id" to p.id, "icon" to MapIcons.iconName(p), "label" to listOfNotNull(p.name, rating).joinToString("\n"), "rank" to i))
+            point(p.location, mapOf("id" to p.id, "icon" to MapIcons.searchName(p), "label" to listOfNotNull(p.name, rating).joinToString("\n"), "rank" to i))
         })
         val sel = mutableListOf<Feature>()
         if (destination != null && !searchSelection) {
@@ -1466,8 +1557,10 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             if (hits.isNotEmpty()) {
                 val tappedAt = at.kite()
                 val i = d.current.indexOfFirst { r -> r.id != d.route?.id && r.polyline.any { it.distanceTo(tappedAt) < 300 } }
-                if (i >= 0) model.selectRoute(i)
+                if (i >= 0) { model.selectRoute(i); return true }
             }
+            // A tap on the picked route itself: offer to avoid that road (GitHub idea, 0.7.17).
+            if (m.queryRenderedFeatures(box, "vela-route-line", "vela-route-edge").isNotEmpty()) model.askAvoid(at.kite())
             return true
         }
         // Police and crashes sit on top and never join a bubble: a tap that touches one opens it,

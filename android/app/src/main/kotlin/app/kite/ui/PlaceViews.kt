@@ -76,7 +76,10 @@ fun PlaceHeader(model: AppModel, place: Place) {
             }
             CircleIconButton(Icons.Filled.Close) { model.closePlace() }
         }
-        PlaceMetaLine(place, here = model.userLatLng)
+        // Tapping the stars opens the reviews (GitHub #70).
+        Box(Modifier.clickable(enabled = place.rating != null) { model.showReviews = place.id; model.detent = SheetDetent.FULL }) {
+            PlaceMetaLine(place, here = model.userLatLng)
+        }
         StatusText(place)
         Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(Modifier.weight(1f).heightIn(min = 56.dp).clip(CircleShape).background(Vela.accent(dark))
@@ -215,6 +218,12 @@ fun PlaceBody(model: AppModel, place: Place) {
             if (canReview) add("Reviews")
             if (mediaId != null || photos.isNotEmpty()) add("Photos")
             if (place.about.isNotEmpty()) add("About")
+        }
+        LaunchedEffect(model.showReviews, place.id) {
+            if (model.showReviews == place.id && "Reviews" in mediaTabs) {
+                tab = mediaTabs.indexOf("Reviews")
+                model.showReviews = null
+            }
         }
         val selectedTab = mediaTabs.getOrNull(tab) ?: "Overview"
         if (mediaTabs.size > 1) {
@@ -592,3 +601,61 @@ fun vehicleIcon(v: TransitLeg.Vehicle) = when (v) {
     TransitLeg.Vehicle.FERRY -> Icons.Filled.DirectionsBoat
     TransitLeg.Vehicle.OTHER -> Icons.Filled.DirectionsTransit
 }
+
+/**
+ * A place's Google reviews inside Kite (GitHub #70): stars, who, when and what they said, the ones
+ * Google Maps shows first. When Google won't list them, a button opens them on Google.
+ */
+@Composable
+fun ReviewsList(place: Place) {
+    val ctx = LocalContext.current
+    val dark = LocalDark.current
+    // Google's list of reviews stopped answering apps (checked 2026-11-21): the one review Google
+    // sends with the place, and the full list on Google's own page.
+    val reviews: List<GoogleReview>? = null
+    val failed = true
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        place.rating?.let { rating ->
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(String.format(Locale.US, "%.1f", rating), fontSize = 40.sp, fontWeight = FontWeight.ExtraBold, color = primaryText)
+                Column {
+                    Text(starsText(rating), fontSize = 18.sp, color = Color(0xFFF59E0B))
+                    place.reviewCount?.let { Text("%,d reviews on Google".format(it), fontSize = KType.subheadline, color = secondaryText) }
+                }
+            }
+        }
+        val list = reviews
+        if (list != null) {
+            list.forEach { r ->
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Icon(Icons.Filled.AccountCircle, null, tint = secondaryText, modifier = Modifier.size(30.dp))
+                        Column {
+                            Text(r.author, fontSize = KType.subheadline, fontWeight = FontWeight.Bold, color = primaryText, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(listOfNotNull(r.rating?.let { starsText(it.toDouble()) }, r.whenText).joinToString("  "), fontSize = KType.caption, color = secondaryText)
+                        }
+                    }
+                    Text(r.text, fontSize = KType.subheadline, color = primaryText)
+                }
+                HorizontalDivider()
+            }
+        } else if (!failed) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                Text("Loading reviews…", color = secondaryText)
+            }
+        }
+        if ((failed || list?.isEmpty() == true) && place.featuredReview != null) {
+            Text("“${place.featuredReview}”", fontSize = KType.subheadline, color = primaryText)
+        }
+        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clip(CircleShape).background(Vela.tonal(dark))
+            .clickable { ctx.open(GoogleReviews.webUrl(place)) }, horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.RateReview, null, tint = Vela.onTonal(dark), modifier = Modifier.size(20.dp))
+            Text(if (list?.isNotEmpty() == true) "More reviews on Google" else "Read the reviews on Google", fontSize = 17.sp,
+                fontWeight = FontWeight.SemiBold, color = Vela.onTonal(dark))
+        }
+    }
+}
+
+private fun starsText(rating: Double): String = (0 until 5).joinToString("") { if (rating - it >= 0.5) "★" else "☆" }

@@ -89,7 +89,7 @@ object PlaceSearch {
     suspend fun search(query: String, center: LatLng, spanMeters: Double?, useGoogle: Boolean = true): Result {
         val q = query.trim()
         if (q.isEmpty()) return Result(emptyList())
-        val kind = OutdoorData.kind(q)
+        val kind = OutdoorData.classicKind(q)
         if (kind != null) {
             val open = OutdoorData.find(kind, center, ((spanMeters ?: 4500.0) / 2).coerceIn(1000.0, 6000.0)).orEmpty()
             if (open.isNotEmpty() && (kind != OutdoorData.PARKING || !useGoogle)) return Result(open)

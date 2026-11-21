@@ -88,6 +88,15 @@ data class DirectionsState(
     val arriveBy: Boolean = false,
     val trip: Int = 0,
     val start: Place? = null,
+    /** Spots on roads tapped to avoid, with the roads' names. */
+    val avoid: List<LatLng> = emptyList(),
+    val avoidNames: List<String> = emptyList(),
+    /** The driving routes from before avoiding a road, for Undo. */
+    val beforeAvoid: List<Route>? = null,
+    /** The place as first picked, while the trip goes to its main entrance or a car park instead. */
+    val original: Place? = null,
+    /** What the trip ends at instead of the place itself: "Main entrance", or the car park's name. */
+    val endNote: String? = null,
     val startRequested: Boolean = false,
     val waitingForLocation: Boolean = false,
 ) {
@@ -116,6 +125,9 @@ data class DirectionsState(
     val route: Route? get() = current.getOrNull(selected) ?: current.firstOrNull()
     val pickedTrip: TransitTrip? get() = if (transit) trips?.let { it.getOrNull(trip) ?: it.firstOrNull() } else null
 }
+
+/** A road tapped on the planned route, waiting for "Avoid" or "Cancel". */
+data class AvoidAsk(val point: LatLng, val road: String?)
 
 /** The whole app's state; the map and every sheet read it. */
 class AppModel {
@@ -206,6 +218,13 @@ class AppModel {
     var browseFollowing by mutableStateOf(false)
     /** Street View opened from a place. */
     var streetView by mutableStateOf<StreetViewRequest?>(null)
+    /** The driving view with no route, switched to by itself when you set off (null when not driving). */
+    var cruise by mutableStateOf<Cruise?>(null)
+    /** When fast driving with no route began, for switching to the driving view after a few seconds. */
+    private var movingSince: Long? = null
+    /** Closed with the ✕: stays closed until the car next stops for a while. */
+    private var cruiseClosed = false
+    private var cruiseClosedStill: Long? = null
 
     var map: MapLibreMap? = null
         set(v) { field = v; glide.map = v }
@@ -300,33 +319,36 @@ class AppModel {
         rating4Only = false
         sort = SortMode.RELEVANCE
         val vp = viewport
-        val useGoogle = !settings.noGoogle
+        val osmOnly = settings.osmOnlySearch || settings.noGoogle
         val user = userLatLng
         val sameQuery = suggestedQuery == Place.fold(q)
         val pendingSuggestions = suggestTask.takeIf { sameQuery }
         val visibleSuggestions = suggestions.places.takeIf { sameQuery }.orEmpty()
         searchTask = scope.launch {
-            val full = async { PlaceSearch.search(q, vp.first, vp.second, useGoogle) }
-            val local = async {
-                if (OutdoorData.kind(q) != null) return@async emptyList()
-                if (visibleSuggestions.isNotEmpty()) return@async visibleSuggestions
-                if (pendingSuggestions?.isActive == true) {
-                    pendingSuggestions.join()
-                    if (suggestedQuery == Place.fold(q)) return@async suggestions.places
+            val answer = if (osmOnly) PlaceSearch.Result(OpenPlaceSearch.search(q, vp.first, vp.second)) else coroutineScope {
+                val full = async { PlaceSearch.search(q, vp.first, vp.second, useGoogle = true) }
+                val local = async {
+                    if (OutdoorData.classicKind(q) != null) return@async emptyList()
+                    if (visibleSuggestions.isNotEmpty()) return@async visibleSuggestions
+                    if (pendingSuggestions?.isActive == true) {
+                        pendingSuggestions.join()
+                        if (suggestedQuery == Place.fold(q)) return@async suggestions.places
+                    }
+                    try {
+                        GoogleClient.shared.suggest(q, vp.first, vp.second ?: 20_000.0).places
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        emptyList()
+                    }
                 }
-                if (!useGoogle) return@async emptyList()
-                try {
-                    GoogleClient.shared.suggest(q, vp.first, vp.second ?: 20_000.0).places
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (_: Exception) {
-                    emptyList()
-                }
+                val r = full.await()
+                val found = PlaceSearch.forMap(q, vp.first, vp.second, r.places, local.await())
+                val places = if (found.isNotEmpty() || OutdoorData.classicKind(q) != null) found
+                    else PlaceSearch.forMap(q, vp.first, vp.second, PlaceSearch.namedNearby(q, vp.first, 24_000.0, useGoogle = true))
+                PlaceSearch.Result(places, r.googleError)
             }
-            val r = full.await()
-            val found = PlaceSearch.forMap(q, vp.first, vp.second, r.places, local.await())
-            var places = if (found.isNotEmpty() || OutdoorData.kind(q) != null) found
-                else PlaceSearch.forMap(q, vp.first, vp.second, PlaceSearch.namedNearby(q, vp.first, 24_000.0, useGoogle))
+            var places = answer.places
             ensureActive()
             if (user != null) places = places.map { it.copy(distanceMeters = user.distanceTo(it.location)) }
             searching = false
@@ -334,7 +356,7 @@ class AppModel {
             results = places
             if (places.isEmpty()) {
                 notice = Connectivity.explain("No results for \"$q\" here. Try another word, or move the map.")
-            } else if (r.googleError != null && useGoogle) {
+            } else if (answer.googleError != null) {
                 notice = "Google didn't answer, so these results are from OpenStreetMap."
             }
             detent = SheetDetent.HALF
@@ -352,13 +374,21 @@ class AppModel {
         suggestions = SuggestParser.Result()
         if (q.length < 2 || MapLinks.looksLikeLink(q)) return
         val vp = viewport
-        val useGoogle = !settings.noGoogle
+        val osmOnly = settings.osmOnlySearch || settings.noGoogle
         val user = userLatLng
         suggestTask = scope.launch {
             delay(250)
+            if (osmOnly) {
+                val answer = OpenPlaceSearch.suggestions(q, vp.first)
+                ensureActive()
+                suggestions = if (user == null) answer else answer.copy(places = answer.places.map {
+                    it.copy(distanceMeters = user.distanceTo(it.location))
+                })
+                return@launch
+            }
             var places = emptyList<Place>()
             var queries = emptyList<String>()
-            if (useGoogle) {
+            run {
                 runCatching { GoogleClient.shared.suggest(q, vp.first, vp.second ?: 20_000.0) }.getOrNull()?.let {
                     places = it.places; queries = it.queries
                 }
@@ -425,6 +455,18 @@ class AppModel {
         resolve(place)
     }
 
+    fun switchSearchSource(osmOnly: Boolean) {
+        if (settings.noGoogle || settings.osmOnlySearch == osmOnly) return
+        settings.osmOnlySearch = osmOnly
+        searchTask?.cancel()
+        searching = false
+        typed(query)
+    }
+
+    fun backFromSearch() {
+        if (selected != null && results.isNotEmpty()) closePlace() else clearSearch()
+    }
+
     fun clearSearch() {
         searchTask?.cancel()
         suggestTask?.cancel()
@@ -455,7 +497,11 @@ class AppModel {
 
     fun closePlace() {
         selected = null
-        if (results.isNotEmpty()) detent = SheetDetent.HALF
+        if (results.isNotEmpty()) {
+            detent = SheetDetent.HALF
+            val nearest = results.first().location
+            frame(results.take(8).filter { nearest.distanceTo(it.location) <= 35_000 }.map { it.location })
+        }
     }
 
     /** A tap on a place the basemap draws: look it up on Google by name at that spot. */
@@ -468,7 +514,7 @@ class AppModel {
         val point = placeholder0.location
         val placeholder = placeholder0.copy(distanceMeters = userLatLng?.distanceTo(point))
         select(placeholder, focus = !placeholder.id.startsWith("tap:"))
-        if (settings.noGoogle) return
+        if (settings.noGoogle || settings.osmOnlySearch && placeholder.source == "osm") return
         val q = listOfNotNull(placeholder.name, placeholder.address).joinToString(" ")
         val pid = placeholder.id
         scope.launch {
@@ -589,6 +635,7 @@ class AppModel {
 
     fun openDirections(place: Place, mode: TravelMode = settings.defaultMode, startNow: Boolean = false) {
         if (isGuiding) return
+        endCruise()
         closeStopSearch(restore = false)
         addingStop = false
         tab = AppTab.MAP
@@ -759,6 +806,23 @@ class AppModel {
                 val visible = if (driving == null && span > 42_000) results else results.take(7)
                 frame(listOf(first) + visible.map { it.place.location }, bottomFraction = 0.27f, top = 125)
             }
+            if (!parking && route?.mode == TravelMode.DRIVE && span > 0) {
+                val candidates = results.filter { it.routeMeters != null }.take(8)
+                if (candidates.isNotEmpty()) {
+                    val here = Geo.point(line, start, cum)
+                    val rejoin = candidates.map { Geo.point(line, min(end, requireNotNull(it.routeMeters) + 1_200), cum) }
+                    val detours = OSRM.detours(here, candidates.map { it.place.location }, rejoin)
+                    ensureActive()
+                    if (detours != null && nav === driving && (nav?.route ?: directions?.route)?.id == route.id) {
+                        stopSearch?.takeIf { it.results === results }?.let { current ->
+                            val times = candidates.zip(detours).mapNotNull { (candidate, seconds) ->
+                                seconds?.let { candidate.place.id to it }
+                            }.toMap()
+                            stopSearch = current.copy(detours = times)
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -841,13 +905,103 @@ class AppModel {
         if (directions == null) return
         resetPlanRequests()
         edit { it.copy(routes = emptyMap(), loading = emptySet(), errors = emptyMap(), selected = 0,
-            trips = null, tripsError = null, trip = 0) }
+            trips = null, tripsError = null, trip = 0, avoid = emptyList(), avoidNames = emptyList(), beforeAvoid = null) }
         loadPlan()
+    }
+
+    /**
+     * End the trip at [p] instead of the place picked (its main entrance, or a car park near it),
+     * with [note] saying so; null goes back to the place itself.
+     */
+    fun endAt(p: LatLng?, note: String?) {
+        val d = directions ?: return
+        val place = d.original ?: d.destination
+        if (p != null) {
+            val dest = place.copy(location = p, name = if (note != null && note != "Main entrance") note else place.name)
+            edit { it.copy(original = place, destination = dest, endNote = note) }
+        } else {
+            edit { it.copy(destination = place, original = null, endNote = null) }
+        }
+        reloadRoutes()
+    }
+
+    /** Start the trip from [p] instead of here; null goes back to your location. */
+    fun setOrigin(p: Place?) {
+        if (directions == null) return
+        edit { it.copy(start = p, reversed = false) }
+        reloadRoutes()
+    }
+
+    /** "Avoid Bassett Avenue?" after tapping the planned route. */
+    var avoidAsk by mutableStateOf<AvoidAsk?>(null)
+    var avoidBusy by mutableStateOf(false)
+    private var avoidJob: Job? = null
+    var pickingOrigin by mutableStateOf(false)
+    /** Waze reports found along the route being planned, shown as icons on it before you go. */
+    var routeReports by mutableStateOf<List<WazeAlert>>(emptyList())
+    /** The place whose Reviews tab to open (its stars were tapped). */
+    var showReviews by mutableStateOf<String?>(null)
+
+    /** The road under a tap on the planned route, to ask whether to avoid it. */
+    fun askAvoid(tap: LatLng) {
+        val d = directions ?: return
+        if (d.transit || d.mode != TravelMode.DRIVE) return
+        val r = d.route ?: return
+        val hit = Geo.project(tap, r.polyline)
+        if (hit.offset >= 60) return
+        val total = Geo.length(r.polyline)
+        // Not the very start or end: the trip has to begin and finish somewhere.
+        if (hit.along <= 150 || hit.along >= total - 150) return
+        val at = Geo.point(r.polyline, hit.along)
+        val road = r.maneuvers.lastOrNull { it.alongMeters <= hit.along + 1 }?.road
+        avoidAsk = AvoidAsk(at, road)
+    }
+
+    /** A way round the road just tapped: the road map's router kept off it, with turn-by-turn from the open router. */
+    fun avoidRoad() {
+        val ask = avoidAsk ?: return
+        avoidAsk = null
+        val d = directions ?: return
+        val r = d.route ?: return
+        if (r.polyline.size < 2) return
+        val name = ask.road ?: "that road"
+        val points = d.avoid + ask.point
+        val via = (if (d.reversed) d.stops.reversed() else d.stops).map { it.location }
+        val from = r.polyline.first(); val to = r.polyline.last()
+        val destId = d.destination.id
+        avoidJob?.cancel()
+        avoidBusy = true
+        avoidJob = scope.launch {
+            val found = Directions.avoiding(from, to, via, points)
+            ensureActive()
+            avoidBusy = false
+            if (directions?.destination?.id != destId) return@launch
+            if (found == null) {
+                notice = "Couldn't find a way round $name."
+                return@launch
+            }
+            if (directions?.mode != TravelMode.DRIVE) return@launch
+            edit { it.copy(beforeAvoid = it.beforeAvoid ?: it.routes[TravelMode.DRIVE], avoid = points, avoidNames = it.avoidNames + name,
+                routes = it.routes + (TravelMode.DRIVE to listOf(found)), selected = 0) }
+            frameRoute()
+        }
+    }
+
+    /** Back to the routes from before any road was avoided. */
+    fun undoAvoid() {
+        val before = directions?.beforeAvoid ?: return
+        edit { it.copy(routes = it.routes + (TravelMode.DRIVE to before), avoid = emptyList(), avoidNames = emptyList(), beforeAvoid = null, selected = 0) }
+        frameRoute()
     }
 
     private fun resetPlanRequests() {
         routePlanJob?.cancel()
         routePlanJob = null
+        routeReports = emptyList()
+        avoidAsk = null
+        avoidJob?.cancel()
+        avoidJob = null
+        avoidBusy = false
         transitPlanJob?.cancel()
         transitPlanJob = null
         transitLoadedAt = 0L
@@ -888,8 +1042,14 @@ class AppModel {
         routePlanJob = scope.launch {
             for (mode in modes) launch {
                 val result = try {
-                    Directions.routes(from, to, mode, hw, tolls, google, via, heading.takeIf { mode == TravelMode.DRIVE },
+                    val preferred = Directions.routes(from, to, mode, hw, tolls, google, via, heading.takeIf { mode == TravelMode.DRIVE },
                         alternatives = !d.startRequested, mapboxToken = mapboxToken)
+                    if (mode == TravelMode.DRIVE && d.avoid.isNotEmpty()) {
+                        val clear = preferred.routes.filterNot { Directions.touches(it.polyline, d.avoid) }
+                        if (clear.isNotEmpty()) Directions.Result(clear)
+                        else Directions.avoiding(from, to, via, d.avoid)?.let { Directions.Result(listOf(it)) }
+                            ?: Directions.Result(emptyList(), "No route found.")
+                    } else preferred
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -970,6 +1130,7 @@ class AppModel {
         val trip = d.pickedTrip?.takeIf { it.legs.isNotEmpty() } ?: return
         if (isGuiding) return
         val destination = d.orderedPlaces().last() ?: currentWaypoint() ?: return
+        endCruise()
         resetPlanRequests()
         directions = null
         browseFollowing = false
@@ -1190,7 +1351,7 @@ class AppModel {
             }
             is RoadStart.ConnectToPlan -> {
                 resetPlanRequests()
-                directions = DirectionsState(start.destination, mode = d.mode, stops = start.stops, startRequested = true)
+                directions = DirectionsState(start.destination, mode = d.mode, stops = start.stops, startRequested = true, avoid = d.avoid, avoidNames = d.avoidNames)
                 fix?.let(::centerForNavigationStart)
                 loadPlan()
                 return
@@ -1200,10 +1361,12 @@ class AppModel {
         }
         checkNotNull(fix)
 
+        endCruise()
         resetPlanRequests()
         directions = null
         browseFollowing = false
         val n = Navigator(route, d.destination, d.stops, scope)
+        if (d.mode == TravelMode.DRIVE) n.avoid = d.avoid
         navZoomSteps = 0
         nav = n
         n.onFinished = { if (nav === n) endNavigation() }
@@ -1274,12 +1437,12 @@ class AppModel {
         val n = nav ?: return
         val m = map ?: return
         if (n.following) {
-            navZoomSteps = (navZoomSteps + step).coerceIn(-3, 4)
+            navZoomSteps = (navZoomSteps + step).coerceIn(-4, 10)
             location.last?.let { followCamera(n, it) }
         } else {
             val camera = m.cameraPosition
             m.animateCamera(CameraUpdateFactory.newCameraPosition(CameraPosition.Builder(camera)
-                .zoom((camera.zoom + step * 0.55).coerceIn(2.0, 20.0)).build()), 220)
+                .zoom((camera.zoom + step * 0.55).coerceIn(2.0, 21.5)).build()), 220)
         }
     }
 
@@ -1323,12 +1486,77 @@ class AppModel {
             else focusTransitRide(transit, f)
             return
         }
-        val n = nav ?: run { followBrowse(f, entering = false); return }
+        val n = nav ?: run { cruiseCheck(f); followBrowse(f, entering = false); return }
         n.handle(f)
         followCamera(n, f)
         tripCheck(n)
         driveNote(n)
         mapTick++
+    }
+
+    /**
+     * Driving with no route: after a few seconds above about 15 mph with nothing open, switch to the
+     * driving view (speed, limit, cameras, road name). Opening a place or a route, or parking, ends it.
+     */
+    private fun cruiseCheck(f: Fix) {
+        cruise?.let { c ->
+            if (directions != null || selected != null || results.isNotEmpty()) { endCruise(); return }
+            c.handle(f)
+            mapTick++
+            return
+        }
+        // After the ✕, wait until the car has stood still a minute before offering it again.
+        if (cruiseClosed) {
+            if (f.speedKnown && f.speed < 1.5) {
+                val t = cruiseClosedStill ?: f.timeMillis.also { cruiseClosedStill = it }
+                if (f.timeMillis - t > 60_000) cruiseClosed = false
+            } else cruiseClosedStill = null
+            return
+        }
+        if (!settings.autoDrive || tab != AppTab.MAP || searching || query.isNotBlank() || directions != null || selected != null || results.isNotEmpty() || picking != null) {
+            movingSince = null
+            return
+        }
+        val (go, since) = Cruise.shouldStart(f, movingSince)
+        movingSince = since
+        if (go) startCruise(f)
+    }
+
+    private fun startCruise(f: Fix) {
+        val c = Cruise(scope)
+        cruise = c
+        c.onParked = { if (cruise === c) endCruise() }
+        movingSince = null
+        location.setNavigating(true)
+        browseLook = MapLook.TILTED
+        browseFollowing = true
+        showLayers = false
+        c.handle(f)
+        followBrowse(f, entering = true)
+        mapTick++
+    }
+
+    /** Back to the map; [closed] is the ✕, which keeps it away until the next stop. */
+    fun endCruise(closed: Boolean = false) {
+        val c = cruise ?: return
+        c.stop()
+        cruise = null
+        movingSince = null
+        if (closed) { cruiseClosed = true; cruiseClosedStill = null }
+        if (nav == null) {
+            location.setNavigating(false)
+            browseLook = MapLook.NORTH
+            browseFollowing = false
+            if (directions == null && selected == null) resetCamera()
+        }
+        mapTick++
+    }
+
+    fun recenterCruise() {
+        if (cruise == null) return
+        val f = location.last ?: return
+        browseFollowing = true
+        followBrowse(f, entering = true)
     }
 
     /** The next turn and arrival time on the drive's notification (Android only: the iPhone has no such thing to fill). */
@@ -1437,6 +1665,13 @@ class AppModel {
         MapCam.animate(m, CameraPosition.Builder(c).tilt(0.0).bearing(0.0).padding(0.0, 0.0, 0.0, 0.0).build(), ms = 500)
     }
 
+    /** A spot on the map, close up (a report along the route). */
+    fun showSpot(p: LatLng) {
+        val m = map ?: return
+        browseFollowing = false
+        MapCam.animate(m, CameraPosition.Builder().target(p.ml()).zoom(15.0).build(), ms = 500)
+    }
+
     fun frame(points: List<LatLng>, bottomFraction: Float = 0.45f, top: Int = 130) {
         val m = map ?: return
         val unique = points.distinct()
@@ -1468,6 +1703,7 @@ data class StopSearch(
     val parking: Boolean = false,
     val results: List<StopCandidate> = emptyList(),
     val selected: StopCandidate? = null,
+    val detours: Map<String, Double> = emptyMap(),
 ) {
     companion object { const val PINS = "kite-stop-candidates" }
 }

@@ -52,6 +52,8 @@ import java.util.Locale
 /** The map page: a big "Where to?" bar, Home and Work one tap away, and the results or place sheet. */
 @Composable
 fun BrowseOverlay(model: AppModel, showMapbox: Boolean) {
+    val resultScroll = androidx.compose.foundation.lazy.rememberLazyListState()
+    LaunchedEffect(model.results) { resultScroll.scrollToItem(0) }
     val dark = LocalDark.current
     val ctx = LocalContext.current
     val s = AppSettings
@@ -106,7 +108,7 @@ fun BrowseOverlay(model: AppModel, showMapbox: Boolean) {
                 }
             } else {
                 BottomSheet(model.detent, { model.detent = it }, full, 230.dp,
-                    header = { ResultsHeader(model) }, content = { ResultsList(model) })
+                    header = { ResultsHeader(model) }, content = { ResultsList(model, list = resultScroll) })
             }
         }
 
@@ -130,7 +132,7 @@ fun BrowseOverlay(model: AppModel, showMapbox: Boolean) {
     // Screenshot run only: the search box open, to check nothing sits on its panel.
     if (DemoScript.step == "searchfocus") LaunchedEffect(Unit) { kotlinx.coroutines.delay(8000); focused = true }
     androidx.activity.compose.BackHandler(enabled = focused || hasSheet) {
-        if (focused) { focus.clearFocus(); focused = false } else model.clearSearch()
+        if (focused) { focus.clearFocus(); focused = false } else model.backFromSearch()
     }
 }
 
@@ -173,7 +175,7 @@ fun SearchBar(model: AppModel, focused: Boolean, onFocus: (Boolean) -> Unit, unf
     Row(Modifier.padding(horizontal = 16.dp).fillMaxWidth().height(54.dp).glass(CircleShape, AppSettings.solidMapSearch).padding(start = 12.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
         if (focused || model.results.isNotEmpty() || model.selected != null) {
-            Box(Modifier.size(44.dp).clip(CircleShape).tap { if (focused) unfocus() else model.clearSearch() }, contentAlignment = Alignment.Center) {
+            Box(Modifier.size(44.dp).clip(CircleShape).tap { if (focused) unfocus() else model.backFromSearch() }, contentAlignment = Alignment.Center) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = primaryText, modifier = Modifier.size(26.dp))
             }
         } else {
@@ -226,11 +228,23 @@ fun SuggestionsPanel(model: AppModel, done: () -> Unit) {
     val copiedLink = remember { clip.primaryClipDescription?.let { it.hasMimeType("text/plain") || it.hasMimeType("text/uri-list") } == true }
     Column(Modifier.padding(horizontal = 12.dp).heightIn(max = 460.dp).glass(RoundedCornerShape(20.dp), AppSettings.solidMapSearch)
         .verticalScroll(rememberScrollState()).padding(vertical = 8.dp)) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (s.noGoogle) Text("OpenStreetMap search", color = primaryText, modifier = Modifier.padding(vertical = 10.dp))
+            else {
+                val open = s.osmOnlySearch
+                FilterChip(!open, { model.switchSearchSource(false) }, label = { Text("Standard") })
+                FilterChip(open, { model.switchSearchSource(true) }, label = { Text("OpenStreetMap only") })
+            }
+        }
         val sug = model.suggestions
         if (model.query.isNotBlank()) {
             IconRow(Icons.Filled.Search, "Search for “${model.query.trim()}”") { done(); model.search() }
         }
-        if (model.query.isNotEmpty() && !(sug.places.isEmpty() && sug.queries.isEmpty())) {
+        if (model.query.isEmpty() && (s.osmOnlySearch || s.noGoogle)) {
+            listOf("Drinking water", "Public toilets", "Parking", "Bicycle parking", "Viewpoint").forEach { label ->
+                IconRow(Icons.Filled.Place, label) { done(); model.search(label) }
+            }
+        } else if (model.query.isNotEmpty() && !(sug.places.isEmpty() && sug.queries.isEmpty())) {
             sug.places.take(6).forEach { p ->
                 IconRow(Icons.Filled.Place, p.name, p.address, p.distanceMeters?.let { Fmt.distance(it) }, height = 54.dp) { done(); model.openSuggestion(p) }
             }

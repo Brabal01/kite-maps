@@ -15,7 +15,7 @@ object MapCam {
     /** The zoom at which [meters] fill [widthDp] of screen at latitude [lat]. */
     fun zoomFor(meters: Double, lat: Double, widthDp: Float): Double {
         val z = log2(40_075_016.686 * cos(lat * PI / 180) * widthDp / (512.0 * max(meters, 1.0)))
-        return z.coerceIn(1.0, 20.0)
+        return z.coerceIn(1.0, 21.5)
     }
 
     private fun density() = KiteApp.app.resources.displayMetrics.density
