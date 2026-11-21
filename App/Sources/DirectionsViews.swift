@@ -990,7 +990,9 @@ struct TripRow: View {
         let changes = max(0, trip.transfers)
         let walk = Int((trip.walkSeconds / 60).rounded())
         var parts: [String] = []
-        parts.append(changes == 0 ? L10n.text("Direct") : L10n.format("%@ changes", String(changes)))
+        parts.append(changes == 0 ? L10n.text("Direct")
+                    : changes == 1 ? L10n.text("1 change")
+                    : L10n.format("%@ changes", String(changes)))
         if walk > 0 { parts.append(L10n.format("%@ min walk", String(walk))) }
         return parts.joined(separator: " · ")
     }

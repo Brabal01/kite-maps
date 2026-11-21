@@ -1070,6 +1070,8 @@ enum DemoScript {
             state.routes[.drive] = UITestSupport.routes(from: from, to: to, mode: .drive)
             state.selected = 0
             model.directions = state
+            model.map?.setCenter(CLLocationCoordinate2D(latitude: from.lat, longitude: from.lng),
+                                 zoomLevel: 15, animated: false)
             model.startNavigation()
             await wait(2)
             if step == "signalsynthetic" { model.nav?.showDemoSignals() }

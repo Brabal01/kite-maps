@@ -546,7 +546,7 @@ final class Navigator: ObservableObject {
     private func bindCoverage(_ source: RouteEventCoverage) {
         coverage = source
         let sync = { [weak self, weak source] in
-            guard let self, let source, self.route.id == source.routeID else { return }
+            guard let self, let source, self.route.id == source.routeID, !self.demoControls else { return }
             self.orderedControls = source.events
             self.routeControls = source.complete || !source.events.isEmpty ? source.events.map(\.control) : nil
             self.controlsUnavailable = source.unavailable
@@ -1037,7 +1037,9 @@ final class Navigator: ObservableObject {
     }
 
     /** For the build's screenshots: two signalised junctions close together, both on our approach. */
+    private var demoControls = false
     func showDemoSignals() {
+        demoControls = true
         let along = progress?.alongMeters ?? 0
         let total = Geo.length(route.polyline)
         let cum = Geo.cumulative(route.polyline)
