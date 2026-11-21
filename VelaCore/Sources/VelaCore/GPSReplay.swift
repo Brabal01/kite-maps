@@ -31,13 +31,16 @@ public struct GPSReplayFixture: Codable, Equatable, Sendable {
     /** Where `east = north = 0` is. A shared fixture may use any point. */
     public var origin: LatLng
     public var fixes: [Fix]
+    /** Geometry the fixes were recorded on, so a fixture is self-contained and testable. */
+    public var routePolyline: [LatLng]?
 
-    public init(name: String, notes: String = "", origin: LatLng, fixes: [Fix]) {
+    public init(name: String, notes: String = "", origin: LatLng, fixes: [Fix], routePolyline: [LatLng]? = nil) {
         schema = Self.schema
         self.name = name
         self.notes = notes
         self.origin = origin
         self.fixes = fixes
+        self.routePolyline = routePolyline
     }
 
     public func coordinate(of fix: Fix) -> LatLng {

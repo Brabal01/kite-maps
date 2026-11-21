@@ -1,0 +1,349 @@
+{
+  "schema": "kite-gps-replay-v1",
+  "name": "wrong turn",
+  "notes": "A late departure at a side road; the tracker must not silently jump.",
+  "origin": {
+    "lat": 50.0755,
+    "lng": 14.4378
+  },
+  "routePolyline": [
+    {
+      "lat": 50.0755,
+      "lng": 14.4378
+    },
+    {
+      "lat": 50.0764046,
+      "lng": 14.4378
+    },
+    {
+      "lat": 50.0776712,
+      "lng": 14.4378
+    },
+    {
+      "lat": 50.0778069,
+      "lng": 14.43787
+    },
+    {
+      "lat": 50.0778702,
+      "lng": 14.43801
+    },
+    {
+      "lat": 50.077834,
+      "lng": 14.4381919
+    },
+    {
+      "lat": 50.0777164,
+      "lng": 14.4382899
+    },
+    {
+      "lat": 50.0775807,
+      "lng": 14.4382899
+    },
+    {
+      "lat": 50.0775626,
+      "lng": 14.4389198
+    },
+    {
+      "lat": 50.0775626,
+      "lng": 14.4397596
+    }
+  ],
+  "fixes": [
+    {
+      "t": 0.0,
+      "east": 0.0,
+      "north": 0.0,
+      "accuracy": 5,
+      "speed": 10,
+      "course": 0
+    },
+    {
+      "t": 1.0,
+      "east": 0.0,
+      "north": 11.1,
+      "accuracy": 5,
+      "speed": 10,
+      "course": 0
+    },
+    {
+      "t": 2.0,
+      "east": 0.0,
+      "north": 22.2,
+      "accuracy": 5,
+      "speed": 10,
+      "course": 0
+    },
+    {
+      "t": 3.0,
+      "east": 0.0,
+      "north": 33.3,
+      "accuracy": 5,
+      "speed": 10,
+      "course": 0
+    },
+    {
+      "t": 4.0,
+      "east": 0.0,
+      "north": 44.4,
+      "accuracy": 5,
+      "speed": 10,
+      "course": 0
+    },
+    {
+      "t": 5.0,
+      "east": 0.0,
+      "north": 55.6,
+      "accuracy": 5,
+      "speed": 10,
+      "course": 0
+    },
+    {
+      "t": 6.0,
+      "east": 0.0,
+      "north": 66.7,
+      "accuracy": 5,
+      "speed": 10,
+      "course": 0
+    },
+    {
+      "t": 7.0,
+      "east": 0.0,
+      "north": 77.8,
+      "accuracy": 5,
+      "speed": 10,
+      "course": 0
+    },
+    {
+      "t": 8.0,
+      "east": 0.0,
+      "north": 88.9,
+      "accuracy": 5,
+      "speed": 10,
+      "course": 0
+    },
+    {
+      "t": 9.0,
+      "east": 0.0,
+      "north": 100.0,
+      "accuracy": 5,
+      "speed": 10,
+      "course": 0
+    },
+    {
+      "t": 10.0,
+      "east": 0.0,
+      "north": 110.0,
+      "accuracy": 5,
+      "speed": 10,
+      "course": 0
+    },
+    {
+      "t": 11.0,
+      "east": 0.0,
+      "north": 120.0,
+      "accuracy": 5,
+      "speed": 10,
+      "course": 0
+    },
+    {
+      "t": 12.0,
+      "east": 0.0,
+      "north": 130.0,
+      "accuracy": 5,
+      "speed": 10,
+      "course": 0
+    },
+    {
+      "t": 13.0,
+      "east": 0.0,
+      "north": 140.0,
+      "accuracy": 5,
+      "speed": 10,
+      "course": 0
+    },
+    {
+      "t": 14.0,
+      "east": 0.0,
+      "north": 150.0,
+      "accuracy": 5,
+      "speed": 10,
+      "course": 0
+    },
+    {
+      "t": 15.0,
+      "east": 0.0,
+      "north": 160.0,
+      "accuracy": 5,
+      "speed": 10,
+      "course": 0
+    },
+    {
+      "t": 16.0,
+      "east": 0.0,
+      "north": 170.0,
+      "accuracy": 5,
+      "speed": 10,
+      "course": 0
+    },
+    {
+      "t": 17.0,
+      "east": 0.0,
+      "north": 180.0,
+      "accuracy": 5,
+      "speed": 10,
+      "course": 0
+    },
+    {
+      "t": 18.0,
+      "east": 0.0,
+      "north": 190.0,
+      "accuracy": 5,
+      "speed": 10,
+      "course": 0
+    },
+    {
+      "t": 19.0,
+      "east": 120.0,
+      "north": 200.0,
+      "accuracy": 70,
+      "speed": 10,
+      "course": -1
+    },
+    {
+      "t": 20.0,
+      "east": 120.0,
+      "north": 210.0,
+      "accuracy": 70,
+      "speed": 10,
+      "course": -1
+    },
+    {
+      "t": 21.0,
+      "east": 120.0,
+      "north": 220.0,
+      "accuracy": 70,
+      "speed": 10,
+      "course": -1
+    },
+    {
+      "t": 22.0,
+      "east": 120.0,
+      "north": 230.0,
+      "accuracy": 70,
+      "speed": 10,
+      "course": -1
+    },
+    {
+      "t": 23.0,
+      "east": 120.0,
+      "north": 240.0,
+      "accuracy": 70,
+      "speed": 10,
+      "course": -1
+    },
+    {
+      "t": 24.0,
+      "east": 125.0,
+      "north": 255.0,
+      "accuracy": 70,
+      "speed": 10,
+      "course": -1
+    },
+    {
+      "t": 25.0,
+      "east": 135.0,
+      "north": 262.0,
+      "accuracy": 70,
+      "speed": 10,
+      "course": -1
+    },
+    {
+      "t": 26.0,
+      "east": 148.0,
+      "north": 258.0,
+      "accuracy": 70,
+      "speed": 10,
+      "course": -1
+    },
+    {
+      "t": 27.0,
+      "east": 35.0,
+      "north": 245.0,
+      "accuracy": 5,
+      "speed": 10,
+      "course": 0
+    },
+    {
+      "t": 28.0,
+      "east": 35.0,
+      "north": 230.0,
+      "accuracy": 5,
+      "speed": 10,
+      "course": 90
+    },
+    {
+      "t": 29.0,
+      "east": 46.3,
+      "north": 229.5,
+      "accuracy": 5,
+      "speed": 10,
+      "course": 90
+    },
+    {
+      "t": 30.0,
+      "east": 57.5,
+      "north": 229.0,
+      "accuracy": 5,
+      "speed": 10,
+      "course": 90
+    },
+    {
+      "t": 31.0,
+      "east": 68.8,
+      "north": 228.5,
+      "accuracy": 5,
+      "speed": 10,
+      "course": 90
+    },
+    {
+      "t": 32.0,
+      "east": 80.0,
+      "north": 228.0,
+      "accuracy": 5,
+      "speed": 10,
+      "course": 90
+    },
+    {
+      "t": 33.0,
+      "east": 92.0,
+      "north": 228.0,
+      "accuracy": 5,
+      "speed": 10,
+      "course": 90
+    },
+    {
+      "t": 34.0,
+      "east": 104.0,
+      "north": 228.0,
+      "accuracy": 5,
+      "speed": 10,
+      "course": 90
+    },
+    {
+      "t": 35.0,
+      "east": 116.0,
+      "north": 228.0,
+      "accuracy": 5,
+      "speed": 10,
+      "course": 90
+    },
+    {
+      "t": 36.0,
+      "east": 128.0,
+      "north": 228.0,
+      "accuracy": 5,
+      "speed": 10,
+      "course": 90
+    }
+  ]
+}

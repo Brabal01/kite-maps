@@ -132,6 +132,8 @@ final class AppModel: ObservableObject {
         focusSearchRequest += 1
     }
     @Published var notice: String?
+    /** The manoeuvre the route preview last moved the camera to; nothing in navigation reads this. */
+    @Published var previewManeuver: Maneuver?
     @Published var detent: SheetDetent = .half
     @Published var openNowOnly = false
     @Published var rating4Only = false
@@ -1639,6 +1641,13 @@ final class AppModel: ObservableObject {
             if let feed = await TransitRealtime.fetch(candidate.url, timeout: 15) { return feed }
         }
         return nil
+    }
+
+    func focusManeuver(_ step: Maneuver) {
+        previewManeuver = step
+        map?.setCenter(CLLocationCoordinate2D(latitude: step.location.lat, longitude: step.location.lng),
+                       zoomLevel: 16.5, animated: true)
+        mapTick += 1
     }
 
     func frameRoute() {

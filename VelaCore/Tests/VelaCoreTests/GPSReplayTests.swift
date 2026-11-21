@@ -109,3 +109,64 @@ final class GPSReplayTests: XCTestCase {
         XCTAssertEqual(offRouteFixes, 0)
     }
 }
+
+final class GoldenNavigationFixtureTests: XCTestCase {
+    private func fixture(_ name: String) throws -> GPSReplayFixture {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/\(name).json")
+        let data = try Data(contentsOf: url)
+        return try XCTUnwrap(GPSReplayFixture.decode(data), "\(name) stopped decoding")
+    }
+
+    func testFourExitRoundaboutFixtureDrivesTheWholeRoute() throws {
+        let f = try fixture("four_exit_roundabout")
+        let line = try XCTUnwrap(f.routePolyline)
+        XCTAssertEqual(f.name, "four-exit roundabout")
+        XCTAssertGreaterThan(line.count, 5)
+        let route = Route(mode: .drive, polyline: line, distanceMeters: Geo.length(line), typicalSeconds: 90,
+                          maneuvers: [Maneuver(type: .roundabout, instruction: "Take the 2nd exit",
+                                               location: line[3], alongMeters: 240, distanceMeters: 100, exit: 2),
+                                      Maneuver(type: .arrive, instruction: "Arrive", location: line.last!,
+                                               alongMeters: Geo.length(line), distanceMeters: 0)], source: "golden")
+        let tracker = RouteTracker(route: route)
+        var last = 0.0
+        let start = Date(timeIntervalSince1970: 40_000)
+        for step in GPSReplayPlan.schedule(f) {
+            let p = tracker.update(step.coordinate, accuracy: step.fix.accuracy,
+                                   heading: step.fix.course >= 0 ? step.fix.course : nil,
+                                   speed: max(0, step.fix.speed), now: start.addingTimeInterval(step.deliverAt))
+            XCTAssertGreaterThanOrEqual(p.alongMeters, last - 15, "the roundabout must not move the arrow backwards")
+            last = max(last, p.alongMeters)
+        }
+        XCTAssertGreaterThan(last, Geo.length(line) * 0.9)
+        XCTAssertEqual(route.maneuvers[0].exit, 2, "the golden scenario fixes the expected instruction")
+    }
+
+    func testTunnelFixtureHasARealGap() throws {
+        let f = try fixture("tunnel")
+        let fixes = Set(f.fixes.map(\.t))
+        XCTAssertTrue(Array(stride(from: 20.0, through: 35.0, by: 1.0)).contains { !fixes.contains($0) }, "the fixture actually drops fixes in the tunnel")
+    }
+
+    func testWrongTurnFixtureIsNotMistakenForARerouteSignal() throws {
+        let f = try fixture("wrong_turn")
+        let line = try XCTUnwrap(f.routePolyline)
+        let route = Route(mode: .drive, polyline: line, distanceMeters: Geo.length(line), typicalSeconds: 90,
+                          maneuvers: [], source: "golden")
+        let tracker = RouteTracker(route: route)
+        var consecutive = 0
+        for step in GPSReplayPlan.schedule(f) {
+            let p = tracker.update(step.coordinate, accuracy: step.fix.accuracy,
+                                   speed: max(0, step.fix.speed), now: Date(timeIntervalSince1970: 50_000).addingTimeInterval(step.deliverAt))
+            consecutive = p.offRouteFixes
+            XCTAssertLessThan(consecutive, 3, "one shifted stretch must not become a confirmed departure")
+        }
+    }
+
+    func testCorruptFixtureIsRejected() throws {
+        let f = try fixture("tunnel")
+        var broken = f; broken.schema = "different"
+        XCTAssertNil(GPSReplayFixture.decode(broken.encoded()))
+    }
+}
