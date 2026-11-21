@@ -425,7 +425,8 @@ final class AppModel: ObservableObject {
             PlanningOrigin(point: $0.location, capturedAt: now, accuracy: 0,
                            kind: .manual, label: $0.name)
         }
-        let current = manual == nil ? currentPlanningOrigin(at: now) : nil
+        let current = currentPlanningOrigin(at: now)
+        if manual == nil, let current { planningCurrentLocation = current }
         return PlanningSession(destinationID: state.destination.id,
                                destinationName: state.destination.name,
                                destination: state.destination.location,
@@ -822,7 +823,11 @@ final class AppModel: ObservableObject {
      the map centre or a default city.
      */
     private func endpoints(_ d: DirectionsState) -> (LatLng, LatLng)? {
-        let current = planningCurrentLocation?.point ?? currentPlanningOrigin()?.point
+        // The session's deviceOrigin is the snapshot all modes share. It only
+        // moves after a significant move, never on every GPS wobble.
+        let current = d.planning?.deviceOrigin?.point
+            ?? planningCurrentLocation?.point
+            ?? currentPlanningOrigin()?.point
         guard let from = d.fromPlace?.location ?? current,
               let to = d.toPlace?.location ?? current else { return nil }
         return (from, to)
@@ -936,7 +941,10 @@ final class AppModel: ObservableObject {
         let wasWaiting = directions?.planning?.isWaitingForLocation ?? false
         directions?.planning = session
         applyPlanningEffects(effects)
-        if wasWaiting, session.isWaitingForLocation { schedulePlanningDeadlines() }
+        // Two deadlines only; after the manual-start offer the user decides.
+        if wasWaiting, session.isWaitingForLocation, !session.manualOriginOffered {
+            schedulePlanningDeadlines()
+        }
     }
 
     private func applyPlanningEffects(_ effects: [PlanningEffect]) {
@@ -950,7 +958,6 @@ final class AppModel: ObservableObject {
                     planningGPSActive = true
                     location.beginPlanning()
                 }
-                schedulePlanningDeadlines()
             case .cancelRouteLoads:
                 cancelRouteLoads()
             case .loadRoute:
@@ -1172,9 +1179,11 @@ final class AppModel: ObservableObject {
         let effects = session?.selectMode(.transit, now: Date()) ?? []
         state.planning = session
         directions = state
+        let startedTransit = effects.contains { $0.kind == .loadRoute && $0.mode == .transit }
         applyPlanningEffects(effects)
         // "Leave now" times found a while ago may have left already: look again.
-        if directions?.transitTime == nil, Date().timeIntervalSince(transitLoadedAt) > 120 {
+        if !startedTransit, directions?.transitTime == nil,
+           Date().timeIntervalSince(transitLoadedAt) > 120 {
             loadTransit()
         } else if directions?.trips != nil {
             frameRoute()

@@ -12,6 +12,13 @@ final class PlanningUITests: XCTestCase {
 
     func testPlannerProducesRoutesAndSwitchesEveryMode() throws {
         let app = XCUIApplication()
+        addUIInterruptionMonitor(withDescription: "Location permission") { alert in
+            for title in ["Allow While Using App", "Allow Once", "Allow"] {
+                let button = alert.buttons[title]
+                if button.exists { button.tap(); return true }
+            }
+            return false
+        }
         app.launchArguments = ["-uitest-planning"]
         app.launchEnvironment = [
             "KITE_UITEST_LOCATION": "38.5449,-121.7405",
@@ -24,20 +31,27 @@ final class PlanningUITests: XCTestCase {
         XCTAssertTrue(work.waitForExistence(timeout: 20), "the Routes page should be ready")
         work.tap()
 
-        let summary = app.buttons["route-summary"]
+        // One route shows its duration in the trip header; more than one also
+        // puts a card with the same identifier in the header's card row.
+        let status = app.descendants(matching: .any)["planning-status"]
+        let summary = app.descendants(matching: .any)["route-summary"].firstMatch
         XCTAssertTrue(summary.waitForExistence(timeout: 30),
-                      "a delayed GPS fix must still produce a route")
-        let driveLabel = summary.label
-        XCTAssertFalse(driveLabel.isEmpty)
+                      "a delayed GPS fix must still produce a route (status: \(status.exists ? status.label : "none"))\n\(app.debugDescription)")
+        var previousLabel = summary.label
+        XCTAssertFalse(previousLabel.isEmpty)
 
         // Drive -> walk -> bike: each must show a route, not the waiting state.
         for mode in ["mode-walk", "mode-bike"] {
             let tab = app.buttons[mode]
             XCTAssertTrue(tab.waitForExistence(timeout: 10))
             tab.tap()
-            let changed = expectation(for: NSPredicate(format: "label != %@", driveLabel),
-                                      evaluatedWith: summary)
+            XCTAssertTrue(summary.waitForExistence(timeout: 20),
+                          "\(mode) must produce its own route")
+            let changed = expectation(
+                for: NSPredicate(format: "exists == true AND label != %@", previousLabel),
+                evaluatedWith: summary)
             wait(for: [changed], timeout: 20)
+            previousLabel = summary.label
             let waiting = app.descendants(matching: .any)["planning-status"]
             XCTAssertFalse(waiting.exists, "\(mode) must not fall back to waiting for location")
         }

@@ -189,6 +189,9 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     // MARK: Lifecycle
 
     func start() {
+        // The simulator UI test supplies its own fix; never raise a system
+        // permission alert that the test runner would have to dismiss.
+        if UITestSupport.planning { return }
         LaunchTrace.mark("LocationService start")
         let status = manager.authorizationStatus
         if status == .notDetermined { manager.requestWhenInUseAuthorization() }
@@ -228,6 +231,11 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     func beginPlanning(refresh: Bool = true) {
         LaunchTrace.mark("LocationService planning")
         planningActive = true
+        if UITestSupport.planning {
+            apply(.planning)
+            scheduleSimulatedPlanningFix()
+            return
+        }
         let status = manager.authorizationStatus
         if status == .notDetermined { manager.requestWhenInUseAuthorization() }
         locationServicesOff = !CLLocationManager.locationServicesEnabled()
@@ -236,9 +244,7 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
             return
         }
         apply(.planning)
-        if UITestSupport.planning {
-            scheduleSimulatedPlanningFix()
-        } else if refresh {
+        if refresh {
             refreshPlanningLocation()
         } else {
             manager.startUpdatingLocation()
@@ -251,13 +257,14 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
             beginPlanning()
             return
         }
+        if UITestSupport.planning {
+            apply(.planning)
+            scheduleSimulatedPlanningFix()
+            return
+        }
         if !foreground { return }
         apply(.planning)
-        if UITestSupport.planning {
-            scheduleSimulatedPlanningFix()
-        } else {
-            refreshPlanningLocation()
-        }
+        refreshPlanningLocation()
     }
 
     /** Simulator UI tests: feed a fix through exactly the same update path. */
@@ -274,7 +281,7 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
             if delay > 0 {
                 try? await Task.sleep(nanoseconds: UInt64(delay * 1e9))
             }
-            guard !Task.isCancelled, let self, self.planningActive else { return }
+            guard !Task.isCancelled, let self, self.planningActive, self.foreground else { return }
             self.planningRequestInFlight = false
             self.fix = loc
             self.planningState = .received(at: loc.timestamp)

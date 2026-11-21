@@ -275,11 +275,8 @@ public struct PlanningLocationPolicy: Equatable, Sendable {
     /** Whether a newer fix should move the snapshotted start, or only refresh its age. */
     public func shouldMoveOrigin(current: PlanningOrigin, to fix: PlanningFix, at now: Date) -> Bool {
         guard !current.isManual else { return false }
-        if current.kind == .approximate,
-           usability(of: fix, at: now) == .usable(age: max(0, now.timeIntervalSince(fix.timestamp)),
-                                                 accuracy: fix.horizontalAccuracy) {
-            return false
-        }
+        // A precise fix may upgrade an approximate start in place, but a real
+        // move over the drift threshold always wins.
         return current.point.distance(to: fix.point) > snapshotDrift
     }
 }

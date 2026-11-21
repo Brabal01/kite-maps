@@ -414,6 +414,7 @@ struct TripHeader: View {
                                 .font(KiteText.digits(44, weight: .heavy))
                                 .foregroundColor(TripBody.delayColor(r, scheme))
                                 .lineLimit(1).minimumScaleFactor(0.7)
+                                .accessibilityIdentifier("route-summary")
                             Text(L10n.format("%@ · arrive %@", String(describing: Fmt.distance(r.distanceMeters)), String(describing: Fmt.arrival(r.durationSeconds))))
                                 .font(.system(size: 17, weight: .medium)).foregroundColor(Vela.muted(scheme))
                                 .lineLimit(1).minimumScaleFactor(0.8)
