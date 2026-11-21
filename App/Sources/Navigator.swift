@@ -97,7 +97,13 @@ final class Navigator: ObservableObject {
         } else {
             events = orderedControls
         }
-        let next = events.lazy.filter { $0.meters >= along }.prefix(6)
+        let next = events.lazy.filter { event in
+            guard event.meters >= along else { return false }
+            // While driving, an ambiguous light or a proximity fallback is not a
+            // confirmed instruction and must not enter the upcoming strip.
+            if route.mode == .drive && !event.control.directionCertain { return false }
+            return true
+        }.prefix(6)
         let remaining = Array(next).map { UpcomingRoadControl(control: $0.control, meters: (($0.meters - along) / 10).rounded() * 10) }
         if remaining != upcomingControls { upcomingControls = remaining }
     }
