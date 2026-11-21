@@ -96,7 +96,7 @@ struct RoutePreviewSheet: View {
             if !events.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Mapped road events here").font(.subheadline.weight(.semibold))
-                    ForEach(events, id: \.control.osmID) { event in
+                    ForEach(Array(events.enumerated()), id: \.offset) { _, event in
                         Text("\(event.control.kind.rawValue) · \(Int(abs(event.meters - step.alongMeters))) m away")
                             .font(.caption).foregroundColor(.secondary)
                     }
