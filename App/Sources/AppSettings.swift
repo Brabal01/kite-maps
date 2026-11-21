@@ -89,6 +89,13 @@ final class AppSettings: ObservableObject {
     @Published var quickActions: [QuickActionKind] {
         didSet { d.set(quickActions.map(\.rawValue), forKey: "quickActions") }
     }
+    static let defaultQuickActions: [QuickActionKind] = [.home, .work, .parking, .transit, .lastDestination]
+
+    func moveQuickAction(from source: IndexSet, to destination: Int) {
+        quickActions.move(fromOffsets: source, toOffset: destination)
+    }
+
+    func resetQuickActions() { quickActions = Self.defaultQuickActions }
     /** The browse map's last meaningful camera, so a launch does not flash London.
      *  Deliberately not @Published: the map itself asks for it at creation time and
      *  writing it must not re-render every screen that observes settings. */
@@ -233,7 +240,7 @@ final class AppSettings: ObservableObject {
         units = UnitsMode(rawValue: d.string(forKey: "units") ?? "") ?? .auto
         quickActions = (d.stringArray(forKey: "quickActions"))
             .map { $0.compactMap(QuickActionKind.init(rawValue:)) }
-            ?? [.home, .work, .parking, .transit, .lastDestination]
+            ?? Self.defaultQuickActions
         lastMapCenter = d.data(forKey: "lastMapCenter").flatMap { try? JSONDecoder().decode(LatLng.self, from: $0) }
         lastMapZoom = d.object(forKey: "lastMapZoom") as? Double ?? 0
         voice = d.object(forKey: "voice") as? Bool ?? true
