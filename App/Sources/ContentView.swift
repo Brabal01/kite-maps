@@ -1081,13 +1081,15 @@ enum DemoScript {
             // No network for the trips, and the same path the real transit tab uses so the
             // sheet is presented and selected the way a user sees it.
             model.endNavigation()
-            let from = LatLng(38.5449, -121.7405), to = LatLng(38.5843, -121.5006)
+            model.tab = .map
+            let to = LatLng(38.5843, -121.5006)
             let station = Place(id: "demo-sac-synthetic", name: "Sacramento Valley Station", location: to, source: "demo")
             model.select(station)
             await wait(2)
+            // Present the trip sheet the way a user does, then replace the timetable with
+            // the deterministic fixture before any real transit request can land.
             model.openDirections(to: station)
-            model.showTransit()
-            await wait(2)
+            await wait(1)
             model.installDemoTransitTrips()
             model.detent = .full
             return

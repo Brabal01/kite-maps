@@ -1296,11 +1296,20 @@ final class AppModel: ObservableObject {
         guard var state = directions else { return }
         let from = state.fromPlace?.location ?? userLatLng ?? LatLng(38.5449, -121.7405)
         let to = state.toPlace?.location ?? state.destination.location
+        // Stop any real transit request and planning effects: they must not replace
+        // the deterministic fixture while the UI test or screenshot is running.
+        transitRequest += 1
+        transitTask?.cancel()
+        transitTask = nil
+        state.planning = nil
+        state.loading = []
+        state.errors = [:]
         state.transit = true
         state.trips = UITestSupport.demoTransitTrips(from: from, to: to)
         state.trip = 0
         state.tripsError = nil
         directions = state
+        detent = .full
         frameRoute()
     }
 
