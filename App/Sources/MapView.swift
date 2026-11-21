@@ -163,6 +163,8 @@ struct VelaMapView: UIViewRepresentable {
         private var lastWazeKey = ""
         /** The box the drawn rail lines cover, so panning inside it asks nothing. */
         private var railBox: (s: Double, w: Double, n: Double, e: Double, z: Int)?
+        private var railLines: [Transitous.Line] = []
+        private var publishedRailFilter = ""
 
         init(model: AppModel) { self.model = model }
 
@@ -630,7 +632,11 @@ struct VelaMapView: UIViewRepresentable {
             renderSignals()
             renderWaze()
             renderMine()
-            if s.transitLines || model.hasActiveJourney { loadRail(map) }
+            if s.transitLines || model.hasActiveJourney {
+                loadRail(map)
+                let hidden = model.hasActiveJourney ? [] : s.hiddenTransitCategories
+                if !railLines.isEmpty, publishedRailFilter != hidden.sorted().joined(separator: ",") { publishRail() }
+            }
         }
 
         private func renderBase(_ style: MLNStyle, navigating: Bool) {
@@ -954,15 +960,23 @@ struct VelaMapView: UIViewRepresentable {
                 self.railFetch = nil
                 if let lines {
                     self.railBox = box
-                    let shapes = lines.map { l in
-                        self.polyline(l.points, ["color": String(format: "#%06X", l.color),
-                                                 "offset": l.offset, "mode": l.mode.rawValue])
-                    }
-                    self.publish(MLNShapeCollectionFeature(shapes: shapes), to: "vela-rail")
+                    self.railLines = lines
+                    self.publishRail()
                 }
                 // The map may have moved on while this was loading.
                 if lines != nil, let map { self.loadRail(map) }
             }
+        }
+
+        /// The fetched lines minus the kinds the user hid (a line the active journey uses is never hidden).
+        private func publishRail() {
+            let hidden = model.hasActiveJourney ? [] : model.settings.hiddenTransitCategories
+            let shapes = railLines.filter { TransitMapFilter.shows($0.mode, hidden: hidden) }.map { l in
+                polyline(l.points, ["color": String(format: "#%06X", l.color),
+                                    "offset": l.offset, "mode": l.mode.rawValue])
+            }
+            publish(MLNShapeCollectionFeature(shapes: shapes), to: "vela-rail")
+            publishedRailFilter = hidden.sorted().joined(separator: ",")
         }
 
         /** Separate OSM surveillance layer, opt-in; bounded to the same cells as camera lookups. */

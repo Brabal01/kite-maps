@@ -1,0 +1,45 @@
+name: Transitous live integration
+
+# The unit tests use deterministic data. This workflow talks to the real Transitous service, and it is
+# deliberately separate from the IPA build: an outage of a community service must be visible as a red
+# run here, but must not stop a release build, and must never be reported as a pass.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 5 * * 1"
+  push:
+    branches:
+      - iphone-custom-v32-refinement
+    paths:
+      - VelaCore/Sources/VelaCore/Transit*.swift
+      - VelaCore/Tests/VelaCoreTests/TransitousLiveTests.swift
+      - .github/workflows/transitous-live.yml
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    name: Query the real Transitous API
+    runs-on: xcode-27
+    timeout-minutes: 15
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+      - name: Live tests (fail, never skip, when the service is unreachable)
+        working-directory: VelaCore
+        run: |
+          set -o pipefail
+          mkdir -p ../live-artifacts
+          KITE_VERIFY_TRANSITOUS=1 swift test --filter TransitousLiveTests 2>&1 | tee ../live-artifacts/transitous-live.log
+          if grep -q "skipped" ../live-artifacts/transitous-live.log; then
+            echo "A live test was skipped; that is not a pass."; exit 1
+          fi
+      - name: Upload the log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kite-v32-Transitous-Live-Results
+          path: live-artifacts
+          if-no-files-found: warn

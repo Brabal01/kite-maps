@@ -77,8 +77,8 @@ final class AppSettings: ObservableObject {
     @Published var useAppleMaps = UserDefaults.standard.bool(forKey: "useAppleMaps") {
         didSet { d.set(useAppleMaps, forKey: "useAppleMaps") }
     }
-    @Published var mapboxToken = UserDefaults.standard.string(forKey: "mapboxToken") ?? "" {
-        didSet { d.set(mapboxToken, forKey: "mapboxToken") }
+    @Published var mapboxToken = MapboxCredential.load() {
+        didSet { MapboxCredential.save(mapboxToken) }
     }
     @Published var useMapbox = UserDefaults.standard.bool(forKey: "useMapbox") {
         didSet { d.set(useMapbox, forKey: "useMapbox") }
@@ -99,6 +99,8 @@ final class AppSettings: ObservableObject {
     @Published var haptics: Bool { didSet { d.set(haptics, forKey: "haptics") } }
     /** The speaker button was last left on "Alerts only" (cameras and police, no turns). */
     @Published var voiceAlertsOnly: Bool { didSet { d.set(voiceAlertsOnly, forKey: "voiceAlertsOnly") } }
+    /** The speaker button was last left on "Turns only" (no warnings). */
+    @Published var voiceManeuversOnly: Bool { didSet { d.set(voiceManeuversOnly, forKey: "voiceManeuversOnly") } }
     @Published var traffic: Bool { didSet { d.set(traffic, forKey: "traffic") } }
     @Published var satellite: Bool { didSet { d.set(satellite, forKey: "satellite") } }
     /** One coherent map look; the old individual switches remain readable and additive. */
@@ -118,6 +120,10 @@ final class AppSettings: ObservableObject {
     /** Hill shading, and metro/rail lines in their colors. */
     @Published var terrain: Bool { didSet { d.set(terrain, forKey: "terrain") } }
     @Published var transitLines: Bool { didSet { d.set(transitLines, forKey: "transitLines") } }
+    /** `TransitMapCategory` names the user switched off on the map; empty shows every kind in its official colours. */
+    @Published var hiddenTransitCategories: Set<String> {
+        didSet { d.set(hiddenTransitCategories.sorted(), forKey: "hiddenTransitCategories") }
+    }
     @Published var avoidTolls: Bool { didSet { d.set(avoidTolls, forKey: "avoidTolls") } }
     @Published var avoidHighways: Bool { didSet { d.set(avoidHighways, forKey: "avoidHighways") } }
     /** "Use Kite without Google": search and routes from open data only. */
@@ -193,7 +199,14 @@ final class AppSettings: ObservableObject {
     @Published var parking: Place? { didSet { save(parking, "parking") } }
     /** The first-run choice between Google's data and open data only has been made. */
     /** The trip being driven now (nil when none): offered again if the app closes before it ends. */
-    @Published var trip: SavedTrip? { didSet { if trip == nil { d.removeObject(forKey: "trip") } else { save(trip, "trip") } } }
+    @Published var trip: SavedTrip? {
+        didSet {
+            if trip == nil {
+                d.removeObject(forKey: "trip")
+                AppModel.interruptedJourneys.clear()
+            } else { save(trip, "trip") }
+        }
+    }
     @Published var welcomed: Bool { didSet { d.set(welcomed, forKey: "welcomed") } }
     @Published var defaultMode: TravelMode { didSet { d.set(defaultMode.rawValue, forKey: "defaultMode") } }
     @Published var saved: [Place] { didSet { save(saved, "saved") } }
@@ -215,6 +228,7 @@ final class AppSettings: ObservableObject {
         voice = d.object(forKey: "voice") as? Bool ?? true
         haptics = d.object(forKey: "haptics") as? Bool ?? true
         voiceAlertsOnly = d.bool(forKey: "voiceAlertsOnly")
+        voiceManeuversOnly = d.bool(forKey: "voiceManeuversOnly")
         traffic = d.object(forKey: "traffic") as? Bool ?? true
         satellite = d.bool(forKey: "satellite")
         mapPreset = MapPreset(rawValue: d.string(forKey: "mapPreset") ?? "") ?? .classic
@@ -224,6 +238,7 @@ final class AppSettings: ObservableObject {
         hudCustomJunction = d.object(forKey: "hudCustomJunction") as? Bool ?? true
         terrain = d.bool(forKey: "terrain")
         transitLines = d.bool(forKey: "transitLines")
+        hiddenTransitCategories = TransitMapFilter.sanitized(d.stringArray(forKey: "hiddenTransitCategories") ?? [])
         avoidTolls = d.bool(forKey: "avoidTolls")
         avoidHighways = d.bool(forKey: "avoidHighways")
         noGoogle = d.bool(forKey: "noGoogle")

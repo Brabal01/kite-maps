@@ -83,7 +83,7 @@ public enum Overpass {
     private static let session: URLSession = {
         let c = URLSessionConfiguration.ephemeral
         c.timeoutIntervalForRequest = 45
-        c.httpAdditionalHeaders = ["User-Agent": "Vela-iOS (https://github.com/matteofx1/vela-ios)"]
+        c.httpAdditionalHeaders = ["User-Agent": userAgent]
         return URLSession(configuration: c)
     }()
 
@@ -197,12 +197,20 @@ public enum Overpass {
      */
     static func firstAnswer(_ q: String, stagger: Double = 8, requestTimeout: TimeInterval? = nil,
                             valid: @escaping @Sendable (Data) -> Bool) async -> Data? {
-        await withTaskGroup(of: Data?.self) { group in
-            for (i, ep) in endpoints.enumerated() {
+        // A mirror that is rate-limiting or down is skipped until its back-off ends; with every
+        // mirror resting the caller gets nil at once instead of another round of doomed requests.
+        let usable = health.available(endpoints)
+        guard !usable.isEmpty else { return nil }
+        return await withTaskGroup(of: Data?.self) { group in
+            for (i, ep) in usable.enumerated() {
                 group.addTask {
                     if i > 0 { try? await Task.sleep(nanoseconds: UInt64(Double(i) * stagger * 1e9)) }
-                    guard !Task.isCancelled, let (data, status) = await fetch(ep, query: q, requestTimeout: requestTimeout), status == 200,
-                          !timedOut(data), valid(data) else { return nil }
+                    guard !Task.isCancelled, let (data, status) = await fetch(ep, query: q, requestTimeout: requestTimeout), status == 200 else { return nil }
+                    if timedOut(data) {
+                        health.recordFailure(ep, .timeout)
+                        return nil
+                    }
+                    guard valid(data) else { return nil }
                     return data
                 }
             }
@@ -380,6 +388,7 @@ public enum Overpass {
         r.httpMethod = "POST"
         r.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         r.httpBody = ("data=" + (query.addingPercentEncoding(withAllowedCharacters: allowed) ?? "")).data(using: .utf8)
+        r.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         let client: URLSession
         if let requestTimeout {
             let config = URLSessionConfiguration.ephemeral
@@ -390,9 +399,28 @@ public enum Overpass {
             client = session
         }
         defer { if requestTimeout != nil { client.finishTasksAndInvalidate() } }
-        guard let (data, resp) = try? await client.data(for: r) else { return nil }
-        return (data, (resp as? HTTPURLResponse)?.statusCode ?? 0)
+        let data: Data, resp: URLResponse
+        do {
+            (data, resp) = try await client.data(for: r)
+        } catch {
+            // Being offline or cancelled says nothing about the mirror; only a timeout does.
+            if (error as? URLError)?.code == .timedOut { health.recordFailure(endpoint, .timeout) }
+            return nil
+        }
+        let http = resp as? HTTPURLResponse
+        let status = http?.statusCode ?? 0
+        if status == 200 {
+            health.recordSuccess(endpoint)
+        } else if let failure = EndpointHealth.failure(
+            forStatus: status, retryAfter: EndpointHealth.retryAfter(http?.value(forHTTPHeaderField: "Retry-After"))) {
+            health.recordFailure(endpoint, failure)
+        }
+        return (data, status)
     }
+
+    /// Shared so that every Overpass caller (road events, lanes, cameras, arrival data) honours one back-off.
+    static let health = EndpointHealth.shared
+    static let userAgent = "Kite-Maps-iOS (https://github.com/Brabal01/kite-maps)"
 
     /** Any query, failing over across the mirrors; nil when none answered with data. */
     public static func query(_ q: String) async -> Data? {

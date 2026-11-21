@@ -74,7 +74,7 @@ struct TransitJourney {
     var index = 0
     var loadingWalk = false
     var boarded = false
-    var boardingProgress: Double?
+    var boarding = BoardingDetector()
     var leg: TransitLeg { trip.legs[index] }
 }
 
@@ -352,6 +352,10 @@ final class AppModel: ObservableObject {
     private var transitLoadedAt = Date.distantPast
     private var searchTask: Task<Void, Never>?
     private var navSub: AnyCancellable?
+    /** A simulated GPS drive is running (developer tool). It is the only source of position while it does. */
+    @Published var replayName: String?
+    var replayTask: Task<Void, Never>?
+    var isReplaying: Bool { replayName != nil }
 
     init() {
         LaunchTrace.mark("AppModel init")
@@ -373,10 +377,22 @@ final class AppModel: ObservableObject {
     /** "Carry on": the same place, stops and way of travelling, started as soon as the route arrives. */
     func resumeTrip() {
         guard let t = resumeOffer else { return }
+        let saved = Self.interruptedJourneys.load()
         resumeOffer = nil
         settings.trip = nil
         selected = nil
         results = []
+        // Without internet the saved route is the only one there is. Online, a fresh plan from where the
+        // driver is now is better, so the snapshot is used only when planning cannot work.
+        if !Connectivity.shared.online, let saved, saved.destination.id == t.destination.id,
+           let route = saved.route.route() {
+            settings.avoidTolls = saved.avoidTolls
+            settings.avoidHighways = saved.avoidHighways
+            tab = .map
+            beginNavigation(route, to: saved.destination, stops: saved.stops)
+            notice = L10n.text("No internet: following the route saved before the interruption. Kite cannot plan a new route until you are back online.")
+            return
+        }
         var state = DirectionsState(destination: t.destination, mode: TravelMode(rawValue: t.mode) ?? .drive)
         state.stops = t.stops
         detent = .half
@@ -392,7 +408,16 @@ final class AppModel: ObservableObject {
     private func rememberTrip(_ n: Navigator) {
         tripSavedAt = Date()
         settings.trip = SavedTrip(destination: n.destination, stops: n.stops, mode: n.route.mode.rawValue, at: Date())
+        // The route itself goes to a file (a long route is too big for UserDefaults), only when it changed.
+        guard !isReplaying, savedRouteID != n.route.id else { return }
+        savedRouteID = n.route.id
+        let journey = OfflineJourney(destination: n.destination, stops: n.stops, avoidTolls: settings.avoidTolls,
+                                     avoidHighways: settings.avoidHighways, route: n.route)
+        DispatchQueue.global(qos: .utility).async { Self.interruptedJourneys.save(journey) }
     }
+
+    nonisolated static let interruptedJourneys = OfflineJourneyStore.standard()
+    private var savedRouteID: UUID?
 
     /**
      Search bias and distance labels only. Planning uses the stable snapshot
@@ -880,22 +905,26 @@ final class AppModel: ObservableObject {
 
     func saveCurrentJourney(name: String? = nil) {
         guard let d = directions else { return }
-        let title = name?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let fallback = "\(d.fromPlace?.name ?? L10n.text("My location")) → \(d.destination.name)"
-        let journey = SavedJourney(name: (title?.isEmpty == false ? title! : fallback),
-                                   origin: d.fromPlace, destination: d.destination,
+        let title = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        // An empty name keeps following the journey's direction ("A → B" becomes "B → A" when reversed).
+        let journey = SavedJourney(name: title, origin: d.origin, destination: d.destination,
                                    stops: d.stops, mode: d.mode,
                                    avoidTolls: settings.avoidTolls,
-                                   avoidHighways: settings.avoidHighways)
+                                   avoidHighways: settings.avoidHighways,
+                                   returnTrip: d.reversed)
         settings.savedJourneys.insert(journey, at: 0)
         notice = L10n.text("Journey saved.")
     }
 
     func openSavedJourney(_ journey: SavedJourney) {
+        if let index = settings.savedJourneys.firstIndex(where: { $0.id == journey.id }) {
+            settings.savedJourneys[index].markUsed()
+        }
         settings.avoidTolls = journey.avoidTolls
         settings.avoidHighways = journey.avoidHighways
         var state = DirectionsState(destination: journey.destination, mode: journey.mode)
         state.origin = journey.origin
+        state.reversed = journey.isReturnTrip
         state.stops = journey.stops
         tab = .map
         detent = .half
@@ -905,11 +934,24 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Opens the opposite direction without touching the stored journey; saving it is a separate choice.
     func reverseSavedJourney(_ journey: SavedJourney) {
+        openSavedJourney(journey.reversed())
+    }
+
+    func toggleFavoriteJourney(_ journey: SavedJourney) {
         guard let index = settings.savedJourneys.firstIndex(where: { $0.id == journey.id }) else { return }
-        let reversed = journey.reversed()
-        settings.savedJourneys[index] = reversed
-        openSavedJourney(reversed)
+        settings.savedJourneys[index].isFavorite.toggle()
+    }
+
+    func duplicateSavedJourney(_ journey: SavedJourney) {
+        guard let index = settings.savedJourneys.firstIndex(where: { $0.id == journey.id }) else { return }
+        settings.savedJourneys.insert(journey.copy(), at: index + 1)
+    }
+
+    func renameSavedJourney(_ journey: SavedJourney, to name: String) {
+        guard let index = settings.savedJourneys.firstIndex(where: { $0.id == journey.id }) else { return }
+        settings.savedJourneys[index].name = name.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     func deleteSavedJourney(_ journey: SavedJourney) {
@@ -1712,6 +1754,11 @@ final class AppModel: ObservableObject {
             n.waitForFreshLocation()
             location.start()
         }
+        // Simulator UI tests only: replay the route instead of waiting for a GPS that does not move.
+        if ProcessInfo.processInfo.environment["KITE_UITEST_REPLAY"] == "1" {
+            let factor = Double(ProcessInfo.processInfo.environment["KITE_UITEST_REPLAY_SPEED"] ?? "") ?? 1
+            startReplay(.clean, speedFactor: factor)
+        }
     }
 
     @discardableResult func offerRouteExclusion(at point: LatLng) -> Bool {
@@ -1802,7 +1849,7 @@ final class AppModel: ObservableObject {
         }
         journey.index += 1
         journey.boarded = false
-        journey.boardingProgress = nil
+        journey.boarding.reset()
         journey.loadingWalk = false
         transitJourney = journey
         startTransitLeg()
@@ -1964,6 +2011,7 @@ final class AppModel: ObservableObject {
     }
 
     func endNavigation() {
+        stopReplay()
         stopPlanningGPS()
         clearNearbyControls()
         if #available(iOS 16.2, *) { JourneyActivity.shared.finish() }
@@ -2166,14 +2214,17 @@ final class AppModel: ObservableObject {
         mapTick += 1
     }
 
-    private func locationChanged(_ loc: CLLocation) {
-        defer { refreshActivity() }
+    func locationChanged(_ loc: CLLocation, simulated: Bool = false) {
+        // While a replay runs, the replay is the only source of position: a real fix must not leak into it,
+        // and a replayed one must never reach anything that is kept (trip memory, Live Activity, area data).
+        if isReplaying && !simulated { return }
+        defer { if !simulated { refreshActivity() } }
         // The planner is event-driven: the first usable fix continues the plan
         // no matter whether it arrives after 5, 30 or 90 seconds.
         if nav == nil, directions != nil, directions?.planning != nil {
             planningLocationChanged(loc)
         }
-        if !location.reducedAccuracy { refreshNearbyControls(loc) }
+        if !location.reducedAccuracy && !simulated { refreshNearbyControls(loc) }
         if location.reducedAccuracy || loc.horizontalAccuracy > 200 { areaRisk = nil }
         if let journey = transitJourney, !location.reducedAccuracy, updateTransitPosition(loc, journey: journey) { return }
         guard let n = nav else {
@@ -2195,7 +2246,7 @@ final class AppModel: ObservableObject {
             followCamera(n, loc, animated: true)
             mapTick += 1
         }
-        if transitJourney == nil, nav === n { tripCheck(n) }
+        if transitJourney == nil, nav === n, !simulated { tripCheck(n) }
     }
 
     private func navigationAccuracy(for mode: TravelMode) -> Double { mode == .drive ? 60 : 40 }
@@ -2212,16 +2263,14 @@ final class AppModel: ObservableObject {
         } else {
             let match = Geo.project(here, on: leg.path)
             if !journey.boarded {
-                let departed = leg.depart.map { $0 <= loc.timestamp.addingTimeInterval(60) } ?? true
-                if leg.path.count >= 2, departed, loc.speed >= 3, match.offset <= 60, match.along >= 65 {
-                    if let earlier = journey.boardingProgress, match.along - earlier >= 30 {
-                        boardTransit()
-                    } else if journey.boardingProgress == nil {
-                        transitJourney?.boardingProgress = match.along
-                    }
-                } else {
-                    transitJourney?.boardingProgress = nil
-                }
+                // Boarding is inferred only from strong evidence (see BoardingDetector); the manual
+                // "I'm on board" button stays available and is the only fallback.
+                var detector = journey.boarding
+                let sample = BoardingDetector.Sample(time: loc.timestamp, location: here, accuracy: loc.horizontalAccuracy,
+                                                     speed: loc.speed, course: loc.course)
+                let decision = leg.path.count >= 2 ? detector.observe(sample, line: leg.path, departure: leg.depart) : .notYet
+                transitJourney?.boarding = detector
+                if decision == .boarded { boardTransit() }
                 return true
             }
             guard here.distance(to: end) <= 55,
