@@ -94,6 +94,11 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val kiteMap = remember { KiteMap(model, ctx.applicationContext).also { DemoScript.kite = it } }
     val dark = LocalDark.current
+    SideEffect {
+        val bars = androidx.core.view.WindowCompat.getInsetsController(activity.window, activity.window.decorView)
+        bars.isAppearanceLightStatusBars = !dark
+        bars.isAppearanceLightNavigationBars = !dark
+    }
     val scenery = remember(kiteMap) { MapboxScenery(model, kiteMap).also { kiteMap.scenery = it } }
 
     // The map's own location dot follows the same fixes the drive uses.
@@ -138,7 +143,7 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
     LaunchedEffect(mapDark, driving, satellite, mapboxToken, standardReady) {
         kiteMap.applyBasemap(mapDark, driving, satellite && !standardReady, mapboxToken.takeUnless { standardReady })
     }
-    LaunchedEffect(s.googleMapPlaces, s.openMapPlaces, s.openPlaceGroups, s.hikingTrails, s.bikeTrails, s.transitLines, s.noGoogle, model.tab, model.nav, model.transitGuidance, model.directions, model.selected?.id, model.results.isEmpty()) {
+    LaunchedEffect(s.googleMapPlaces, s.openMapPlaces, s.openPlaceGroups, s.hikingTrails, s.bikeTrails, s.transitLines, s.noGoogle, model.tab, model.mapNavigator, model.transitGuidance, model.directions, model.selected?.id, model.results.isEmpty()) {
         kiteMap.refreshGooglePlaces()
         scenery.showTransit(s.transitLines && model.nav == null && model.transitGuidance == null)
         LocationService.last?.let(scenery::updatePosition)
@@ -147,7 +152,7 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
     // Redraw the map's layers whenever anything they show changes.
     LaunchedEffect(Unit) {
         snapshotFlow {
-            listOf(model.mapTick, model.results, model.selected?.id, model.directions, model.nav, model.nav?.following, model.transitGuidance?.legIndex, model.transitGuidance?.overviewing, model.stopSearch, model.measurement, model.nav?.routeWaze, model.nav?.roadControls, model.nav?.roadTraffic, model.openNowOnly, model.rating4Only,
+            listOf(model.mapTick, model.results, model.selected?.id, model.directions, model.mapNavigator, model.mapNavigator?.following, model.transitGuidance?.legIndex, model.transitGuidance?.overviewing, model.stopSearch, model.measurement, model.nav?.routeWaze, model.nav?.roadControls, model.nav?.roadTraffic, model.openNowOnly, model.rating4Only,
                 s.traffic, s.satellite, s.terrain, s.transitLines, s.speedCameras, s.plateCameras, s.wazeOnMap, s.wazeHeatmap,
                 s.home, s.work, s.parking, s.saved, LocationService.authorized, model.tab,
                 s.welcomed, s.noGoogle, s.surveillanceCameras, s.wazeOn, s.wazeKinds, s.wazeMaxAge,

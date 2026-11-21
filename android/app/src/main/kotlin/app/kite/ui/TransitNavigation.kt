@@ -41,7 +41,7 @@ fun TransitNavigationOverlay(model: AppModel, journey: TransitGuidance, showMapb
     BoxWithConstraints(Modifier.fillMaxSize().systemBarsPadding()) {
         val full = maxHeight
         if (showMapbox) MapboxAttribution(Modifier.align(Alignment.TopStart).padding(start = 16.dp, top = 112.dp))
-        val walking = model.nav.takeIf { phase == TransitGuidance.Phase.WALK }
+        val walking = journey.walking
         if (walking != null) Box(Modifier.align(Alignment.TopCenter).padding(top = 4.dp, start = 12.dp, end = 12.dp)) {
             InstructionBanner(walking)
         }

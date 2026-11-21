@@ -4,7 +4,9 @@ package app.kite.ui
 
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.background
@@ -31,6 +33,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -50,6 +57,7 @@ import androidx.compose.ui.window.DialogProperties
 import app.kite.*
 import app.kite.core.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.util.Calendar
 import java.util.Date
@@ -125,57 +133,113 @@ private fun RouteEditor(model: AppModel, state: DirectionsState, close: () -> Un
     var naming by remember { mutableStateOf(false) }
     var name by remember { mutableStateOf("") }
     val canMove = model.userLatLng != null || points.none { it == null }
+    val dark = LocalDark.current
+    val scroll = rememberScrollState()
     var dragged by remember { mutableStateOf<Int?>(null) }
-    var offset by remember { mutableFloatStateOf(0f) }
+    var fingerY by remember { mutableFloatStateOf(0f) }
+    var startY by remember { mutableFloatStateOf(0f) }
+    var startScroll by remember { mutableIntStateOf(0) }
+    var viewportHeight by remember { mutableIntStateOf(0) }
     val rowHeight = 68.dp
-    val stepPixels = with(LocalDensity.current) { (rowHeight + 1.dp).toPx() }
+    val density = LocalDensity.current
+    val stepPixels = with(density) { rowHeight.roundToPx().toFloat() }
+    val handleWidth = with(density) { 52.dp.toPx() }
+    val edge = with(density) { 44.dp.toPx() }
+    val displacement = fingerY - startY + scroll.value - startScroll
+    val target = dragged?.let { (it + (displacement / stepPixels).roundToInt()).coerceIn(0, points.lastIndex) }
+    val scrollDirection = when {
+        dragged == null -> 0
+        fingerY < edge && scroll.canScrollBackward -> -1
+        fingerY > viewportHeight - edge && scroll.canScrollForward -> 1
+        else -> 0
+    }
+    LaunchedEffect(scrollDirection) {
+        if (scrollDirection != 0) while (true) {
+            scroll.scrollBy(scrollDirection * 12f)
+            delay(16)
+        }
+    }
+
     TripSheet("Edit route", "Done", close) {
-        Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 6.dp)) {
-            points.forEachIndexed { index, place ->
-                val highlighted = dragged == index || dragged?.let {
-                    (it + (offset / stepPixels).roundToInt()).coerceIn(0, points.lastIndex) == index
-                } == true
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().height(rowHeight)
-                    .background(if (highlighted) Vela.chip(LocalDark.current) else Color.Transparent)) {
-                    Icon(Icons.Filled.DragHandle, null, tint = secondaryText, modifier = Modifier.size(42.dp).padding(10.dp)
-                        .pointerInput(points, canMove) {
-                            if (!canMove) return@pointerInput
-                            detectDragGesturesAfterLongPress(
-                                onDragStart = { dragged = index; offset = 0f },
-                                onDrag = { change, amount -> change.consume(); offset += amount.y },
-                                onDragEnd = {
-                                    val target = (index + (offset / stepPixels).roundToInt()).coerceIn(0, points.lastIndex)
-                                    if (target != index) model.moveWaypoint(index, target - index)
-                                    dragged = null
-                                    offset = 0f
-                                },
-                                onDragCancel = { dragged = null; offset = 0f })
-                        })
-                    Column(Modifier.weight(1f).padding(vertical = 6.dp)) {
-                        Text(when (index) {
-                            0 -> "Start"
-                            points.lastIndex -> "Destination"
-                            else -> "Stop $index"
-                        }, color = secondaryText, fontSize = KType.caption)
-                        Text(place.waypointName(), color = primaryText, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    }
-                    IconButton({ model.moveWaypoint(index, -1) }, enabled = canMove && index > 0) {
-                        Icon(Icons.Filled.KeyboardArrowUp, "Move up")
-                    }
-                    IconButton({ model.moveWaypoint(index, 1) }, enabled = canMove && index < points.lastIndex) {
-                        Icon(Icons.Filled.KeyboardArrowDown, "Move down")
-                    }
-                    if (index in 1 until points.lastIndex) IconButton({ model.removeStop(index - 1) }) {
-                        Icon(Icons.Filled.Close, "Remove stop")
+        Box(Modifier.fillMaxWidth().weight(1f).padding(horizontal = 16.dp, vertical = 6.dp)
+            .onSizeChanged { viewportHeight = it.height }
+            .pointerInput(points, canMove, stepPixels, handleWidth) {
+                if (!canMove) return@pointerInput
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    val index = ((down.position.y + scroll.value) / stepPixels).toInt()
+                    if (down.isConsumed || down.position.x !in 0f..handleWidth || index !in points.indices) return@awaitEachGesture
+                    down.consume()
+                    startY = down.position.y
+                    fingerY = startY
+                    startScroll = scroll.value
+                    dragged = index
+                    try {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (change.isConsumed) break
+                            fingerY = change.position.y
+                            change.consume()
+                            if (!change.pressed) {
+                                val shift = fingerY - startY + scroll.value - startScroll
+                                val drop = (index + (shift / stepPixels).roundToInt()).coerceIn(0, points.lastIndex)
+                                if (drop != index) model.moveWaypoint(index, drop - index)
+                                break
+                            }
+                        }
+                    } finally {
+                        dragged = null
                     }
                 }
-                HorizontalDivider()
-            }
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                TextButton(model::reverseDirections) { Text("Reverse") }
-                if (!state.transit && state.stops.size < 8) TextButton({ close(); model.addingStop = true }) { Text("Add stop") }
-                TextButton({ name = draft?.name.orEmpty(); naming = true }, enabled = draft != null) { Text("Save route") }
-                TextButton({ draft?.let { ctx.share(it.shareText()) } }, enabled = draft != null) { Text("Share route") }
+            }) {
+            Column(Modifier.fillMaxWidth().verticalScroll(scroll)) {
+                points.forEachIndexed { index, place ->
+                    val dragIndex = dragged
+                    val shift = when {
+                        dragIndex == null || target == null -> 0f
+                        index == dragIndex -> displacement.coerceIn(-index * stepPixels, (points.lastIndex - index) * stepPixels)
+                        index > dragIndex && index <= target -> -stepPixels
+                        index < dragIndex && index >= target -> stepPixels
+                        else -> 0f
+                    }
+                    val moving = dragIndex == index
+                    Box(Modifier.fillMaxWidth().height(rowHeight).zIndex(if (moving) 1f else 0f)
+                        .graphicsLayer { translationY = shift }
+                        .background(if (moving) Vela.chip(dark) else Vela.ground(dark))) {
+                        Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.width(52.dp).fillMaxHeight().semantics {
+                                contentDescription = "Drag ${place.waypointName()} to reorder"
+                            }, contentAlignment = Alignment.Center) {
+                                Icon(Icons.Filled.DragHandle, null, tint = secondaryText, modifier = Modifier.size(24.dp))
+                            }
+                            Column(Modifier.weight(1f).padding(vertical = 6.dp)) {
+                                Text(when (index) {
+                                    0 -> "Start"
+                                    points.lastIndex -> "Destination"
+                                    else -> "Stop $index"
+                                }, color = secondaryText, fontSize = KType.caption)
+                                Text(place.waypointName(), color = primaryText, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            }
+                            IconButton({ model.moveWaypoint(index, -1) }, enabled = canMove && index > 0) {
+                                Icon(Icons.Filled.KeyboardArrowUp, "Move up")
+                            }
+                            IconButton({ model.moveWaypoint(index, 1) }, enabled = canMove && index < points.lastIndex) {
+                                Icon(Icons.Filled.KeyboardArrowDown, "Move down")
+                            }
+                            if (index in 1 until points.lastIndex) IconButton({ model.removeStop(index - 1) }) {
+                                Icon(Icons.Filled.Close, "Remove stop")
+                            } else Spacer(Modifier.width(48.dp))
+                        }
+                        HorizontalDivider(Modifier.align(Alignment.BottomCenter))
+                    }
+                }
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    TextButton(model::reverseDirections) { Text("Reverse") }
+                    if (!state.transit && state.stops.size < 8) TextButton({ close(); model.addingStop = true }) { Text("Add stop") }
+                    TextButton({ name = draft?.name.orEmpty(); naming = true }, enabled = draft != null) { Text("Save route") }
+                    TextButton({ draft?.let { ctx.share(it.shareText()) } }, enabled = draft != null) { Text("Share route") }
+                }
             }
         }
     }
@@ -220,9 +284,7 @@ fun closingWarning(d: DirectionsState): ClosingCheck.Warning? {
 fun tripPeek(d: DirectionsState?): androidx.compose.ui.unit.Dp {
     if (d == null) return 300.dp
     if (d.transit) return if (d.pickedTrip != null) 265.dp else 200.dp
-    val n = routeCards(d).size
-    val base = if (n == 0) 300 else 186 + n * 70
-    return (base + if (closingWarning(d) != null) 36 else 0).dp
+    return if (closingWarning(d) != null) 336.dp else 300.dp
 }
 
 @Composable
@@ -244,12 +306,15 @@ private fun RouteOptionsButton(model: AppModel) {
 }
 
 @Composable
-private fun GoButton(model: AppModel) {
+private fun GoButton(model: AppModel, pending: Boolean = false) {
     val dark = LocalDark.current
-    Row(Modifier.fillMaxWidth().heightIn(min = 68.dp).clip(CircleShape).background(Vela.accent(dark)).tap { model.startNavigation() },
-        horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
-        Icon(Icons.Filled.Navigation, null, tint = Vela.onAccent(dark), modifier = Modifier.size(28.dp))
-        Text("Go", fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, color = Vela.onAccent(dark))
+    Button(model::startNavigation, Modifier.fillMaxWidth().heightIn(min = 60.dp), enabled = !pending,
+        colors = ButtonDefaults.buttonColors(containerColor = Vela.accent(dark), contentColor = Vela.onAccent(dark),
+            disabledContainerColor = Vela.chip(dark), disabledContentColor = primaryText)) {
+        if (pending) CircularProgressIndicator(Modifier.size(21.dp), strokeWidth = 2.dp, color = Vela.accentText(dark))
+        else Icon(Icons.Filled.Navigation, null, modifier = Modifier.size(25.dp))
+        Spacer(Modifier.width(10.dp))
+        Text(if (pending) "Starting navigation…" else "Go", fontSize = 23.sp, fontWeight = FontWeight.ExtraBold)
     }
 }
 
@@ -296,25 +361,23 @@ fun TripHeader(model: AppModel) {
     val d = model.directions ?: return
     val dark = LocalDark.current
     val ctx = LocalContext.current
-    val cards = routeCards(d)
-    if (cards.isNotEmpty()) {
-        // A choice of routes: the choices first, then Go, then the ways to travel.
-        Column(Modifier.padding(horizontal = 18.dp).padding(bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            cards.forEachIndexed { i, r -> RouteCard(r, r.id == d.route?.id) { model.selectRoute(i) } }
-            Box(Modifier.padding(top = 2.dp)) { ClosingLine(d) }
-            Box(Modifier.padding(top = 2.dp)) { GoButton(model) }
-            Row(Modifier.padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Box(Modifier.weight(1f)) { ModeTabs(model, d) }
-                RouteOptionsButton(model)
-            }
-        }
-        return
-    }
-    Column(Modifier.padding(horizontal = 18.dp).padding(bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    Column(Modifier.padding(horizontal = 18.dp).padding(bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (!d.transit && (d.route != null || d.startRequested && !d.waitingForLocation)) GoButton(model, d.startRequested)
+        if (d.transit && d.pickedTrip != null)
+            Button(model::startTransitNavigation, Modifier.fillMaxWidth()) { Text("Start transit navigation") }
         Row(verticalAlignment = Alignment.Top) {
             Box(Modifier.weight(1f)) {
                 val r = d.route
                 when {
+                    d.waitingForLocation -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(when {
+                            model.location.denied -> AppModel.LOCATION_OFF_TEXT
+                            model.location.systemOff -> "Turn on Location to start from where you are."
+                            else -> "Waiting for your location…"
+                        }, fontSize = KType.subheadline, fontWeight = FontWeight.SemiBold, color = primaryText)
+                        if (model.location.denied || model.location.systemOff)
+                            TextButton({ LocationService.openSettings(ctx) }) { Text("Location settings") }
+                    }
                     d.transit -> Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(d.pickedTrip?.let { Fmt.duration(it.durationSeconds) } ?: "Transit", fontSize = 40.sp, fontWeight = FontWeight.ExtraBold,
                             color = Vela.accentText(dark))
@@ -342,9 +405,6 @@ fun TripHeader(model: AppModel) {
         }
         ModeTabs(model, d)
         ClosingLine(d)
-        if (d.transit && !d.reversed && d.pickedTrip != null)
-            Button(model::startTransitNavigation, Modifier.fillMaxWidth()) { Text("Start transit navigation") }
-        if (!d.transit && d.route != null) GoButton(model)
     }
 }
 
@@ -362,7 +422,7 @@ fun ModeTabs(model: AppModel, state: DirectionsState) {
             ModeTile(modeIcon(m), !state.transit && m == state.mode, m in state.loading,
                 state.routes[m]?.firstOrNull()?.let { Fmt.shortDuration(it.durationSeconds) }) { model.setMode(m) }
         }
-        ModeTile(Icons.Filled.Tram, state.transit, state.trips == null,
+        ModeTile(Icons.Filled.Tram, state.transit, state.transit && state.trips == null && !state.waitingForLocation,
             // The same trip the header shows (the picked one, else the first), so the two never disagree.
             (state.pickedTrip ?: state.trips?.firstOrNull())?.let { Fmt.shortDuration(it.durationSeconds) }) { model.showTransit() }
     }
@@ -391,6 +451,9 @@ fun TripBody(model: AppModel) {
         when {
             d.transit -> TransitBody(model, d)
             r != null -> {
+                routeCards(d).forEachIndexed { index, candidate ->
+                    RouteCard(candidate, candidate.id == r.id) { model.selectRoute(index) }
+                }
                 if (r.mode == TravelMode.DRIVE) RouteCharges(r)
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     val best = d.current.minOfOrNull { it.durationSeconds } ?: r.durationSeconds

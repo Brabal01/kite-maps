@@ -5,6 +5,7 @@ package app.kite.ui
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.pager.HorizontalPager
@@ -47,6 +48,7 @@ fun PlaceHeader(model: AppModel, place: Place) {
     val dark = LocalDark.current
     val ctx = LocalContext.current
     var share by remember(place.id) { mutableStateOf(false) }
+    var chooseLists by remember(place.id) { mutableStateOf(false) }
     Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Box(Modifier.weight(1f)) {
@@ -55,7 +57,11 @@ fun PlaceHeader(model: AppModel, place: Place) {
                         overflow = TextOverflow.Ellipsis, lineHeight = 30.sp)
                 }
             }
-            CircleIconButton(if (AppSettings.isSaved(place)) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder) { AppSettings.toggleSaved(place) }
+            val saved = AppSettings.isSaved(place)
+            CircleIconButton(if (saved) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
+                modifier = Modifier.semantics { contentDescription = if (saved) "Manage saved place" else "Save place" }) {
+                chooseLists = true
+            }
             Box {
                 CircleIconButton(Icons.Filled.Share) { share = true }
                 DropdownMenu(share, { share = false }) {
@@ -80,13 +86,75 @@ fun PlaceHeader(model: AppModel, place: Place) {
                 Text("Directions", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = Vela.onAccent(dark))
             }
             Row(Modifier.heightIn(min = 56.dp).clip(CircleShape).background(Vela.tonal(dark))
-                .clickable { model.openDirections(place); model.autoStart = true }.padding(horizontal = 24.dp),
+                .clickable { model.openDirections(place, TravelMode.DRIVE, startNow = true) }.padding(horizontal = 24.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Filled.Navigation, null, tint = Vela.onTonal(dark), modifier = Modifier.size(22.dp))
                 Text("Go", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = Vela.onTonal(dark))
             }
         }
     }
+    if (chooseLists) SavePlaceDialog(place) { chooseLists = false }
+}
+
+@Composable
+private fun SavePlaceDialog(place: Place, close: () -> Unit) {
+    val settings = AppSettings
+    val existing = settings.savedEntry(place)
+    var selected by remember(place.id) {
+        mutableStateOf(settings.placeFolders.filter { existing?.id in it.members }.map { it.id }.toSet())
+    }
+    var creating by remember { mutableStateOf(false) }
+    var name by remember { mutableStateOf("") }
+    var pendingFolders by remember { mutableStateOf<List<PlaceFolder>>(emptyList()) }
+    AlertDialog(
+        onDismissRequest = close,
+        title = { Text(if (existing == null) "Save place" else "Saved lists") },
+        text = {
+            Column(Modifier.heightIn(max = 350.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(place.name, style = MaterialTheme.typography.titleMedium, color = primaryText)
+                if (existing == null) Text("Save to your collection and choose any lists.", color = secondaryText)
+                for (folder in settings.placeFolders + pendingFolders) {
+                    val checked = folder.id in selected
+                    Row(Modifier.fillMaxWidth().toggleable(checked, role = androidx.compose.ui.semantics.Role.Checkbox) {
+                        selected = if (it) selected + folder.id else selected - folder.id
+                    }.heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked, onCheckedChange = null, modifier = Modifier.padding(end = 14.dp))
+                        Text(folder.name, color = primaryText)
+                    }
+                }
+                if (creating) {
+                    OutlinedTextField(name, { name = it }, label = { Text("List name") }, singleLine = true,
+                        modifier = Modifier.fillMaxWidth())
+                    Row {
+                        TextButton({ creating = false }) { Text("Cancel") }
+                        TextButton({
+                            val folder = PlaceFolder(name.trim())
+                            pendingFolders = pendingFolders + folder
+                            selected = selected + folder.id
+                            name = ""
+                            creating = false
+                        }, enabled = name.isNotBlank()) { Text("Add list") }
+                    }
+                } else TextButton({ name = ""; creating = true }) {
+                    Icon(Icons.Filled.CreateNewFolder, null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("New list")
+                }
+            }
+        },
+        confirmButton = {
+            TextButton({
+                settings.placeFolders = settings.placeFolders + pendingFolders
+                settings.savePlace(place, selected)
+                close()
+            }, enabled = !creating) { Text(if (existing == null && selected.isEmpty()) "Save place" else "Save") }
+        },
+        dismissButton = {
+            if (existing != null) TextButton({ settings.removeSaved(existing.id); close() }) { Text("Remove saved place") }
+            else TextButton(close) { Text("Cancel") }
+        },
+    )
 }
 
 @Composable

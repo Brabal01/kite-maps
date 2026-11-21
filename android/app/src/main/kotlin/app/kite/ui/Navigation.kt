@@ -244,7 +244,7 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
             Spacer(Modifier.weight(1f))
             Row(Modifier.padding(horizontal = 16.dp).fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
                 val controls: @Composable () -> Unit = {
-                    Column(horizontalAlignment = if (AppSettings.swapMapSides) Alignment.End else Alignment.Start,
+                    Column(horizontalAlignment = if (AppSettings.swapNavigationSides) Alignment.End else Alignment.Start,
                         verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         // A Waze police card already says it louder; the chip comes back when it's gone.
                         // On a short phone a warning card plus lanes leaves no room: the chip gives way to the card.
@@ -280,7 +280,7 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
                     }
                 }
                 val speed: @Composable () -> Unit = {
-                    Column(horizontalAlignment = if (AppSettings.swapMapSides) Alignment.Start else Alignment.End,
+                    Column(horizontalAlignment = if (AppSettings.swapNavigationSides) Alignment.Start else Alignment.End,
                         verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         buttonNote?.let { (title, detail) ->
                             // Says which of the three the speaker (or the map view) is on now, for a moment.
@@ -294,9 +294,9 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
 
                     }
                 }
-                if (AppSettings.swapMapSides) speed() else controls()
+                if (AppSettings.swapNavigationSides) speed() else controls()
                 Spacer(Modifier.weight(1f))
-                if (AppSettings.swapMapSides) controls() else speed()
+                if (AppSettings.swapNavigationSides) controls() else speed()
             }
             if (!nav.following) {
                 Row(Modifier.align(Alignment.CenterHorizontally).height(52.dp).shadow(3.dp, CircleShape).clip(CircleShape).background(Vela.accent(dark))

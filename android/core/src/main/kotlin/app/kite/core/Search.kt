@@ -130,6 +130,36 @@ object PlaceSearch {
         OutdoorData.combine(google, open.await())
     }
 
+    /** Ranked pins for a submitted map search, including exact-query autocomplete matches. */
+    fun forMap(
+        query: String, center: LatLng, spanMeters: Double?, results: List<Place>, suggestions: List<Place> = emptyList(),
+    ): List<Place> {
+        val terms = SuggestParser.words(query)
+        val matching = suggestions.filter { place ->
+            val name = SuggestParser.words(place.name)
+            val label = name + SuggestParser.words(place.address.orEmpty())
+            terms.isNotEmpty() && terms.all { term -> label.any { it == term || term.length >= 3 && it.startsWith(term) } }
+        }
+        val merged = results + matching.filter { suggestion -> results.none(suggestion::matchesNearby) }
+        val ranked = merged.distinctBy { it.id }.sortedBy { it.location.distanceTo(center) }
+        val nearbyRadius = ((spanMeters ?: 20_000.0) * 0.6).coerceIn(12_000.0, 40_000.0)
+        val nearby = ranked.filter { it.location.distanceTo(center) <= nearbyRadius }
+        if (nearby.isNotEmpty()) return nearby
+
+        val regional = ranked.filter { it.location.distanceTo(center) <= 90_000.0 }
+        if (regional.isNotEmpty()) return regional.take(8)
+
+        val name = Place.fold(query)
+        val destination = results.firstOrNull {
+            val category = Place.fold(it.category.orEmpty())
+            it.source == "postcodes.io" ||
+                Place.fold(it.name) == name && (category in geographicCategories || query.any(Char::isDigit) && category == "address")
+        }
+        return listOfNotNull(destination)
+    }
+
+    private val geographicCategories = setOf("city", "town", "village", "municipality", "hamlet", "suburb", "country", "state", "postcode")
+
     /** OpenStreetMap's answer, or nothing if it fails; being cancelled still cancels. */
     private suspend fun photonOrNothing(q: String, center: LatLng): List<Place> = try {
         Photon.search(q, center)

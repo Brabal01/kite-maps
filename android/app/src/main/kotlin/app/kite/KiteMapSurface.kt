@@ -68,7 +68,7 @@ class KiteMapSurface(
         fun at(p: PointF) = if (useStandard) scenery.pointAt(p.x, p.y) else kite.pointAt(p.x, p.y)
         val a = at(h.p1) ?: return@Runnable
         val b = at(h.p2) ?: return@Runnable
-        model.nav?.following = false
+        model.mapNavigator?.following = false
         model.browseFollowing = false
         model.measurement = a to b
         measured = true

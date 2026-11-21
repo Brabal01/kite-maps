@@ -60,6 +60,13 @@ data class Category(val label: String, val icon: ImageVector, val query: String)
     }
 }
 
+internal sealed interface RoadStart {
+    data object WaitForLocation : RoadStart
+    data object FindRoute : RoadStart
+    data class ConnectToPlan(val destination: Place, val stops: List<Place>) : RoadStart
+    data class Follow(val route: Route) : RoadStart
+}
+
 /** Directions to one place: routes for every mode, the one picked, and where from. */
 data class DirectionsState(
     val destination: Place,
@@ -81,6 +88,8 @@ data class DirectionsState(
     val arriveBy: Boolean = false,
     val trip: Int = 0,
     val start: Place? = null,
+    val startRequested: Boolean = false,
+    val waitingForLocation: Boolean = false,
 ) {
     fun orderedPlaces(): List<Place?> =
         if (reversed) listOf(destination) + stops.asReversed() + listOf(null)
@@ -88,6 +97,20 @@ data class DirectionsState(
 
     fun endpoints(current: LatLng?): Pair<LatLng?, LatLng?> =
         if (reversed) destination.location to current else (start?.location ?: current) to destination.location
+
+    internal fun roadStart(here: LatLng?): RoadStart? {
+        if (transit) return null
+        if (here == null) return RoadStart.WaitForLocation
+        val chosen = route ?: return RoadStart.FindRoute
+        val points = orderedPlaces()
+        val distanceToStart = points.first()?.location?.distanceTo(here) ?: 0.0
+        if (!reversed && distanceToStart <= 70) {
+            return RoadStart.Follow(chosen)
+        }
+        val destination = points.last() ?: Place("waypoint:${here.lat},${here.lng}", "Your location", here, "pin")
+        val prefix = points.first()?.takeIf { it.location.distanceTo(here) > 70 }
+        return RoadStart.ConnectToPlan(destination, listOfNotNull(prefix) + points.drop(1).dropLast(1).filterNotNull())
+    }
 
     val current: List<Route> get() = if (transit) emptyList() else routes[mode] ?: emptyList()
     val route: Route? get() = current.getOrNull(selected) ?: current.firstOrNull()
@@ -104,6 +127,7 @@ class AppModel {
     /** Autocomplete while typing: Google's, or OpenStreetMap's without Google. */
     var suggestions by mutableStateOf(SuggestParser.Result())
     private var suggestTask: Job? = null
+    private var suggestedQuery: String? = null
     var results by mutableStateOf<List<Place>>(emptyList())
     var resultsTitle by mutableStateOf("")
     var selected by mutableStateOf<Place?>(null)
@@ -115,8 +139,11 @@ class AppModel {
     var sort by mutableStateOf(SortMode.RELEVANCE)
     var directions by mutableStateOf<DirectionsState?>(null)
     var nav by mutableStateOf<Navigator?>(null)
+        private set
     var transitGuidance by mutableStateOf<TransitGuidance?>(null)
         private set
+    val mapNavigator: Navigator? get() = nav ?: transitGuidance?.walking
+    val isGuiding: Boolean get() = nav != null || transitGuidance != null
     private var transitWalkJob: Job? = null
     private var transitOverviewJob: Job? = null
     private var transitBoardJob: Job? = null
@@ -163,8 +190,6 @@ class AppModel {
     private var stopSearchJob: Job? = null
     var picking by mutableStateOf<PickKind?>(null)
     var showSteps by mutableStateOf(false)
-    /** "Start" on a place: begin the drive as soon as its route arrives. */
-    var autoStart by mutableStateOf(false)
     /** A drive that was under way when the app last closed, offered again on the home map. */
     var resumeOffer by mutableStateOf<SavedTrip?>(null)
     private var tripSavedAt = 0L
@@ -189,8 +214,8 @@ class AppModel {
     var mapHeightDp = 800f
     /** Moves the nav arrow and camera every frame between GPS fixes. */
     val glide = NavGlide()
-    private var routesRequest = 0
-    private var transitRequest = 0
+    private var routePlanJob: Job? = null
+    private var transitPlanJob: Job? = null
     private var transitLoadedAt = 0L
     private var searchTask: Job? = null
 
@@ -205,15 +230,17 @@ class AppModel {
     /** "Carry on": the same place, stops and way of travelling, started as soon as the route arrives. */
     fun resumeTrip() {
         val t = resumeOffer ?: return
+        if (isGuiding) return
+        resetPlanRequests()
+        location.last?.let(::centerForNavigationStart)
         resumeOffer = null
         settings.trip = null
         selected = null
         results = emptyList()
         directions = DirectionsState(destination = t.destination, mode = TravelMode.entries.firstOrNull { it.raw == t.mode } ?: TravelMode.DRIVE,
-            stops = t.stops)
+            stops = t.stops, startRequested = true)
         detent = SheetDetent.HALF
-        autoStart = true
-        loadAllModes()
+        loadPlan()
     }
 
     fun dismissResume() {
@@ -264,6 +291,7 @@ class AppModel {
         query = title ?: q
         settings.addRecent(title ?: q)
         searchTask?.cancel()
+        resetPlanRequests()
         selected = null
         directions = null
         searching = true
@@ -274,26 +302,32 @@ class AppModel {
         val vp = viewport
         val useGoogle = !settings.noGoogle
         val user = userLatLng
+        val sameQuery = suggestedQuery == Place.fold(q)
+        val pendingSuggestions = suggestTask.takeIf { sameQuery }
+        val visibleSuggestions = suggestions.places.takeIf { sameQuery }.orEmpty()
         searchTask = scope.launch {
-            val r = PlaceSearch.search(q, vp.first, vp.second, useGoogle)
-            // Cleared or replaced while it was loading: leave the screen to the newer one.
-            ensureActive()
-            val radius = ((vp.second ?: 20_000.0) * 0.6).coerceIn(5_000.0, 30_000.0)
-            var places = r.places.filter { it.location.distanceTo(vp.first) <= radius }
-            if (places.isEmpty() && OutdoorData.kind(q) == null)
-                places = PlaceSearch.namedNearby(q, vp.first, radius * 2, useGoogle)
-                    .filter { it.location.distanceTo(vp.first) <= radius }
-            if (places.isEmpty()) {
-                // A named town or an exact address is a destination, even outside the local business search.
-                val name = Place.fold(q)
-                places = r.places.filter {
-                    val category = Place.fold(it.category.orEmpty())
-                    it.source == "postcodes.io" ||
-                        Place.fold(it.name) == name && (category in geographicSearchCategories || q.any(Char::isDigit) && category == "address")
-                }.take(1)
+            val full = async { PlaceSearch.search(q, vp.first, vp.second, useGoogle) }
+            val local = async {
+                if (OutdoorData.kind(q) != null) return@async emptyList()
+                if (visibleSuggestions.isNotEmpty()) return@async visibleSuggestions
+                if (pendingSuggestions?.isActive == true) {
+                    pendingSuggestions.join()
+                    if (suggestedQuery == Place.fold(q)) return@async suggestions.places
+                }
+                if (!useGoogle) return@async emptyList()
+                try {
+                    GoogleClient.shared.suggest(q, vp.first, vp.second ?: 20_000.0).places
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    emptyList()
+                }
             }
+            val r = full.await()
+            val found = PlaceSearch.forMap(q, vp.first, vp.second, r.places, local.await())
+            var places = if (found.isNotEmpty() || OutdoorData.kind(q) != null) found
+                else PlaceSearch.forMap(q, vp.first, vp.second, PlaceSearch.namedNearby(q, vp.first, 24_000.0, useGoogle))
             ensureActive()
-            places = places.sortedBy { it.location.distanceTo(vp.first) }
             if (user != null) places = places.map { it.copy(distanceMeters = user.distanceTo(it.location)) }
             searching = false
             resultsTitle = title ?: q
@@ -303,9 +337,10 @@ class AppModel {
             } else if (r.googleError != null && useGoogle) {
                 notice = "Google didn't answer, so these results are from OpenStreetMap."
             }
-            if (places.size == 1) select(places[0]) else {
-                detent = SheetDetent.HALF
-                frame(places.take(8).map { it.location })
+            detent = SheetDetent.HALF
+            if (places.isNotEmpty()) {
+                val nearest = places.first().location
+                frame(places.take(8).filter { nearest.distanceTo(it.location) <= 35_000 }.map { it.location })
             }
         }
     }
@@ -313,7 +348,9 @@ class AppModel {
     fun typed(text: String) {
         suggestTask?.cancel()
         val q = text.trim()
-        if (q.length < 2 || MapLinks.looksLikeLink(q)) { suggestions = SuggestParser.Result(); return }
+        suggestedQuery = Place.fold(q)
+        suggestions = SuggestParser.Result()
+        if (q.length < 2 || MapLinks.looksLikeLink(q)) return
         val vp = viewport
         val useGoogle = !settings.noGoogle
         val user = userLatLng
@@ -334,11 +371,7 @@ class AppModel {
             }
             ensureActive()
             if (user != null) places = places.map { it.copy(distanceMeters = user.distanceTo(it.location)) }
-            val was = suggestions
-            suggestions = SuggestParser.Result(
-                SuggestParser.steady(places, was.places) { it.id },
-                SuggestParser.steady(queries, was.queries) { it },
-            )
+            suggestions = SuggestParser.Result(places, queries)
         }
     }
 
@@ -346,7 +379,9 @@ class AppModel {
     fun openLink(text: String) {
         searchTask?.cancel()
         suggestTask?.cancel()
+        suggestedQuery = null
         suggestions = SuggestParser.Result()
+        resetPlanRequests()
         selected = null
         directions = null
         results = emptyList()
@@ -392,6 +427,9 @@ class AppModel {
 
     fun clearSearch() {
         searchTask?.cancel()
+        suggestTask?.cancel()
+        suggestedQuery = null
+        suggestions = SuggestParser.Result()
         query = ""
         results = emptyList()
         resultsTitle = ""
@@ -493,9 +531,8 @@ class AppModel {
                 return@launch
             }
             // Only now that there's somewhere to go does the current drive end.
-            if (nav != null) endNavigation()
-            openDirections(target)
-            if (kind == LaunchKind.CAR) edit { it.copy(mode = TravelMode.WALK) }
+            if (isGuiding) endNavigation()
+            openDirections(target, if (kind == LaunchKind.CAR) TravelMode.WALK else settings.defaultMode)
         }
     }
 
@@ -550,19 +587,22 @@ class AppModel {
 
     // Directions
 
-    fun openDirections(place: Place, mode: TravelMode = settings.defaultMode) {
+    fun openDirections(place: Place, mode: TravelMode = settings.defaultMode, startNow: Boolean = false) {
+        if (isGuiding) return
         closeStopSearch(restore = false)
         addingStop = false
+        tab = AppTab.MAP
         if (resumeOffer != null) dismissResume()
-        autoStart = false
-        directions = DirectionsState(destination = place, mode = mode)
+        resetPlanRequests()
+        directions = DirectionsState(destination = place, mode = mode, startRequested = startNow)
         detent = SheetDetent.HALF
-        loadAllModes()
+        if (startNow) location.last?.let(::centerForNavigationStart)
+        loadPlan()
     }
 
     fun closeDirections() {
         closeStopSearch(restore = false)
-        autoStart = false
+        resetPlanRequests()
         directions = null
         showSteps = false
         selected?.let { select(it) }
@@ -613,17 +653,20 @@ class AppModel {
         clearSearch()
         closeStopSearch(restore = false)
         addingStop = false
-        autoStart = false
+        resetPlanRequests()
         val first = plan.points.first()
         directions = DirectionsState(plan.points.last(), mode = plan.mode,
             stops = plan.points.drop(1).dropLast(1), start = first, transit = plan.transit)
         detent = SheetDetent.HALF
-        loadAllModes()
+        loadPlan()
     }
 
     fun setMode(m: TravelMode) {
-        edit { it.copy(transit = false, mode = m, selected = 0) }
+        val d = directions ?: return
+        if (!d.transit && d.mode == m) return
+        edit { it.copy(transit = false, mode = m, selected = 0, startRequested = false) }
         settings.defaultMode = m
+        if (m !in d.routes && m !in d.loading) loadPlan()
         frameRoute()
     }
 
@@ -783,9 +826,10 @@ class AppModel {
     }
 
     fun showTransit() {
-        edit { it.copy(transit = true) }
-        // "Leave now" times found a while ago may have left already: look again.
-        if (directions?.transitTime == null && System.currentTimeMillis() - transitLoadedAt > 120_000) loadTransit()
+        val d = directions ?: return
+        if (d.transit) return
+        edit { it.copy(transit = true, startRequested = false) }
+        if (d.trips == null || d.transitTime == null && System.currentTimeMillis() - transitLoadedAt > 120_000) loadTransit()
         frameRoute()
     }
 
@@ -795,88 +839,97 @@ class AppModel {
 
     fun reloadRoutes() {
         if (directions == null) return
-        edit { it.copy(routes = emptyMap(), errors = emptyMap(), selected = 0) }
-        loadAllModes()
+        resetPlanRequests()
+        edit { it.copy(routes = emptyMap(), loading = emptySet(), errors = emptyMap(), selected = 0,
+            trips = null, tripsError = null, trip = 0) }
+        loadPlan()
     }
 
-    private fun loadAllModes() {
+    private fun resetPlanRequests() {
+        routePlanJob?.cancel()
+        routePlanJob = null
+        transitPlanJob?.cancel()
+        transitPlanJob = null
+        transitLoadedAt = 0L
+    }
+
+    private val navigationFix: Fix? get() = location.last?.takeIf { it.ageMs in 0..120_000 }
+
+    private fun planEndpoints(): Pair<LatLng, LatLng>? {
+        val d = directions ?: return null
+        var here = navigationFix?.coord
+        if (here == null) {
+            location.start()
+            here = navigationFix?.coord
+        }
+        val (from, to) = d.endpoints(here)
+        val waiting = from == null || to == null
+        edit { it.copy(waitingForLocation = waiting) }
+        return if (from != null && to != null) from to to else null
+    }
+
+    private fun loadPlan() {
         val d = directions ?: return
-        val (from, to) = d.endpoints(userLatLng)
-        if (from == null || to == null) {
-            val why = if (location.denied) LOCATION_OFF_TEXT
-                else if (location.systemOff) "Location is off on this phone. Turn it on in Settings to get directions from where you are."
-                else "Waiting for your location…"
-            edit { it.copy(errors = TravelMode.entries.associateWith { why }, tripsError = why, trips = emptyList()) }
-            if (!location.denied) {
-                location.start()
-                scope.launch {
-                    repeat(40) { if (userLatLng == null) delay(250) }
-                    if (userLatLng != null && directions?.destination?.id == d.destination.id && directions?.routes?.isEmpty() == true) reloadRoutes()
-                }
-            }
+        if (d.transit) {
+            loadTransit()
             return
         }
-        val via = (if (d.reversed) d.stops.reversed() else d.stops).map { it.location }
-        routesRequest++
-        val req = routesRequest
-        val hw = settings.avoidHighways; val tolls = settings.avoidTolls; val google = !settings.noGoogle
-        // Already driving (asked at a red light, say): no route that starts with a U-turn.
-        val moving = location.last?.let { l -> if (l.speed >= 4 && l.courseKnown) l.course else null }
-        val heading = if (d.reversed || d.start != null) null else moving
+        val (from, to) = planEndpoints() ?: return
+        val via = d.orderedPlaces().drop(1).dropLast(1).filterNotNull().map { it.location }
+        val heading = navigationFix?.takeIf { !d.reversed && d.start == null && it.speed >= 4 && it.courseKnown }?.course
+        val modes = if (d.startRequested) listOf(d.mode) else TravelMode.entries.filter { it !in d.routes }.sortedBy { it != d.mode }
+        if (modes.isEmpty()) return
+        routePlanJob?.cancel()
+        val hw = settings.avoidHighways
+        val tolls = settings.avoidTolls
+        val google = !settings.noGoogle
         val mapboxToken = settings.activeMapboxToken
-        for (m in TravelMode.entries) {
-            edit { it.copy(loading = it.loading + m) }
-            scope.launch {
-                val r = runCatching {
-                    Directions.routes(from, to, m, hw, tolls, google, via, if (m == TravelMode.DRIVE) heading else null,
-                        alternatives = true, mapboxToken = mapboxToken)
-                }.getOrElse { Directions.Result(emptyList(), it.message) }
-                if (directions?.destination?.id != d.destination.id || routesRequest != req) return@launch
-                edit {
-                    var e = it.errors
-                    if (r.routes.isEmpty()) e = e + (m to Connectivity.explain(
-                        if (r.error == "No route found.") "No route found." else "Couldn't get a route just now. Try again in a moment."))
-                    // The fastest first, so it's the one picked (a bike route marked "Slower route" was picked
-                    // while one 5 min faster sat below it).
-                    it.copy(loading = it.loading - m, routes = it.routes + (m to r.routes.sortedBy { x -> x.durationSeconds }), errors = e)
+        edit { it.copy(loading = modes.toSet(), errors = it.errors - modes.toSet(), waitingForLocation = false) }
+        routePlanJob = scope.launch {
+            for (mode in modes) launch {
+                val result = try {
+                    Directions.routes(from, to, mode, hw, tolls, google, via, heading.takeIf { mode == TravelMode.DRIVE },
+                        alternatives = !d.startRequested, mapboxToken = mapboxToken)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Directions.Result(emptyList(), e.message)
                 }
-                if (m == directions?.mode) {
-                    frameRoute()
-                    if (autoStart && r.routes.isNotEmpty()) {
-                        autoStart = false
-                        startNavigation()
-                    }
-                }
+                ensureActive()
+                val routes = result.routes.filter { it.polyline.size >= 2 }.sortedBy { it.durationSeconds }
+                val error = Connectivity.explain(if (result.error == "No route found.") "No route found."
+                    else "Couldn't get a route just now. Try again in a moment.")
+                val shouldStart = directions?.let { !it.transit && it.mode == mode && it.startRequested } == true
+                edit { it.copy(loading = it.loading - mode,
+                    routes = if (routes.isEmpty()) it.routes else it.routes + (mode to routes),
+                    errors = if (routes.isEmpty()) it.errors + (mode to error) else it.errors - mode,
+                    startRequested = it.startRequested && !(shouldStart && routes.isEmpty())) }
+                if (shouldStart && routes.isNotEmpty()) startNavigation()
+                else if (directions?.let { !it.transit && it.mode == mode } == true) frameRoute()
             }
         }
-        loadTransit()
     }
 
-    /** Transit trips for the current trip, leaving now or at the picked time. */
+    /** Transit data belongs to the transit tab. Opening a road plan does not contact the transit router. */
     fun loadTransit() {
-        val d = directions ?: return
-        val (from, to) = d.endpoints(userLatLng)
-        if (from == null || to == null) return
-        transitLoadedAt = System.currentTimeMillis()
-        // A new request either way, so one still loading can't put back trips without the stops.
-        transitRequest++
-        // The planner can't go via stops: rather say so than show trains for a different trip.
+        val d = directions?.takeIf { it.transit } ?: return
+        transitPlanJob?.cancel()
+        val (from, to) = planEndpoints() ?: return
         if (d.stops.isNotEmpty()) {
             edit { it.copy(trips = emptyList(), tripsError = "Public transport can't go via stops. Remove the stops to see trains and buses.") }
             return
         }
-        val destId = d.destination.id
-        val req = transitRequest
+        transitLoadedAt = System.currentTimeMillis()
         edit { it.copy(trips = null, tripsError = null, trip = 0) }
-        scope.launch {
+        transitPlanJob = scope.launch {
             try {
                 val trips = Transitous.plan(from, to, d.transitTime, d.arriveBy)
-                if (directions?.destination?.id != destId || transitRequest != req) return@launch
+                ensureActive()
                 edit { it.copy(trips = trips, tripsError = if (trips.isEmpty()) "No transit trips found here." else null) }
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: Exception) {
-                if (directions?.destination?.id != destId || transitRequest != req) return@launch
+            } catch (_: Exception) {
+                ensureActive()
                 edit { it.copy(trips = emptyList(), tripsError = Connectivity.explain("Couldn't reach the transit planner.")) }
             }
             if (directions?.transit == true) frameRoute()
@@ -884,13 +937,16 @@ class AppModel {
     }
 
     fun frameRoute() {
-        directions?.pickedTrip?.let { t ->
-            if (t.path.size >= 2) frame(t.path, bottomFraction = 0.42f)
+        if (isGuiding) return
+        val plan = directions ?: return
+        if (plan.startRequested) return
+        plan.pickedTrip?.let { trip ->
+            if (trip.path.size >= 2) frame(trip.path, bottomFraction = 0.42f)
             mapTick++
             return
         }
-        val r = directions?.route ?: run { mapTick++; return }
-        frame(r.polyline, bottomFraction = 0.42f, top = 170 + (directions?.stops?.size ?: 0) * 42)
+        val route = plan.route ?: run { mapTick++; return }
+        frame(route.polyline, bottomFraction = 0.42f, top = 170)
     }
 
     /** Police risk within about a kilometre of you, from remembered and live Waze police reports. */
@@ -912,8 +968,12 @@ class AppModel {
     fun startTransitNavigation() {
         val d = directions ?: return
         val trip = d.pickedTrip?.takeIf { it.legs.isNotEmpty() } ?: return
-        if (d.reversed || nav != null || transitGuidance != null) return
-        val session = TransitGuidance(trip, d.destination)
+        if (isGuiding) return
+        val destination = d.orderedPlaces().last() ?: currentWaypoint() ?: return
+        resetPlanRequests()
+        directions = null
+        browseFollowing = false
+        val session = TransitGuidance(trip, destination)
         transitGuidance = session
         location.last?.let { session.observe(it) }
         settings.trip = null
@@ -935,9 +995,10 @@ class AppModel {
         transitWalkJob?.cancel()
         transitBoardJob?.cancel()
         transitDeparturesJob?.cancel()
-        nav?.stop()
-        nav = null
+        session.walking?.stop()
+        session.walking = null
         glide.stop()
+        navZoomSteps = 0
         transitCameraAt = 0
         val leg = session.leg
         if (leg == null) {
@@ -1001,7 +1062,7 @@ class AppModel {
                 return@launch
             }
             val walking = Navigator(route, end, emptyList(), scope, transitWalk = true)
-            nav = walking
+            session.walking = walking
             location.last?.let { now ->
                 walking.handle(now)
                 if (walking.arrived) { advanceTransitLeg(); return@launch }
@@ -1036,8 +1097,6 @@ class AppModel {
 
     fun advanceTransitLeg() {
         val session = transitGuidance ?: return
-        nav?.stop()
-        nav = null
         session.advance()
         setTransitLeg(session)
     }
@@ -1063,7 +1122,7 @@ class AppModel {
         stopTransitOverview()
         journey.overviewing = true
         journey.following = false
-        nav?.following = false
+        journey.walking?.following = false
         val waypoints = journey.trip.legs.flatMap { leg ->
             listOfNotNull(leg.path.firstOrNull() ?: leg.calls.firstOrNull()?.at,
                 leg.path.lastOrNull() ?: leg.calls.lastOrNull()?.at)
@@ -1087,7 +1146,12 @@ class AppModel {
         val session = transitGuidance ?: return
         stopTransitOverview()
         session.following = true
-        nav?.let { recenterNav(); return }
+        session.walking?.let { walking ->
+            if (!walking.following) glide.easeFromCurrentCamera()
+            walking.following = true
+            location.last?.let { followCamera(walking, it) }
+            return
+        }
         if (session.phase == TransitGuidance.Phase.BOARD) {
             val leg = session.leg
             (leg?.calls?.firstOrNull()?.at ?: leg?.path?.firstOrNull())?.let {
@@ -1110,26 +1174,43 @@ class AppModel {
 
     fun startNavigation() {
         val d = directions ?: return
-        val route = d.route ?: return
-        val me = userLatLng ?: return
-        val explicitStart = d.orderedPlaces().firstOrNull()
-        if (d.reversed || explicitStart?.location?.distanceTo(me)?.let { it > 70 } == true) {
-            val plan = routePlan("") ?: return
-            val stops = plan.points.dropLast(1).filterIndexed { i, p -> i != 0 || p.location.distanceTo(me) > 70 }
-            directions = DirectionsState(plan.points.last(), mode = d.mode, stops = stops)
-            autoStart = true
-            loadAllModes()
-            return
+        if (d.transit || isGuiding) return
+        edit { it.copy(startRequested = true) }
+        if (navigationFix == null) location.start()
+        val fix = navigationFix
+        val route = when (val start = d.roadStart(fix?.coord)) {
+            RoadStart.WaitForLocation -> {
+                edit { it.copy(waitingForLocation = true) }
+                return
+            }
+            RoadStart.FindRoute -> {
+                fix?.let(::centerForNavigationStart)
+                if (d.mode !in d.loading) loadPlan()
+                return
+            }
+            is RoadStart.ConnectToPlan -> {
+                resetPlanRequests()
+                directions = DirectionsState(start.destination, mode = d.mode, stops = start.stops, startRequested = true)
+                fix?.let(::centerForNavigationStart)
+                loadPlan()
+                return
+            }
+            is RoadStart.Follow -> start.route
+            null -> return
         }
+        checkNotNull(fix)
+
+        resetPlanRequests()
+        directions = null
+        browseFollowing = false
         val n = Navigator(route, d.destination, d.stops, scope)
         navZoomSteps = 0
         nav = n
         n.onFinished = { if (nav === n) endNavigation() }
-        // In a tunnel the Navigator carries on along the route by itself: move the arrow with it.
-        n.onEstimate = { f ->
+        n.onEstimate = { estimate ->
             if (nav === n) {
-                n.handle(f, estimated = true)
-                followCamera(n, f)
+                n.handle(estimate, estimated = true)
+                followCamera(n, estimate)
                 driveNote(n)
                 mapTick++
             }
@@ -1138,16 +1219,31 @@ class AppModel {
         rememberTrip(n)
         location.setNavigating(true)
         DriveService.start(KiteApp.app)
-        location.last?.let { n.handle(it); followCamera(n, it) }
+        map?.cancelTransitions()
+        glide.mapTouched = false
+        n.handle(fix)
+        followCamera(n, fix)
+        driveNote(n)
+        mapTick++
+    }
+
+    private fun centerForNavigationStart(fix: Fix) {
+        val m = map ?: return
+        browseFollowing = false
+        MapCam.animate(m, CameraPosition.Builder().target(fix.coord.ml())
+            .zoom(MapCam.zoomFor(900.0, fix.lat, mapWidthDp)).tilt(0.0).bearing(0.0).build(),
+            padding = intArrayOf(0, 100, 0, (mapHeightDp * 0.36).toInt()), ms = 350)
     }
 
     fun endNavigation() {
+        resetPlanRequests()
         stopTransitOverview()
         transitWalkJob?.cancel()
         transitWalkJob = null
         transitBoardJob?.cancel()
         transitClockJob?.cancel()
         transitDeparturesJob?.cancel()
+        transitGuidance?.walking?.stop()
         transitGuidance = null
         placingStop = false
         stopPinWasFollowing = false
@@ -1205,9 +1301,14 @@ class AppModel {
 
     private fun locationChanged(f: Fix) {
         if (location.reducedAccuracy || f.accuracy > 200) areaRisk = null
+        val waiting = directions?.takeIf { it.waitingForLocation }
+        if (waiting != null) {
+            edit { it.copy(waitingForLocation = false) }
+            if (waiting.startRequested) startNavigation() else loadPlan()
+        }
         val transit = transitGuidance
         if (transit != null) {
-            val walking = nav
+            val walking = transit.walking
             if (transit.phase == TransitGuidance.Phase.WALK && walking == null && transit.walkingError &&
                 f.ageMs in 0..15_000 && f.accuracy in 0.0..35.0 &&
                 transit.leg?.path?.lastOrNull()?.distanceTo(f.coord)?.let { it <= 20 } == true) {
@@ -1238,7 +1339,8 @@ class AppModel {
             return
         }
         val m = n.nextManeuver
-        val turn = if (m == null) "To ${n.destination.name}" else "${Fmt.distance(p.distanceToNext)} · ${SpokenText.forScreen(m.instruction)}"
+        val turn = if (m == null || m.type == ManeuverType.ARRIVE) "Continue to ${n.destination.name}"
+            else "${Fmt.distance(p.distanceToNext)} · ${SpokenText.forScreen(m.instruction)}"
         DriveService.show(KiteApp.app, turn, "Arrive ${Fmt.arrival(p.remainingSeconds)} · ${Fmt.distance(p.remainingMeters)} to go")
     }
 
@@ -1257,8 +1359,8 @@ class AppModel {
         // Then the zoom setting (Closer, Normal, Wider) and the 3D, 2D or north-up button.
         val view = NavZoom.view(f.speed, p?.distanceToNext, n.nextManeuver?.type, n.route.mode == TravelMode.DRIVE)
             .applying(settings.mapZoom, settings.driveLook)
-        glide.look = settings.driveLook
-        glide.fix(n, f, view.across / 1.36.pow(navZoomSteps), view.pitch)
+        glide.look = if (n.transitWalk) MapLook.NORTH else settings.driveLook
+        glide.fix(n, f, view.across / 1.36.pow(navZoomSteps), if (n.transitWalk) 0.0 else view.pitch)
     }
 
     /** The map button while driving: 3D, then 2D, then north up. Kept for the next drive. */
@@ -1354,7 +1456,6 @@ class AppModel {
     }
 
     companion object {
-        private val geographicSearchCategories = setOf("city", "town", "village", "municipality", "hamlet", "suburb", "country", "state", "postcode")
         const val LOCATION_OFF_TEXT = "Location is off for Kite. Turn it on in Settings to get directions from where you are."
     }
 }

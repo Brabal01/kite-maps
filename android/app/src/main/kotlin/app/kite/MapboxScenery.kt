@@ -155,7 +155,7 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
                     if (hit != null) kite.openWazeAlert(hit.getStringProperty("id"))
                 }
                 true
-            } else if (!model.placingStop && model.nav == null && model.directions == null) {
+            } else if (!model.placingStop && !model.isGuiding && model.directions == null) {
                 val pixel = map.pixelForCoordinate(point)
                 map.queryRenderedFeatures(RenderedQueryGeometry(pixel), RenderedQueryOptions(listOf("kite-search-hit", "kite-vela-results", KiteMap.TRANSIT_STOPS, GOOGLE_PLACES, OpenMapStyle.POIS, KiteMap.GOOGLE_UNREVIEWED), null)) { result ->
                     val feature = result.value?.firstOrNull()?.queriedFeature?.feature
@@ -194,7 +194,7 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
             }
             MotionEvent.ACTION_MOVE -> if (event.pointerCount > 1 || abs(event.x - downX) + abs(event.y - downY) > 10f) {
                 movingFromTouch = true
-                model.nav?.following = false
+                model.mapNavigator?.following = false
                 model.transitGuidance?.following = false
                 model.stopTransitOverview()
                 model.browseFollowing = false
@@ -265,7 +265,7 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
     }
 
     fun updatePosition(fix: Fix) {
-        val navigating = model.nav != null
+        val navigating = model.mapNavigator != null
         updateOverlay(LOCATION) {
             if (navigating) EMPTY else Feature.fromGeometry(Point.fromLngLat(fix.lng, fix.lat)).toJson()
         }
@@ -574,7 +574,7 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
                 ) ?: return@launch
                 withContext(Dispatchers.Default) { parseLamps(raw, mid) }.also { lampCache[cell] = it }
             }
-            val budget = if (look.shadows && model.nav?.following == true) 44 else 65
+            val budget = if (look.shadows && model.mapNavigator?.following == true) 44 else 65
             val (features, pools) = withContext(Dispatchers.Default) {
                 val actual = lamps.mapped.filter { center.distanceTo(it.at) < 1_300 }
                 val nearby = (actual + lamps.inferred.filter { center.distanceTo(it.at) < 1_000 })

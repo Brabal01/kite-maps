@@ -72,7 +72,7 @@ fun BrowseOverlay(model: AppModel, showMapbox: Boolean) {
         // Map buttons: layers, parking and the 3D/2D/north-up button on the right, under the top cards.
         Column(Modifier.fillMaxSize().statusBarsPadding().padding(horizontal = 16.dp)) {
             Row(Modifier.fillMaxWidth().padding(top = if (idle) (if (model.resumeOffer != null) 266.dp else 166.dp) else 76.dp)) {
-                if (!s.swapMapSides) Spacer(Modifier.weight(1f))
+                Spacer(Modifier.weight(1f))
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     MapFab(Icons.Outlined.Layers) { model.showLayers = true }
                     if (s.parkingButton || s.parking != null) {
@@ -90,9 +90,9 @@ fun BrowseOverlay(model: AppModel, showMapbox: Boolean) {
             if (sheetH < full * 0.6f) {
                 Row(Modifier.fillMaxWidth().padding(bottom = if (hasSheet) (sheetH - navBottom).coerceAtLeast(0.dp) + 14.dp else 86.dp),
                     verticalAlignment = Alignment.Bottom) {
-                    if (s.swapMapSides) LocateButton(model) else if (idle) WazeMapChips(model)
+                    if (idle) WazeMapChips(model)
                     Spacer(Modifier.weight(1f))
-                    if (!s.swapMapSides) LocateButton(model) else if (idle) WazeMapChips(model)
+                    LocateButton(model)
                 }
             }
         }
@@ -185,11 +185,14 @@ fun SearchBar(model: AppModel, focused: Boolean, onFocus: (Boolean) -> Unit, unf
                 Modifier.fillMaxWidth().focusRequester(requester).onFocusChanged { if (it.isFocused != focused) onFocus(it.isFocused) },
                 singleLine = true,
                 textStyle = TextStyle(fontSize = 19.sp, fontWeight = FontWeight.Medium, color = primaryText, fontFamily = Rounded),
-                cursorBrush = SolidColor(LocalMapChrome.current?.accent ?: Vela.accent(dark)),
+                cursorBrush = SolidColor(mapControlTint),
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false, imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { unfocus(); model.search() }))
         }
         when {
+            focused && model.query.isNotBlank() -> IconButton({ unfocus(); model.search() }) {
+                Icon(Icons.Filled.Search, "Search for ${model.query}", tint = mapControlTint)
+            }
             model.searching -> CircularProgressIndicator(Modifier.padding(12.dp).size(24.dp), strokeWidth = 3.dp, color = Vela.accent(dark))
             model.query.isNotEmpty() || model.results.isNotEmpty() || model.selected != null ->
                 Box(Modifier.size(48.dp).clip(CircleShape).tap { model.clearSearch(); unfocus() }, contentAlignment = Alignment.Center) {
@@ -224,6 +227,9 @@ fun SuggestionsPanel(model: AppModel, done: () -> Unit) {
     Column(Modifier.padding(horizontal = 12.dp).heightIn(max = 460.dp).glass(RoundedCornerShape(20.dp), AppSettings.solidMapSearch)
         .verticalScroll(rememberScrollState()).padding(vertical = 8.dp)) {
         val sug = model.suggestions
+        if (model.query.isNotBlank()) {
+            IconRow(Icons.Filled.Search, "Search for “${model.query.trim()}”") { done(); model.search() }
+        }
         if (model.query.isNotEmpty() && !(sug.places.isEmpty() && sug.queries.isEmpty())) {
             sug.places.take(6).forEach { p ->
                 IconRow(Icons.Filled.Place, p.name, p.address, p.distanceMeters?.let { Fmt.distance(it) }, height = 54.dp) { done(); model.openSuggestion(p) }

@@ -56,7 +56,7 @@ object AppSettings {
     var roadStripPosition by Pref("roadStripPosition", { p ->
         RoadStripPosition.entries.firstOrNull { it.name == p.getString("roadStripPosition", null) } ?: RoadStripPosition.BOTTOM
     }, { e, v -> e.putString("roadStripPosition", v.name) })
-    var swapMapSides by bool("swapMapSides")
+    var swapNavigationSides by bool("swapMapSides")
     var solidMapSearch by bool("solidMapSearch", true)
     private fun mapColor(key: String) = Pref<String?>(key,
         { it.getString(key, null)?.takeIf { value -> MapPalette.isColor(value) } },
@@ -206,11 +206,22 @@ object AppSettings {
     fun showsOnRoad(a: WazeAlert): Boolean = wazeOn && wazeOnMap && aheadWaze &&
         a.kind in roadWazeKinds && a.kind in Waze.shares && recent(a)
 
-    fun isSaved(p: Place) = saved.any { it.matchesNearby(p) }
+    fun savedEntry(p: Place) = saved.firstOrNull { it.matchesNearby(p) }
+
+    fun isSaved(p: Place) = savedEntry(p) != null
+
+    fun savePlace(p: Place, lists: Set<String>) {
+        val existing = savedEntry(p)
+        val id = existing?.id ?: p.id
+        if (existing == null) saved = listOf(p) + saved
+        placeFolders = placeFolders.map { folder ->
+            folder.copy(members = if (folder.id in lists) folder.members + id else folder.members - id)
+        }
+    }
 
     fun toggleSaved(p: Place) {
-        val existing = saved.firstOrNull { it.matchesNearby(p) }
-        if (existing != null) removeSaved(existing.id) else saved = listOf(p) + saved
+        val existing = savedEntry(p)
+        if (existing != null) removeSaved(existing.id) else savePlace(p, emptySet())
     }
 
     fun renameSaved(id: String, name: String) {

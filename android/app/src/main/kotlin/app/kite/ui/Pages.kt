@@ -463,22 +463,22 @@ private fun MapSettings() {
     var editRoadReports by remember { mutableStateOf(false) }
     var editOpenPlaces by remember { mutableStateOf(false) }
     SettingsGroup {
-        PickRow("Theme", Icons.Filled.Contrast, 0x334155, s.theme, ThemeMode.entries.toList(), { it.label }) { s.theme = it }
+        PickRow("App theme", Icons.Filled.Contrast, 0x334155, s.theme, ThemeMode.entries.toList(), { it.label }) { s.theme = it }
         RowDivider()
         PickRow("Distance units", Icons.Filled.Straighten, 0x0891B2, s.units, UnitsMode.entries.toList(), { it.label }) { s.units = it }
         RowDivider()
         ToggleRow("Parking button on the map", Icons.Filled.LocalParking, 0x2563EB, s.parkingButton) { s.parkingButton = it }
     }
     SettingsGroup(header = "Map interface") {
-        ToggleRow("Swap left and right controls", Icons.Filled.SwapHoriz, 0x2563EB, s.swapMapSides) { s.swapMapSides = it }
+        ToggleRow("Swap navigation controls and speedometer", Icons.Filled.SwapHoriz, 0x2563EB, s.swapNavigationSides) { s.swapNavigationSides = it }
         RowDivider()
         ToggleRow("Solid search background", Icons.Filled.Search, 0x0F766E, s.solidMapSearch) { s.solidMapSearch = it }
         RowDivider()
-        MapUiColorRow("Control accent", s.mapUiAccent) { s.mapUiAccent = it }
+        MapUiColorRow("Control accent", s.mapUiAccent, accentColors) { s.mapUiAccent = it }
         RowDivider()
-        MapUiColorRow("Light interface panels", s.mapUiDayPanel) { s.mapUiDayPanel = it }
+        MapUiColorRow("Light interface panels", s.mapUiDayPanel, lightPanelColors) { s.mapUiDayPanel = it }
         RowDivider()
-        MapUiColorRow("Dark interface panels", s.mapUiNightPanel) { s.mapUiNightPanel = it }
+        MapUiColorRow("Dark interface panels", s.mapUiNightPanel, darkPanelColors) { s.mapUiNightPanel = it }
     }
     MapboxSettings()
     SettingsGroup(header = "Mapbox Standard", footer = "Mapbox Standard uses your Mapbox token. Street lamps use mapped posts and estimated placement on nearby streets at street zoom.") {
@@ -564,22 +564,90 @@ private fun MapSettings() {
     }
 }
 
+private val accentColors = linkedMapOf(
+    "Teal" to "#0F9B8F", "Blue" to "#4289EF", "Indigo" to "#686FE8", "Purple" to "#9B63D5",
+    "Rose" to "#CF527F", "Orange" to "#DC7841", "Gold" to "#C79522", "Green" to "#3A9A69",
+)
+private val lightPanelColors = linkedMapOf(
+    "Snow" to "#FFFFFF", "Sky" to "#EDF5FF", "Mint" to "#E5F8F1", "Lavender" to "#F5EEFC",
+    "Rose" to "#FFF0F4", "Sand" to "#FFF4E4", "Fog" to "#F1F4F7", "Ice" to "#E8F7FA",
+)
+private val darkPanelColors = linkedMapOf(
+    "Midnight" to "#141E30", "Slate" to "#253042", "Deep ocean" to "#152B46", "Forest" to "#142F29",
+    "Plum" to "#301D3A", "Burgundy" to "#391F2A", "Espresso" to "#30241B", "Graphite" to "#24272E",
+)
+
 @Composable
-private fun MapUiColorRow(label: String, current: String?, save: (String?) -> Unit) {
+private fun MapUiColorRow(label: String, current: String?, swatches: Map<String, String>, save: (String?) -> Unit) {
     var editing by remember { mutableStateOf(false) }
-    var value by remember(current) { mutableStateOf(current.orEmpty()) }
     Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).tap { editing = true }.padding(horizontal = 14.dp),
-        verticalAlignment = Alignment.CenterVertically) {
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         SettingLabel(label, Icons.Filled.Palette, 0x6D4EB0, Modifier.weight(1f))
-        Text(current ?: "Default", color = secondaryText)
+        if (current == null) Text("Default", color = secondaryText)
+        else Box(Modifier.size(24.dp).clip(CircleShape).background(swatchColor(current))
+            .border(1.dp, secondaryText, CircleShape))
+        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = secondaryText)
     }
-    if (editing) {
-        val hex = "#" + value.trim().removePrefix("#").uppercase()
-        AlertDialog(onDismissRequest = { editing = false }, title = { Text(label) },
-            text = { OutlinedTextField(value, { value = it }, label = { Text("Hex color") }, placeholder = { Text("#247BD6") }, singleLine = true) },
-            confirmButton = { TextButton({ save(hex); editing = false }, enabled = MapPalette.isColor(hex)) { Text("Save") } },
-            dismissButton = { TextButton({ save(null); editing = false }) { Text("Use default") } })
+    if (editing) MapColorPicker(label, current ?: swatches.values.first(), swatches, close = { editing = false },
+        reset = { save(null); editing = false }, save = { save(it); editing = false })
+}
+
+private fun swatchColor(value: String) = Color(android.graphics.Color.parseColor(value))
+
+@Composable
+private fun MapColorPicker(
+    title: String, initial: String, swatches: Map<String, String>, close: () -> Unit,
+    reset: (() -> Unit)? = null, save: (String) -> Unit,
+) {
+    fun components(value: String) = FloatArray(3).also {
+        android.graphics.Color.colorToHSV(android.graphics.Color.parseColor(value), it)
     }
+    var hsv by remember(initial) { mutableStateOf(components(initial)) }
+    var custom by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(14.dp)
+    val color = android.graphics.Color.HSVToColor(hsv)
+    val hex = String.format(java.util.Locale.ROOT, "#%06X", color and 0xFFFFFF)
+    fun channel(index: Int, value: Float) {
+        hsv = hsv.copyOf().also { it[index] = value }
+    }
+
+    AlertDialog(
+        onDismissRequest = close,
+        title = { Text(title) },
+        text = {
+            Column(Modifier.heightIn(max = 410.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(Modifier.fillMaxWidth().height(64.dp).clip(shape).background(Color(color))
+                    .border(1.dp, secondaryText, shape).semantics { contentDescription = "Selected color" })
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    for ((name, value) in swatches.entries.distinctBy { it.value }) {
+                        val on = hex.equals(value, ignoreCase = true)
+                        Box(Modifier.size(46.dp).clip(CircleShape).background(swatchColor(value))
+                            .border(if (on) 2.dp else 1.dp, secondaryText, CircleShape)
+                            .semantics { contentDescription = name }.tap { hsv = components(value) },
+                            contentAlignment = Alignment.Center) {
+                            if (on) {
+                                val tint = if (android.graphics.Color.luminance(color) > 0.18f) Color.Black else Color.White
+                                Icon(Icons.Filled.Check, "Selected", tint = tint, modifier = Modifier.size(20.dp))
+                            }
+                        }
+                    }
+                }
+                TextButton({ custom = !custom }) { Text(if (custom) "Hide sliders" else "Custom color") }
+                if (custom) {
+                    Text("Hue", color = primaryText)
+                    Slider(hsv[0].coerceIn(0f, 359.9f), { channel(0, it) }, valueRange = 0f..359.9f)
+                    Text("Saturation", color = primaryText)
+                    Slider(hsv[1], { channel(1, it) })
+                    Text("Brightness", color = primaryText)
+                    Slider(hsv[2], { channel(2, it) })
+                }
+                if (reset != null) TextButton(reset) { Text("Use default") }
+            }
+        },
+        confirmButton = { TextButton({ save(hex) }) { Text("Apply") } },
+        dismissButton = { TextButton(close) { Text("Cancel") } },
+    )
 }
 
 @Composable
@@ -612,7 +680,6 @@ private fun MapColorsPage(close: () -> Unit) {
                     Row(Modifier.fillMaxWidth().heightIn(min = 49.dp).tap { field = color }.padding(horizontal = 14.dp),
                         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text(color.label, Modifier.weight(1f), color = primaryText)
-                        Text(palette[color], fontSize = KType.caption, color = secondaryText)
                         Box(Modifier.size(25.dp).clip(CircleShape).background(swatch(palette[color]))
                             .border(1.dp, secondaryText, CircleShape))
                     }
@@ -622,39 +689,12 @@ private fun MapColorsPage(close: () -> Unit) {
         }
     }
     field?.let { selected ->
-        var value by remember(dark, selected) { mutableStateOf(palette[selected]) }
-        val normalized = "#" + value.trim().removePrefix("#").uppercase(java.util.Locale.ROOT)
-        val valid = MapPalette.isColor(normalized)
-        AlertDialog(onDismissRequest = { field = null },
-            title = { Text(selected.label) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    val colors = (MapPalette.presets(dark).values.map { it[selected] } +
-                        listOf("#172330", "#48556E", "#EDF0F4", "#B0CBA4", "#57DDCA", "#A3CFE1",
-                            "#4763C7", "#C6BBED", "#E7B477", "#946D5F", "#FF8D88", "#FFC190")).distinct()
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                        for (color in colors) {
-                            Box(Modifier.size(38.dp).clip(CircleShape).background(swatch(color))
-                                .border(if (normalized == color) 2.dp else 0.5.dp, secondaryText, CircleShape)
-                                .semantics { contentDescription = color }.tap { value = color },
-                                contentAlignment = Alignment.Center) {
-                                if (normalized == color) {
-                                    val tint = if (android.graphics.Color.luminance(android.graphics.Color.parseColor(color)) > 0.38)
-                                        Color.Black else Color.White
-                                    Icon(Icons.Filled.Check, null, tint = tint, modifier = Modifier.size(18.dp))
-                                }
-                            }
-                        }
-                    }
-                    OutlinedTextField(value, { if (it.length <= 7) value = it }, singleLine = true,
-                        label = { Text("Hex color") }, supportingText = { Text("Example #369ABF") },
-                        leadingIcon = {
-                            Box(Modifier.size(20.dp).clip(CircleShape).background(swatch(if (valid) normalized else palette[selected])))
-                        })
-                }
-            },
-            confirmButton = { TextButton({ apply(palette.change(selected, normalized)); field = null }, enabled = valid) { Text("Apply") } },
-            dismissButton = { TextButton({ field = null }) { Text("Cancel") } })
+        val swatches = MapPalette.presets(dark).map { (name, preset) -> "$name palette" to preset[selected] }.toMap() +
+            (if (dark) darkPanelColors else lightPanelColors) + accentColors
+        MapColorPicker(selected.label, palette[selected], swatches, close = { field = null }) {
+            apply(palette.change(selected, it))
+            field = null
+        }
     }
 }
 

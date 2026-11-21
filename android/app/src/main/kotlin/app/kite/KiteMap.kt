@@ -246,12 +246,13 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             m.addOnMapClickListener { tapped(m, it) }
             m.addOnMapLongClickListener { pressed(m, it); true }
             fun stopFollowing() {
-                model.nav?.following = false
+                model.mapNavigator?.following = false
                 model.transitGuidance?.following = false
                 model.stopTransitOverview()
             }
             m.addOnCameraMoveStartedListener { reason ->
-                if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) stopFollowing()
+                if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE &&
+                    model.glide.mapTouched && !syncingClassic) stopFollowing()
             }
             // Off a route in 3D or 2D, dragging or turning the map stops following; zooming doesn't.
             m.addOnMoveListener(object : MapLibreMap.OnMoveListener {
@@ -284,7 +285,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             m.addOnCameraIdleListener {
                 // Camera writes during following can fire idle every frame. Layer queries and
                 // network scheduling should run at a much lower rate during those updates.
-                if (model.nav?.following == true) {
+                if (model.mapNavigator?.following == true) {
                     val at = android.os.SystemClock.elapsedRealtime()
                     if (at - lastFollowingRefresh < 1_400L) return@addOnCameraIdleListener
                     lastFollowingRefresh = at
@@ -296,7 +297,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             m.addOnCameraMoveListener {
                 if (!syncingClassic) {
                     noteHeading(m)
-                    if (model.nav?.following != true || scenery?.ready != true) scenery?.syncFromKite(m.cameraPosition)
+                    if (model.mapNavigator?.following != true || scenery?.ready != true) scenery?.syncFromKite(m.cameraPosition)
                 }
             }
             WazeHistory.onChange = { render() }
@@ -389,7 +390,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             lc.activateLocationComponent(LocationComponentActivationOptions.builder(context, style)
                 .locationComponentOptions(opts).useDefaultLocationEngine(false).build())
         }
-        lc.isLocationComponentEnabled = model.nav == null
+        lc.isLocationComponentEnabled = model.mapNavigator == null
         lc.cameraMode = CameraMode.NONE
         lc.renderMode = RenderMode.NORMAL
         locationOn = true
@@ -419,7 +420,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         val m = map ?: return
         if (movedToUser) return
         movedToUser = true
-        if (model.results.isNotEmpty() || model.selected != null || model.directions != null) return
+        if (model.isGuiding || model.results.isNotEmpty() || model.selected != null || model.directions != null) return
         m.moveCamera(org.maplibre.android.camera.CameraUpdateFactory.newLatLngZoom(f.coord.ml(), 15.0))
     }
 
@@ -515,7 +516,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
 
     private fun showGooglePlaces(style: Style) {
         val s = model.settings
-        val browsing = model.results.isEmpty() && model.nav == null && model.selected == null && model.directions == null
+        val browsing = model.results.isEmpty() && !model.isGuiding && model.selected == null && model.directions == null
         val google = if (browsing && googlePlacesEnabled()) googlePlaces else emptyList()
         val googleVisible = google
         val native = scenery?.ready == true
@@ -543,7 +544,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             shownGooglePlaces = googleVisible
             setShape(style, "kite-google-places", features(googleVisible))
         }
-        val stops = if (model.nav == null && s.transitLines) transitStops else emptyList()
+        val stops = if (!model.isGuiding && s.transitLines) transitStops else emptyList()
         if (shownTransitStops != stops) {
             shownTransitStops = stops
             setShape(style, TRANSIT_STOPS, features(stops))
@@ -891,11 +892,11 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         return name?.takeIf { it.isNotEmpty() && it.length <= 40 }
     }
 
-    private fun setShape(style: Style, id: String, features: List<Feature>) {
+    private fun setShape(style: Style?, id: String, features: List<Feature>) {
         val collection = FeatureCollection.fromFeatures(features)
         val native = scenery
         if (native?.ready != true || !native.renders(id) || id in classicHitSources)
-            (style.getSource(id) as? GeoJsonSource)?.setGeoJson(collection)
+            (style?.getSource(id) as? GeoJsonSource)?.setGeoJson(collection)
         native?.updateOverlay(id) { collection.toJson() }
     }
 
@@ -929,12 +930,20 @@ class KiteMap(private val model: AppModel, private val context: Context) {
 
     private fun renderNow() {
         val m = map ?: return
-        val style = m.style ?: return
-        if (!styleReady) return
+        val style = if (styleReady) m.style else null
+        if (style == null) {
+            if (scenery?.ready == true) {
+                renderResults(null)
+                renderStopPins(null)
+                renderRoutes(null)
+            }
+            return
+        }
         val s = model.settings
-        val navigating = model.nav != null || model.transitGuidance != null
+        val navigating = model.isGuiding
+        val showPosition = model.mapNavigator == null
         if (m.locationComponent.isLocationComponentActivated) {
-            if (m.locationComponent.isLocationComponentEnabled == navigating) m.locationComponent.isLocationComponentEnabled = !navigating
+            if (m.locationComponent.isLocationComponentEnabled != showPosition) m.locationComponent.isLocationComponentEnabled = showPosition
         } else if (LocationService.authorized) enableLocation(style)
         // Not before the welcome screen's choice: "Open data only" means nothing ever went to Google.
         visible(style, "vela-traffic", !showingMapbox && s.traffic && !navigating && !s.noGoogle && s.welcomed)
@@ -973,7 +982,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
 
     private fun renderMine(style: Style) {
         val s = model.settings
-        val hidden = model.nav != null || model.directions != null
+        val hidden = model.isGuiding || model.directions != null
         val items = mutableListOf<Triple<Place, String, String>>()
         if (!hidden) {
             s.home?.let { items.add(Triple(it, "mine-home", "Home")) }
@@ -1143,7 +1152,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
 
     /** Transit lines for the view and a margin around it, when the layer is on. */
     fun loadRail(m: MapLibreMap) {
-        if (!model.settings.transitLines || m.cameraPosition.zoom < 10 || railFetch != null || model.nav != null) return
+        if (!model.settings.transitLines || m.cameraPosition.zoom < 10 || railFetch != null || model.isGuiding) return
         val b = m.projection.visibleRegion.latLngBounds
         val z = m.cameraPosition.zoom.toInt()
         railBox?.let { r -> if (b.latitudeSouth >= r.s && b.longitudeWest >= r.w && b.latitudeNorth <= r.n && b.longitudeEast <= r.e && abs(z - r.z) <= 2) return }
@@ -1225,7 +1234,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         setShape(style, "kite-measure", measure?.let { (a, b) -> listOf(polyline(listOf(a, b)), point(a), point(b)) }.orEmpty())
     }
 
-    private fun renderStopPins(style: Style) {
+    private fun renderStopPins(style: Style?) {
         val search = model.stopSearch
         val results = search?.results.orEmpty()
         val selected = search?.selected?.place?.id
@@ -1239,12 +1248,13 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         setShape(style, StopSearch.PINS, features)
     }
 
-    private fun renderResults(style: Style) {
-        val showList = model.directions == null && model.nav == null
+    private fun renderResults(style: Style?) {
+        val showList = model.directions == null && !model.isGuiding
         val list = if (showList) model.visibleResults else emptyList()
         val plan = model.directions.takeIf { model.nav == null }?.orderedPlaces()
         val here = model.userLatLng
-        val target = model.nav?.destination ?: if (plan != null) plan.last() else model.selected
+        val target = model.mapNavigator?.destination ?: model.transitGuidance?.destination ?:
+            if (plan != null) plan.last() else model.selected
         val destination = target?.location ?: here.takeIf { plan != null }
         val origin = plan?.let { it.first()?.location ?: here }
         val stops = model.nav?.stops ?: plan?.drop(1)?.dropLast(1)?.filterNotNull().orEmpty()
@@ -1272,11 +1282,11 @@ class KiteMap(private val model: AppModel, private val context: Context) {
     private var routeContext = ""
     private var transitStopsKey = ""
 
-    private fun renderRoutes(style: Style) {
+    private fun renderRoutes(style: Style?) {
         var alts = emptyList<Route>()
         var main: Route? = null
         var from = 0.0
-        val n = model.nav
+        val n = model.mapNavigator
         val d = model.directions
         val session = model.transitGuidance
         val overview = session?.overviewing == true
@@ -1379,7 +1389,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
     }
 
     private fun renderPuck(style: Style) {
-        if (model.nav != null) { lastPuckKey = "nav"; return }
+        if (model.mapNavigator != null) { lastPuckKey = "nav"; return }
         if (lastPuckKey == "") return
         setShape(style, NavGlide.PUCK, emptyList())
         lastPuckKey = ""
@@ -1517,7 +1527,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
     private fun pressed(m: MapLibreMap, at: org.maplibre.android.geometry.LatLng) {
         if (model.stopSearch != null || model.placingStop) return
         pinDroppedAt = now()
-        if (model.nav != null || model.directions != null) return
+        if (model.isGuiding || model.directions != null) return
         view?.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
         model.dropPin(at.kite())
     }

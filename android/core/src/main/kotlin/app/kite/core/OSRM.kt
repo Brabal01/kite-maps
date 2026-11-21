@@ -467,8 +467,8 @@ object Directions {
                     g = (if (alternatives) ahead else ahead.take(1)).toMutableList()
                 }
                 if (g.isNotEmpty()) {
-                    val reroute = heading != null && !alternatives
-                    val wait = if (reroute) 5.0 else 25.0
+                    if (!alternatives && g.size > 1) g = g.take(1).toMutableList()
+                    val wait = if (alternatives) 25.0 else 5.0
                     val vias = mutableMapOf<Int, Route>()
                     for (i in g.indices) {
                         val line = g[i].polyline

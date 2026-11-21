@@ -337,11 +337,11 @@ fun CompassNeedle(heading: Double, onClick: () -> Unit) {
 @Composable
 fun MapLookButton(look: MapLook, heading: Double = 0.0, size: Dp = 52.dp, onClick: () -> Unit) {
     val gray = secondaryText
-    Box(Modifier.size(size).glass(CircleShape).clickable(onClick = onClick)
+    Box(Modifier.size(size).glass(CircleShape, solid = true).clickable(onClick = onClick)
         .semantics { contentDescription = "Map view: ${look.title}" }, contentAlignment = Alignment.Center) {
         when (look) {
             MapLook.TILTED, MapLook.FLAT -> Text(if (look == MapLook.TILTED) "3D" else "2D", fontSize = (size.value * 0.34f).sp,
-                fontWeight = FontWeight.Black, color = primaryText)
+                fontWeight = FontWeight.Black, color = mapControlTint)
             MapLook.NORTH -> Box(Modifier.size(size).rotate(-heading.toFloat()), contentAlignment = Alignment.Center) {
                 Canvas(Modifier.size(9.dp, 25.dp)) {
                     val w = this.size.width; val h = this.size.height

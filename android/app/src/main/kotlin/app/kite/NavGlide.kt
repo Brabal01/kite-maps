@@ -196,7 +196,7 @@ class NavGlide : Choreographer.FrameCallback {
         shownAcross += (targetAcross - shownAcross) * (if (dt == 0.0) 1.0 else 1 - exp(-dt / zoomTime))
         shownPitch += (targetPitch - shownPitch) * (if (dt == 0.0) 1.0 else 1 - exp(-dt / zoomTime))
 
-        val style = m.style ?: return
+        val style = m.style
         val entering = cameraEntry != null
         if (n.following && !entering) {
             if (!carOnScreen) carOnScreen = true
@@ -211,7 +211,7 @@ class NavGlide : Choreographer.FrameCallback {
             if (last == null || now - puckPushedAt > 1_000_000_000L || last.distanceTo(coordNow) > 25 || turned > 20) {
                 val marker = Feature.fromGeometry(Point.fromLngLat(coordNow.lng, coordNow.lat))
                     .apply { addNumberProperty("bearing", shownBearing) }
-                (style.getSource(PUCK) as? GeoJsonSource)?.setGeoJson(marker)
+                (style?.getSource(PUCK) as? GeoJsonSource)?.setGeoJson(marker)
                 onMapPuck?.invoke(marker)
                 puckPushed = coordNow; puckPushedAt = now; puckPushedBearing = shownBearing; puckOnMap = true
             }

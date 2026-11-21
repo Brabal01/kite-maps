@@ -14,6 +14,7 @@ class TransitGuidance(val trip: TransitTrip, val destination: Place) {
     val leg: TransitLeg? get() = trip.legs.getOrNull(legIndex)
     var phase by mutableStateOf(Phase.WALK)
         private set
+    var walking by mutableStateOf<Navigator?>(null)
     var walkingError by mutableStateOf(false)
     var boarding by mutableStateOf(false)
     var liveDeparture by mutableStateOf<Transitous.Departure?>(null)

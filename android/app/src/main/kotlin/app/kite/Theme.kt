@@ -19,6 +19,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.SpanStyle
@@ -68,12 +70,34 @@ object Vela {
     fun warnText(dark: Boolean) = if (dark) Color(0xFFFBBF24) else Color(0xFF9A4A08)
     fun tonal(dark: Boolean) = if (dark) Color(0xFF12403C) else Color(0xFFCCFBF1)
     fun onTonal(dark: Boolean) = if (dark) Color(0xFF99F6E4) else Color(0xFF134E4A)
-    fun muted(dark: Boolean) = if (dark) Color(0xFF94A3B8) else Color(0xFF64748B)
+    fun muted(dark: Boolean) = if (dark) Color(0xFFB4C3D7) else Color(0xFF64748B)
     fun primary(dark: Boolean) = if (dark) Color.White else Color(0xFF0F172A)
 }
 
 /** Whether the screen is in dark colors right now. */
-data class MapChrome(val accent: Color?, val panel: Color?)
+data class MapChrome(val accent: Color?, val panel: Color?) {
+    fun panel(dark: Boolean): Color {
+        val fallback = Vela.surface(dark)
+        val custom = panel ?: return fallback
+        return custom.withContrast(Vela.muted(dark), fallback)
+    }
+
+    fun icon(dark: Boolean, preferred: Color? = null): Color =
+        (preferred ?: accent ?: Vela.primary(dark)).withContrast(panel(dark), Vela.primary(dark))
+}
+
+private fun Color.withContrast(background: Color, fallback: Color): Color {
+    val base = background.luminance()
+    for (step in 0..10) {
+        val candidate = lerp(this, fallback, step / 10f)
+        val light = candidate.luminance()
+        if ((maxOf(base, light) + 0.05f) / (minOf(base, light) + 0.05f) >= 4.5f) return candidate
+    }
+    return fallback
+}
+
+val mapControlTint: Color
+    @Composable get() = LocalMapChrome.current?.icon(LocalDark.current) ?: primaryText
 val LocalMapChrome = staticCompositionLocalOf<MapChrome?> { null }
 
 val LocalDark = staticCompositionLocalOf { true }
@@ -136,7 +160,10 @@ fun KiteTheme(content: @Composable () -> Unit) {
     )
     CompositionLocalProvider(LocalDark provides dark) {
         MaterialTheme(colorScheme = scheme, typography = type) {
-            CompositionLocalProvider(LocalTextStyle provides TextStyle(fontFamily = Rounded, fontSize = KType.body)) {
+            CompositionLocalProvider(
+                LocalContentColor provides scheme.onSurface,
+                LocalTextStyle provides TextStyle(fontFamily = Rounded, fontSize = KType.body),
+            ) {
                 content()
             }
         }
@@ -321,18 +348,20 @@ fun maneuverIcon(t: ManeuverType): ImageVector = when (t) {
 @Composable
 fun Modifier.glass(shape: Shape, solid: Boolean = false): Modifier {
     val dark = LocalDark.current
-    val surface = LocalMapChrome.current?.panel ?: Vela.surface(dark)
+    val surface = LocalMapChrome.current?.panel(dark) ?: Vela.surface(dark)
     return this
         .clip(shape)
-        .background(surface.copy(alpha = if (solid) 1f else if (dark) 0.84f else 0.88f))
-        .border(0.75.dp, Color.White.copy(alpha = if (dark) 0.10f else 0.6f), shape)
+        .background(surface.copy(alpha = if (solid) 1f else if (dark) 0.96f else 0.91f))
+        .border(0.75.dp, Color.White.copy(alpha = if (dark) 0.20f else 0.6f), shape)
 }
 
 /** Round buttons floating on the map (layers, location, compass). */
 @Composable
 fun MapFab(icon: ImageVector, tint: Color? = null, size: Dp = 48.dp, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Box(modifier.size(size).glass(CircleShape).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
-        Icon(icon, null, tint = tint ?: LocalMapChrome.current?.accent ?: primaryText, modifier = Modifier.size(size * 0.46f))
+    val dark = LocalDark.current
+    val chrome = LocalMapChrome.current ?: MapChrome(null, null)
+    Box(modifier.size(size).glass(CircleShape, solid = true).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
+        Icon(icon, null, tint = chrome.icon(dark, tint), modifier = Modifier.size(size * 0.46f))
     }
 }
 
