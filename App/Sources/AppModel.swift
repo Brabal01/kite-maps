@@ -74,7 +74,7 @@ struct TransitJourney {
     var index = 0
     var loadingWalk = false
     var boarded = false
-    var boardingProgress: Double?
+    var boarding = BoardingDetector()
     var leg: TransitLeg { trip.legs[index] }
 }
 
@@ -1849,7 +1849,7 @@ final class AppModel: ObservableObject {
         }
         journey.index += 1
         journey.boarded = false
-        journey.boardingProgress = nil
+        journey.boarding.reset()
         journey.loadingWalk = false
         transitJourney = journey
         startTransitLeg()
@@ -2263,16 +2263,14 @@ final class AppModel: ObservableObject {
         } else {
             let match = Geo.project(here, on: leg.path)
             if !journey.boarded {
-                let departed = leg.depart.map { $0 <= loc.timestamp.addingTimeInterval(60) } ?? true
-                if leg.path.count >= 2, departed, loc.speed >= 3, match.offset <= 60, match.along >= 65 {
-                    if let earlier = journey.boardingProgress, match.along - earlier >= 30 {
-                        boardTransit()
-                    } else if journey.boardingProgress == nil {
-                        transitJourney?.boardingProgress = match.along
-                    }
-                } else {
-                    transitJourney?.boardingProgress = nil
-                }
+                // Boarding is inferred only from strong evidence (see BoardingDetector); the manual
+                // "I'm on board" button stays available and is the only fallback.
+                var detector = journey.boarding
+                let sample = BoardingDetector.Sample(time: loc.timestamp, location: here, accuracy: loc.horizontalAccuracy,
+                                                     speed: loc.speed, course: loc.course)
+                let decision = leg.path.count >= 2 ? detector.observe(sample, line: leg.path, departure: leg.depart) : .notYet
+                transitJourney?.boarding = detector
+                if decision == .boarded { boardTransit() }
                 return true
             }
             guard here.distance(to: end) <= 55,
