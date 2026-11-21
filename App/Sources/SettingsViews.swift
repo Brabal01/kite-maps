@@ -15,6 +15,12 @@ struct LayersSheet: View {
                 Spacer()
                 CircleIconButton(icon: "xmark") { dismiss() }
             }
+            Text("Map style").font(.subheadline.weight(.semibold)).foregroundColor(.secondary)
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 4), spacing: 12) {
+                ForEach(MapPreset.allCases) { preset in
+                    presetTile(preset)
+                }
+            }
             Text("Map type").font(.subheadline.weight(.semibold)).foregroundColor(.secondary)
             HStack(spacing: 14) {
                 tile("Default", icon: "map", on: !settings.satellite) { settings.satellite = false }
@@ -55,6 +61,25 @@ struct LayersSheet: View {
         .padding(20)
         .background(Vela.sheet(scheme).ignoresSafeArea())
         .presentationDetents([.height(590)])
+    }
+
+    private func presetTile(_ preset: MapPreset) -> some View {
+        let on = settings.mapPreset == preset
+        return Button { settings.applyMapPreset(preset) } label: {
+            VStack(spacing: 6) {
+                Image(systemName: preset.icon)
+                    .font(.system(size: 23, weight: .semibold))
+                    .frame(height: 30)
+                Text(L10n.text(preset.title)).font(.caption2.weight(on ? .bold : .regular))
+                    .lineLimit(1).minimumScaleFactor(0.7)
+            }
+            .foregroundColor(on ? Vela.accent(scheme) : .primary)
+            .frame(maxWidth: .infinity, minHeight: 62)
+            .background(RoundedRectangle(cornerRadius: 12).fill(Vela.chip(scheme)))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(on ? Vela.accent(scheme) : .clear, lineWidth: 2))
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("map-preset-\(preset.rawValue)")
     }
 
     private func tile(_ title: String, icon: String = "", badge: RoadCamera.Kind? = nil, waze: WazeAlert.Kind? = nil,
@@ -121,10 +146,17 @@ struct SettingsView: View {
                     }
                     menuRow("Live cameras", detail: "Road camera photos and scenic webcams", value: settings.liveCams ? "On" : "Off",
                             icon: "web.camera.fill", color: 0x0284C7) { liveCamsPage }
-                    menuRow("Map & display", detail: "Theme, units, map zoom, shortcuts", icon: "circle.lefthalf.filled", color: 0x334155) { mapPage }
+                    menuRow("Map & display", detail: "Map presets, HUD, theme, units and zoom", icon: "circle.lefthalf.filled", color: 0x334155) { mapPage }
+                    menuRow("Public transport", detail: "Live feeds, discovery and timetable fallback", value: settings.autoTransitFeeds ? "Auto" : nil,
+                            icon: "tram.fill", color: 0x7C3AED) { transitPage }
                     menuRow("My places", detail: "Home and work", icon: "house.fill", color: 0x16A34A) { placesPage }
                     menuRow("Privacy", detail: "Use Kite without Google", value: settings.noGoogle ? "On" : nil,
                             icon: "lock.fill", color: 0x475569) { privacyPage }
+                    if let model {
+                        menuRow("Diagnostics", detail: "Provider checks and a shareable report", icon: "stethoscope", color: 0x0F766E) {
+                            DataDiagnosticsView(model: model)
+                        }
+                    }
                     menuRow("About", detail: "Version " + version, icon: "info.circle.fill", color: 0x64748B) { aboutPage }
                 }
             }
@@ -177,6 +209,9 @@ struct SettingsView: View {
                 Toggle(isOn: Binding(get: { settings.voice }, set: { settings.voice = $0; settings.voiceAlertsOnly = false })) {
                     SettingLabel("Voice guidance", icon: "speaker.wave.2.fill", color: 0x0F766E)
                 }
+                Toggle(isOn: $settings.haptics) {
+                    SettingLabel("Haptic cues", icon: "iphone.radiowaves.left.and.right", color: 0x7C3AED)
+                }
                 Picker(selection: $settings.defaultMode) {
                     ForEach(TravelMode.allCases) { Text(L10n.text($0.label)).tag($0) }
                 } label: { SettingLabel("Default travel mode", icon: "car.fill", color: 0x2563EB) }
@@ -201,6 +236,31 @@ struct SettingsView: View {
         }
         .kiteList()
         .navigationTitle("Voice & driving")
+    }
+
+    private var transitPage: some View {
+        Form {
+            Section {
+                TextField("GTFS-Realtime feed URL", text: $settings.gtfsRealtimeURL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.URL)
+                Toggle("Discover public live feeds", isOn: $settings.autoTransitFeeds)
+            } header: {
+                Text("Live transit")
+            } footer: {
+                Text("Optional. Any public GTFS-Realtime feed can add delays, service alerts and vehicle positions to the Transitous timetable. With discovery on, Kite checks the keyless Mobility Database catalog for an active feed covering the journey. Feeds that need an API key are never used, and a failed feed falls back to the timetable.")
+            }
+            Section {
+                LabeledContent("Planner", value: "Transitous")
+                LabeledContent("Live data", value: settings.autoTransitFeeds ? "Automatic discovery" : "Planner data only")
+                LabeledContent("Fallback", value: "Scheduled timetable")
+            } footer: {
+                Text("Live delays are matched by feed, agency, trip, route, direction, service date and stop sequence. A feed that does not match is ignored rather than attached to the wrong vehicle.")
+            }
+        }
+        .kiteList()
+        .navigationTitle("Public transport")
     }
 
     private var camerasPage: some View {
@@ -273,6 +333,28 @@ struct SettingsView: View {
             } footer: {
                 Text("Optional. Any public GTFS-Realtime feed can add delays, service alerts and vehicle positions to the Transitous timetable. Leave empty to use the planner's own live data. With discovery on, Kite checks the keyless Mobility Database catalog for an active feed covering the journey area. Feeds that need an API key are never used, and a failed feed falls back to the timetable.")
             }
+            Section {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 10) {
+                    ForEach(MapPreset.allCases) { preset in
+                        Button { settings.applyMapPreset(preset) } label: {
+                            VStack(spacing: 5) {
+                                Image(systemName: preset.icon).font(.system(size: 21, weight: .semibold))
+                                Text(L10n.text(preset.title)).font(.caption.weight(.semibold)).lineLimit(1)
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 58)
+                            .foregroundColor(settings.mapPreset == preset ? KiteColor.onAccent : KiteColor.ink)
+                            .background(RoundedRectangle(cornerRadius: 13, style: .continuous)
+                                .fill(settings.mapPreset == preset ? KiteColor.accent : KiteColor.fill))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("settings-map-preset-\(preset.rawValue)")
+                    }
+                }
+            } header: {
+                Text("Map style")
+            } footer: {
+                Text("Classic is the full map. Navigation keeps roads and buildings but removes distractions. Minimal is the quietest. Explore adds places and transit; Outdoors adds terrain and paths; Satellite uses imagery. Apple Maps supports the same POI and building choices, not every MapLibre detail.")
+            }
             Section("Map background") {
                 Toggle("Apple Maps", isOn: $settings.useAppleMaps)
             }
@@ -302,6 +384,28 @@ struct SettingsView: View {
                 Text("Shortcuts on the map")
             } footer: {
                 Text("Shown under the search field. Tap a shortcut's own checkbox to add it back. The order follows the order you add them in; hiding a shortcut keeps its place in your saved data.")
+            }
+            Section {
+                Picker(selection: $settings.hudMode) {
+                    ForEach(HUDMode.allCases) { mode in
+                        Text(L10n.text(mode.title)).tag(mode)
+                    }
+                } label: {
+                    SettingLabel("Navigation HUD", icon: "rectangle.topthird.inset.filled", color: 0x0F766E)
+                }
+                Text(L10n.text(settings.hudMode.detail)).font(.caption).foregroundColor(.secondary)
+                if settings.hudMode == .custom {
+                    Toggle("Show lane guidance", isOn: $settings.hudCustomLanes)
+                    Toggle("Show the next turn", isOn: $settings.hudCustomThen)
+                    Toggle("Show junction diagrams", isOn: $settings.hudCustomJunction)
+                }
+                NavigationLink { HUDPreview() } label: {
+                    SettingLabel("Live HUD preview", icon: "eye.fill", color: 0x2563EB)
+                }
+            } header: {
+                Text("Navigation HUD 3.0")
+            } footer: {
+                Text("Simple keeps only the next turn. Advanced adds lanes, signs and the follow-up turn. Highway shows lane and exit guidance earlier. Custom uses your own choices.")
             }
             Section {
                 Toggle(isOn: $settings.navBuildings) {
@@ -599,5 +703,93 @@ struct WazeSettingsView: View {
                 remembered = 0
             }
         }
+    }
+}
+
+/** A simulated HUD screen, so the density choice can be seen before a drive. */
+struct HUDPreview: View {
+    @ObservedObject private var settings = AppSettings.shared
+    @Environment(\.colorScheme) private var scheme
+
+    private var sample: Maneuver {
+        Maneuver(type: .rampRight, instruction: "Take exit 8 towards Oxford",
+                 location: LatLng(51.5, -0.1), alongMeters: 300, distanceMeters: 220,
+                 lanes: [Lane(indications: ["straight"], valid: false),
+                         Lane(indications: ["slight right"], valid: true),
+                         Lane(indications: ["right"], valid: true)],
+                 exit: 8)
+    }
+
+    var body: some View {
+        let hud = settings.hudProfile
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text(L10n.text(settings.hudMode.title)).font(KiteText.title())
+                Text(L10n.text(settings.hudMode.detail))
+                    .font(KiteText.body(15)).foregroundColor(KiteColor.inkSecondary)
+
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .center, spacing: 14) {
+                        Image(systemName: "arrow.turn.up.right")
+                            .font(.system(size: 38, weight: .heavy))
+                            .foregroundColor(KiteColor.accentText)
+                            .frame(width: 68, height: 68)
+                            .background(RoundedRectangle(cornerRadius: 18).fill(KiteColor.accentSoft))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("300 m").font(KiteText.digits(38, weight: .heavy))
+                            Text("Take exit 8 towards Oxford")
+                                .font(KiteText.headline(20)).lineLimit(2)
+                        }
+                    }
+                    if hud.showJunction {
+                        HStack(spacing: 8) {
+                            Text("Exit 8").font(KiteText.label(13))
+                                .padding(.horizontal, 7).padding(.vertical, 2)
+                                .foregroundColor(Color(hex: 0x0B3B2A))
+                                .background(RoundedRectangle(cornerRadius: 5).fill(.white))
+                            Text("M40 · Oxford · Bicester").font(KiteText.headline(15))
+                            Spacer()
+                        }
+                        .padding(8)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(Color(hex: 0x0B5D3B)))
+                        .foregroundColor(.white)
+                    }
+                    if hud.showLanes,
+                       let guide = LaneGuidanceEngine.guide(for: sample, distance: 300,
+                                                            speed: 28, offRoute: false,
+                                                            leftTraffic: false) {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(L10n.text(guide.title)).font(KiteText.caption())
+                                .foregroundColor(KiteColor.inkSecondary)
+                            LaneStrip(lanes: guide.lanes.map { Lane(indications: $0.indications,
+                                                                    valid: $0.use == .recommended) },
+                                      turn: .rampRight)
+                        }
+                    }
+                    if hud.showThen {
+                        HStack(spacing: 8) {
+                            Text("Then").font(KiteText.label(13)).foregroundColor(KiteColor.warning)
+                            Image(systemName: "arrow.turn.up.left").font(.system(size: 16, weight: .heavy))
+                            Text("in 120 m · A40").font(KiteText.caption())
+                            Spacer()
+                        }
+                        .padding(.horizontal, 10).frame(height: 34)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(KiteColor.warningSoft))
+                    }
+                }
+                .padding(14)
+                .background(RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(KiteColor.surface))
+                .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .strokeBorder(KiteColor.stroke, lineWidth: 1))
+                .shadow(color: KiteElevation.medium.color, radius: 12, y: 5)
+
+                Text("This preview uses made-up junction data; the live banner only draws a diagram when the route supplies real signs or lanes.")
+                    .font(KiteText.caption()).foregroundColor(KiteColor.inkSecondary)
+            }
+            .padding(KiteSpace.m)
+        }
+        .background(KiteColor.canvas.ignoresSafeArea())
+        .navigationTitle("HUD preview")
     }
 }

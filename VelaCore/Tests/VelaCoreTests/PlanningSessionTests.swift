@@ -372,6 +372,51 @@ final class PlanningSessionTests: XCTestCase {
         XCTAssertFalse(ready.rerouted)
     }
 
+    func testNavigationGradeIsStricterThanPlanningUsability() {
+        _ = openSession(origin: origin(home, t0))
+        let policy = PlanningLocationPolicy()
+        let planningOnly = policy.usability(of: fix(home, t0), at: t0.addingTimeInterval(20))
+        XCTAssertTrue(planningOnly.canPlan)
+        XCTAssertFalse(planningOnly.isNavigationGrade)
+
+        let navGrade = policy.usability(of: fix(home, t0, accuracy: 20), at: t0.addingTimeInterval(2))
+        XCTAssertTrue(navGrade.isNavigationGrade)
+        XCTAssertFalse(policy.usability(of: fix(home, t0, accuracy: 90), at: t0).isNavigationGrade)
+    }
+
+    func testInvalidCoordinatesFutureClocksAndBadAccuracyNeverBecomeStarts() {
+        var (session, _) = openSession()
+        let policy = PlanningLocationPolicy()
+
+        let nan = PlanningFix(point: LatLng(.nan, home.lng), timestamp: t0, horizontalAccuracy: 5)
+        XCTAssertFalse(nan.hasValidCoordinate)
+        XCTAssertFalse(policy.usability(of: nan, at: t0).canPlan)
+
+        let offEarth = PlanningFix(point: LatLng(91, 200), timestamp: t0, horizontalAccuracy: 5)
+        XCTAssertFalse(offEarth.hasValidCoordinate)
+
+        let zero = PlanningFix(point: LatLng(0, 0), timestamp: t0, horizontalAccuracy: 5)
+        XCTAssertFalse(zero.hasValidCoordinate, "0,0 is not a usable device fix")
+
+        let future = fix(home, t0.addingTimeInterval(30))
+        XCTAssertFalse(future.hasPlausibleTimestamp(at: t0))
+        XCTAssertFalse(policy.usability(of: future, at: t0).canPlan)
+
+        let negative = fix(home, t0, accuracy: -1)
+        XCTAssertFalse(policy.usability(of: negative, at: t0).canPlan)
+
+        let effects = session.location(future, now: t0)
+        XCTAssertTrue(effects.isEmpty || effects.contains { $0.kind == .requestFreshLocation })
+        XCTAssertEqual(session.phase, .searching)
+
+        var approximate = PlanningSession(destinationID: "shop", destination: shop,
+                                          deviceOrigin: origin(home, t0, accuracy: 2000, kind: .approximate))
+        _ = approximate.start(now: t0)
+        let nav = approximate.prepareNavigation(fix: fix(home, t0, accuracy: 2000), now: t0)
+        XCTAssertFalse(nav.canStart)
+        XCTAssertEqual(nav.failure, .impreciseFix)
+    }
+
     func testSignificantMovementWhilePlanningRecalculatesButSmallDriftDoesNot() {
         var (session, _) = openSession(origin: origin(home, t0))
         _ = session.routeLoaded(mode: .drive, requestID: session.requestID, count: 1, now: t0)

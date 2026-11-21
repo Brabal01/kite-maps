@@ -1,6 +1,43 @@
 # Kite Maps iPhone custom build — development progress
 
-Updated: 2026-11-20
+Updated: 2026-11-21
+
+## v30 advanced navigation (branch `iphone-custom-v30-advanced-navigation`, base `bb0cdfe`)
+
+The P0 planning fix from v29 is preserved. v30 adds:
+
+- **NavigationSession 3.0** — one UUID session and an explicit lifecycle
+  (`NavigationState.swift`), integrated into `Navigator`; impossible state
+  combinations are rejected. Guidance now always starts from a
+  navigation-grade fix or enters `waitingForGPS`.
+- **Reroute Engine 3.0** — explicit rerouting/recovered/unavailable states,
+  request cancellation, original route kept while offline, remaining stops and
+  exclusions preserved, arrival/departure evidence unchanged.
+- **AlertCoordinator** — tested direction filtering, de-duplication, priority,
+  hysteresis, cooldown and urgent-maneuver suppression; the HUD no longer sorts
+  alerts inline.
+- **Lane Guidance 3.0** — recommended/suitable/unsuitable/unknown lanes for
+  turns, exits, splits, merges, straight approaches and roundabouts; never
+  invents lanes.
+- **Motorway Junction View** — vector Canvas diagram from real exit signs,
+  lanes and road references; insufficient data shows the ordinary banner.
+- **Road-control policy** — car guidance shows only nearby, direction-plausible
+  lights/stops/crossings; walking and browsing get different sets.
+- **Map Engine 3.0** — seven coherent presets (Classic, Navigation, Minimal,
+  Explore, Transit, Outdoors, Satellite), adaptive labels/POI/buildings, and
+  Navigation mode during driving. MapKit applies the POI/building subset.
+- **HUD 3.0** — Simple, Advanced, Highway and Custom profiles with a live
+  preview.
+- **Saved Journeys** — full trip persistence (origin, destination, stops, mode,
+  notes, preferences), reverse/delete/open, plus bounded GPX import and GPX
+  export of a planned route.
+- **Settings additions** — Public transport page, Diagnostics entry, map
+  presets, HUD, haptics.
+- **Haptics** — optional maneuver/alert cues, respecting Reduce Motion.
+
+Verification for this branch is recorded in `docs/TEST_RESULTS.md` once the v30
+CI run completes. Physical-device items remain in
+`docs/V30_DEVICE_TEST_CHECKLIST.md`.
 
 ## v29 redesign (branch `iphone-custom-v29-redesign`, base v28 `462b575`)
 

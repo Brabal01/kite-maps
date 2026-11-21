@@ -870,6 +870,101 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // MARK: Saved journeys and GPX
+
+    func saveCurrentJourney(name: String? = nil) {
+        guard let d = directions else { return }
+        let title = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallback = "\(d.fromPlace?.name ?? L10n.text("My location")) → \(d.destination.name)"
+        let journey = SavedJourney(name: (title?.isEmpty == false ? title! : fallback),
+                                   origin: d.fromPlace, destination: d.destination,
+                                   stops: d.stops, mode: d.mode,
+                                   avoidTolls: settings.avoidTolls,
+                                   avoidHighways: settings.avoidHighways)
+        settings.savedJourneys.insert(journey, at: 0)
+        notice = L10n.text("Journey saved.")
+    }
+
+    func openSavedJourney(_ journey: SavedJourney) {
+        settings.avoidTolls = journey.avoidTolls
+        settings.avoidHighways = journey.avoidHighways
+        var state = DirectionsState(destination: journey.destination, mode: journey.mode)
+        state.origin = journey.origin
+        state.stops = journey.stops
+        tab = .map
+        detent = .half
+        startPlanning(state)
+        if journey.isGPXTrack {
+            notice = L10n.text("GPX track imported. Kite plans a road route between its ends; this is not turn-by-turn track following.")
+        }
+    }
+
+    func reverseSavedJourney(_ journey: SavedJourney) {
+        guard let index = settings.savedJourneys.firstIndex(where: { $0.id == journey.id }) else { return }
+        let reversed = journey.reversed()
+        settings.savedJourneys[index] = reversed
+        openSavedJourney(reversed)
+    }
+
+    func deleteSavedJourney(_ journey: SavedJourney) {
+        settings.savedJourneys.removeAll { $0.id == journey.id }
+    }
+
+    func importGPX(from url: URL) {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let values = try url.resourceValues(forKeys: [.fileSizeKey])
+            if let size = values.fileSize, size > GPX.maximumBytes {
+                notice = L10n.text("That GPX file is too large. The limit is 5 MB.")
+                return
+            }
+            let data = try Data(contentsOf: url, options: .mappedIfSafe)
+            let track = try GPX.parse(data)
+            guard let first = track.points.first, let last = track.points.last else {
+                notice = L10n.text("That GPX file has no track points.")
+                return
+            }
+            let start = Place(id: "gpx-start-\(track.name)", name: track.name,
+                              location: first.location, source: "gpx")
+            let end = Place(id: "gpx-end-\(track.name)", name: track.name,
+                            location: last.location, source: "gpx")
+            let note = L10n.format("GPX track: %@ km, %@ m climb. This is a track, not turn-by-turn guidance.",
+                                   String(format: "%.1f", track.distanceMeters / 1000),
+                                   String(Int(track.elevationGainMeters.rounded())))
+            let journey = SavedJourney(name: track.name, origin: start, destination: end,
+                                       stops: [], mode: .bike, notes: note,
+                                       isGPXTrack: true)
+            settings.savedJourneys.insert(journey, at: 0)
+            notice = L10n.text("GPX track imported.")
+        } catch {
+            notice = L10n.text("That GPX file could not be read.")
+        }
+    }
+
+    @Published var gpxExport: GPXExport?
+    struct GPXExport: Identifiable {
+        let id = UUID()
+        let url: URL
+        let name: String
+    }
+
+    func prepareGPXExport() {
+        guard let d = directions, let route = d.route else { return }
+        let name = "\(d.fromPlace?.name ?? L10n.text("My location")) – \(d.destination.name)"
+        let data = GPX.export(route, name: name)
+        let safe = name.replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Kite-\(safe).gpx")
+        do {
+            try data.write(to: url, options: .atomic)
+            gpxExport = GPXExport(url: url, name: "\(safe).gpx")
+        } catch {
+            notice = L10n.text("Could not prepare the GPX file.")
+        }
+    }
+
     // MARK: Planning lifecycle
 
     /** Fresh session for a trip, or a changed start/destination. */
@@ -1580,9 +1675,14 @@ final class AppModel: ObservableObject {
         location.cancelPlanningRequest()
         location.setNavigating(true, mode: route.mode.rawValue)
         map?.showsUserLocation = false
-        if let loc = location.last, loc.horizontalAccuracy <= navigationAccuracy(for: route.mode) {
+        // Every real guidance path must begin from a navigation-grade fix, not
+        // a five-minute-old search fix or a manual start.
+        if let loc = location.navigationFix(maximumError: navigationAccuracy(for: route.mode)) {
             n.handle(loc)
             if nav === n { followCamera(n, loc, animated: false) }
+        } else {
+            n.waitForFreshLocation()
+            location.start()
         }
     }
 
