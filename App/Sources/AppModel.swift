@@ -149,6 +149,7 @@ final class AppModel: ObservableObject {
     }
     @Published var nav: Navigator?
     @Published var showLayers = false
+    @Published var showDiagnostics = false
     /** Which page of the dock is open. */
     @Published var tab: AppTab = .map
     /** Live Waze reports in view, for the "Live from Waze" chip; nil until Waze answers. */

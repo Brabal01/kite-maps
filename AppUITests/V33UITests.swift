@@ -64,6 +64,7 @@ final class V33UITests: XCTestCase {
 
         let banner = app.descendants(matching: .any)["simulated-gps-banner"]
         XCTAssertTrue(banner.waitForExistence(timeout: 40), "the simulated drive must be clearly marked.\n\(app.debugDescription)")
+        app.buttons["replay-controls"].tap()
         let pause = app.buttons["replay-pause"]
         XCTAssertTrue(pause.waitForExistence(timeout: 10))
         pause.tap()
@@ -71,7 +72,8 @@ final class V33UITests: XCTestCase {
         let skip = app.buttons["replay-skip"]
         XCTAssertTrue(skip.exists, "a replay can jump to a manoeuvre")
         skip.tap()
-        app.buttons["replay-stop"].tap()
+        app.buttons["replay-stop-detail"].tap()
+        app.buttons["Done"].tap()
         XCTAssertFalse(banner.exists, "stopping the replay removes the banner")
     }
 }

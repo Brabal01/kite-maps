@@ -139,7 +139,8 @@ struct ContentView: View {
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: model.liveCam?.id)
         .overlay(alignment: .top) {
             if let name = model.replayName {
-                SimulatedGPSBanner(name: name) { model.stopReplay() }
+                SimulatedGPSBanner(name: name, stop: { model.stopReplay() },
+                                   openControls: { model.openReplayControls() })
             }
         }
         .alert(item: $model.surveillanceInfo) { camera in
@@ -199,6 +200,10 @@ struct ContentView: View {
         }
         .sheet(isPresented: $model.showLayers) {
             LayersSheet(settings: settings, liveCount: model.wazeLiveCount).kiteType()
+        }
+        .sheet(isPresented: $model.showDiagnostics) {
+            NavigationView { DataDiagnosticsView(model: model).kiteType() }
+                .navigationViewStyle(.stack)
         }
         .fullScreenCover(isPresented: .constant(DemoScript.step?.hasPrefix("svtest") == true)) {
             demoStreetView
@@ -954,7 +959,12 @@ enum DemoScript {
             }
             return
         }
-        if step == "settings" { model.tab = .settings; return }
+        if step == "settings" {
+            model.settings.welcomed = true
+            model.settings.wazeAsked = true
+            model.tab = .settings
+            return
+        }
         if step == "saved" {
             // A few saved places, one with a long name, in the bookmarks list.
             var pub = Place(id: "demo-pub", name: "The Old Bell Traditional Pub, Restaurant and Rooms by the River", location: LatLng(38.5460, -121.7420), source: "demo")
@@ -1379,6 +1389,7 @@ struct StatusCards: View {
 struct SimulatedGPSBanner: View {
     let name: String
     let stop: () -> Void
+    let openControls: () -> Void
 
     var body: some View {
         HStack(spacing: 10) {
@@ -1388,6 +1399,12 @@ struct SimulatedGPSBanner: View {
                 Text(name).font(.caption)
             }
             Spacer(minLength: 8)
+            Button(action: openControls) {
+                Text("Controls").font(.subheadline.weight(.bold))
+                    .padding(.horizontal, 10).frame(minHeight: 44)
+                    .background(Capsule().fill(Color.white.opacity(0.25)))
+            }
+            .accessibilityIdentifier("replay-controls")
             Button(action: stop) {
                 Text("Stop").font(.subheadline.weight(.bold))
                     .padding(.horizontal, 14).frame(minHeight: 44)

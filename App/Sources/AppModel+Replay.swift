@@ -47,6 +47,8 @@ extension AppModel {
         replaySession?.speed = max(0.25, speedFactor)
     }
 
+    func openReplayControls() { showDiagnostics = true }
+
     func pauseReplay() { replaySession?.pause() }
     func resumeReplay() { replaySession?.resume() }
     func skipToNextManeuver() {
