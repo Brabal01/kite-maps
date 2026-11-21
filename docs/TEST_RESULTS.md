@@ -37,31 +37,31 @@
   - the same roundabout and transit screens in dark mode,
   - a transit card at accessibility-extra-large Dynamic Type.
 - The workflow still runs `PlanningUITests` and the launch/safe-mode checks.
-- **v31 CI run 44911447390 passed every step.**
+- **v31 CI run 44928133681 passed every step.**
   - `PlanningUITests`: 1/1 passed.
-  - `V31UITests`: **3/3 passed** — roundabout banner, directional lights,
-    official line chips (86.4 s).
+  - `V31UITests`: **3/3 passed** — roundabout banner (24.8 s), directional
+    lights (18.5 s), official line chips (23.4 s).
   - Screenshots captured: `demo-roundabout.png`,
     `demo-roundaboutuncertain.png`, `demo-signals.png`,
     `demo-transitcolors.png`, `demo-dark-roundabout.png`,
     `demo-dark-transitcolors.png`, `demo-transit-large-type.png`.
   - Screenshot artifact:
-    [Kite-v31-Simulator-Screenshots](https://github.com/Brabal01/kite-maps/actions/runs/44911447390/artifacts/14711051168).
+    [Kite-v31-Simulator-Screenshots](https://github.com/Brabal01/kite-maps/actions/runs/44928133681/artifacts/14716919377).
 
 ### v31 IPA build
 
-- **CI run 44911447422 passed.**
-- Build number **1108**.
-- Full: `Kite-v31-Full.ipa` (8.9 MB) — app `app.vela.ios 0.8.0 (1108)`,
+- **CI run 44928133658 passed.**
+- Build number **1118**.
+- Full: `Kite-v31-Full.ipa` (8.4 MB) — app `app.vela.ios 0.8.0 (1118)`,
   iOS ≥ 16.2, arm64, MapLibre arm64 signed, embedded
-  `app.vela.ios.navigation 0.8.0 (1108)` signed.
-- SideStore: `Kite-v31-SideStore.ipa` (8.7 MB) — same app, no extension.
+  `app.vela.ios.navigation 0.8.0 (1118)` signed.
+- SideStore: `Kite-v31-SideStore.ipa` (8.3 MB) — same app, no extension.
 - Both variants passed the structure checks. Both come from commit
-  `d88e5cb`.
+  `605793f`.
 - Artifacts:
-  [Full IPA](https://github.com/Brabal01/kite-maps/actions/runs/44911447422/artifacts/14709907352),
-  [SideStore IPA](https://github.com/Brabal01/kite-maps/actions/runs/44911447422/artifacts/14709907359),
-  [test results](https://github.com/Brabal01/kite-maps/actions/runs/44911447422/artifacts/14709937318).
+  [Full IPA](https://github.com/Brabal01/kite-maps/actions/runs/44928133658/artifacts/14716234595),
+  [SideStore IPA](https://github.com/Brabal01/kite-maps/actions/runs/44928133658/artifacts/14716900527),
+  [test results](https://github.com/Brabal01/kite-maps/actions/runs/44928133658/artifacts/14716463885).
 - The macOS VelaCore step also ran **336 tests, 0 failures** (no Linux skips).
 
 ### v30 reference
