@@ -76,31 +76,60 @@ public struct TransitLeg: Hashable, Sendable {
     public var isRealtime = false
     /** The vehicle's last reported position, when the live feed provides one. */
     public var liveVehicle: TransitVehicle?
+    /** The line's resolved identity: official colors, mode and provider, when the planner gave them. */
+    public var lineIdentity: TransitLineIdentity?
     public var arrivalPoint: LatLng? { destinationStop ?? path.last }
+
+    /** The line as the operator means it, resolving what the leg carries when no identity was set. */
+    public var identity: TransitLineIdentity {
+        lineIdentity ?? TransitLineIdentity.resolve(
+            shortName: line, headsign: headsign, mode: TransitMode(mode: mode),
+            officialColor: color, officialTextColor: textColor,
+            provider: liveProvider, agencyID: agencyId, routeID: routeId,
+            operatorName: agency, source: .provider, freshness: liveFreshness)
+    }
+    /** The vehicle kind, kept separate from the broad planner family. */
+    public var transitMode: TransitMode { lineIdentity?.mode ?? TransitMode(mode: mode) }
+    /** The official line color when one exists, else a neutral color for the mode. */
+    public var displayColor: UInt32 { identity.color }
+    public var displayTextColor: UInt32 { identity.textColor }
+    /** True when the color came from the operator, not from Kite's mode fallback. */
+    public var colorIsOfficial: Bool { identity.colorIsOfficial }
 
     public init(isWalk: Bool, mode: String, line: String = "", color: UInt32? = nil, textColor: UInt32? = nil,
                 headsign: String? = nil, fromName: String = "", toName: String = "", depart: Date? = nil,
                 arrive: Date? = nil, durationSeconds: Double = 0, distanceMeters: Double = 0, stops: Int = 0,
-                delayMinutes: Int? = nil, path: [LatLng] = []) {
+                delayMinutes: Int? = nil, path: [LatLng] = [], lineIdentity: TransitLineIdentity? = nil) {
         self.isWalk = isWalk; self.mode = mode; self.line = line; self.color = color; self.textColor = textColor
         self.headsign = headsign; self.fromName = fromName; self.toName = toName; self.depart = depart
         self.arrive = arrive; self.durationSeconds = durationSeconds; self.distanceMeters = distanceMeters
         self.stops = stops; self.delayMinutes = delayMinutes; self.path = path
+        self.lineIdentity = lineIdentity
     }
 
     /** What kind of vehicle, for an icon. */
     public var vehicle: Vehicle { Vehicle(mode) }
 
     public enum Vehicle: Equatable, Sendable {
-        case walk, bus, metro, tram, train, ferry, other
+        case walk, bus, trolleybus, coach, tram, lightRail, metro, train, ferry
+        case funicular, cableCar, aerialLift, monorail, bike, other
         init(_ mode: String) {
-            switch mode {
-            case "WALK", "BIKE", "CAR", "RENTAL": self = .walk
-            case "BUS", "COACH", "ODM", "FLEX": self = .bus
-            case "SUBWAY", "METRO": self = .metro
-            case "TRAM", "CABLE_CAR", "FUNICULAR", "AERIAL_LIFT": self = .tram
-            case "FERRY": self = .ferry
-            default: self = mode.contains("RAIL") || mode == "SUBURBAN" || mode == "LONG_DISTANCE" ? .train : .other
+            switch TransitMode(mode: mode) {
+            case .walk: self = .walk
+            case .bus: self = .bus
+            case .trolleybus: self = .trolleybus
+            case .coach: self = .coach
+            case .tram: self = .tram
+            case .lightRail: self = .lightRail
+            case .metro, .subway: self = .metro
+            case .suburbanRail, .regionalTrain, .longDistanceTrain, .highSpeedRail: self = .train
+            case .ferry: self = .ferry
+            case .funicular: self = .funicular
+            case .cableCar: self = .cableCar
+            case .aerialLift: self = .aerialLift
+            case .monorail: self = .monorail
+            case .bike: self = .bike
+            case .other: self = .other
             }
         }
     }
@@ -200,7 +229,16 @@ public enum Transitous {
         public var scheduledTrack: String?
         public var stopCode: String?
         public var isRealtime: Bool = false
+        public var routeId: String? = nil
+        public var agencyId: String? = nil
         public var vehicle: TransitLeg.Vehicle { TransitLeg.Vehicle(mode) }
+        /// The same identity the trip cards and map use, so a line keeps one color everywhere.
+        public var identity: TransitLineIdentity {
+            TransitLineIdentity.resolve(shortName: line, headsign: headsign, mode: TransitMode(mode: mode),
+                                        officialColor: color, officialTextColor: textColor,
+                                        provider: "transitous.org", agencyID: agencyId, routeID: routeId,
+                                        source: .provider, freshness: isRealtime ? .live : .scheduled)
+        }
     }
 
     /**
@@ -259,52 +297,79 @@ public enum Transitous {
                              track: st["track"] as? String ?? place["track"] as? String,
                              scheduledTrack: st["scheduledTrack"] as? String ?? place["scheduledTrack"] as? String,
                              stopCode: st["stopCode"] as? String ?? place["stopCode"] as? String,
-                             isRealtime: st["realTime"] as? Bool == true)
+                             isRealtime: st["realTime"] as? Bool == true,
+                             routeId: st["routeId"] as? String, agencyId: st["agencyId"] as? String)
         }
     }
 
-    /** A stretch of metro or rail track with its lines' color, for the transit map layer. */
+    /** A stretch of metro, tram, rail or bus line, for the transit map layer. */
     public struct Line: Sendable {
         public var points: [LatLng]
         public var color: UInt32
         public var metro: Bool
         public var names: [String]
+        public var mode: TransitMode = .other
+        /** Sideways offset in pixels, so lines sharing one track are all visible. */
+        public var offset: Double = 0
+        /** Stable line identity for a shared track's legend and tests. */
+        public var routeKey: String?
     }
 
     /**
-     * Metro, tram and train lines in a box, from Transitous' route map (Vela's transit layer).
-     * Buses are left out. Below zoom 9 the service sends long-distance rail only.
+     * Metro, tram, rail and (from close zoom) bus lines in a box, from Transitous' route map.
+     * Below zoom 9 the service sends long-distance rail only. A track shared by several lines is
+     * returned once per line, with a pixel offset, so the map never pretends it is only the first
+     * line's color.
      */
     public static func lines(south: Double, west: Double, north: Double, east: Double, zoom: Int) async -> [Line]? {
         guard let url = URL(string: "\(base)/api/experimental/map/routes?min=\(south),\(west)&max=\(north),\(east)&zoom=\(zoom)"),
               let (data, resp) = try? await session.data(from: url),
               (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
-        return parseLines(data)
+        return parseLines(data, includeBuses: zoom >= 13)
     }
 
-    public static func parseLines(_ data: Data) -> [Line] {
+    public static func parseLines(_ data: Data, includeBuses: Bool = false) -> [Line] {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let routes = root["routes"] as? [[String: Any]],
               let polys = root["polylines"] as? [[String: Any]] else { return [] }
         var out: [Line] = []
         for p in polys {
             let rs = (p["routeIndexes"] as? [Int] ?? []).compactMap { routes.indices.contains($0) ? routes[$0] : nil }
-            let rail = rs.filter { r in
-                let v = TransitLeg.Vehicle(r["mode"] as? String ?? "")
-                return v == .metro || v == .tram || v == .train
-            }
-            guard !rail.isEmpty, let enc = p["polyline"] as? [String: Any], let pts = enc["points"] as? String else { continue }
-            let color = rail.lazy.compactMap { r in hex((r["transitRoutes"] as? [[String: Any]])?.first?["color"]) }.first
-            let metro = rail.contains { TransitLeg.Vehicle($0["mode"] as? String ?? "") != .train }
-            let names = rail.compactMap { ($0["transitRoutes"] as? [[String: Any]])?.first?["shortName"] as? String }
+            guard let enc = p["polyline"] as? [String: Any], let pts = enc["points"] as? String else { continue }
             let precision = min(7, max(5, (enc["precision"] as? Int) ?? 6))
-            let line = Geo.decodePolyline(pts, precision: pow(10, Double(precision)))
-            guard line.count >= 2 else { continue }
+            let points = Geo.decodePolyline(pts, precision: pow(10, Double(precision)))
+            guard points.count >= 2 else { continue }
+            let length = Geo.length(points)
             // A feed without shapes draws straight chords between distant stops: leave those out.
-            let len = Geo.length(line)
-            if !metro, len / Double(line.count - 1) > 700 { continue }
-            out.append(Line(points: line, color: color ?? (metro ? 0x5F6368 : 0x8E8E93), metro: metro,
-                            names: Array(Set(names)).sorted()))
+            let anyMetro = rs.contains {
+                let m = TransitMode(mode: $0["mode"] as? String ?? "")
+                return m == .metro || m == .subway
+            }
+            // A two-point "shape" is a straight chord between stops, not a real alignment.
+            if !anyMetro, points.count == 2, length > 700 { continue }
+
+            // One entry per distinct line on this geometry.
+            var seen = Set<String>()
+            var lines: [(mode: TransitMode, color: UInt32, name: String, key: String)] = []
+            for r in rs {
+                let mode = TransitMode(mode: r["mode"] as? String ?? "")
+                let shown = mode.isRail || (includeBuses && [.bus, .trolleybus, .coach, .ferry].contains(mode))
+                guard shown else { continue }
+                let tr = (r["transitRoutes"] as? [[String: Any]])?.first ?? [:]
+                let color = hex(tr["color"]) ?? mode.fallbackColor
+                let name = (tr["shortName"] as? String) ?? (tr["longName"] as? String) ?? mode.shortLabel
+                let key = [mode.rawValue, name, String(color), (tr["routeId"] as? String) ?? ""].joined(separator: "|")
+                guard seen.insert(key).inserted else { continue }
+                lines.append((mode, color, name, key))
+            }
+            guard !lines.isEmpty else { continue }
+            let n = lines.count
+            for (i, line) in lines.enumerated() {
+                out.append(Line(points: points, color: line.color, metro: line.mode == .metro || line.mode == .subway,
+                                names: [line.name], mode: line.mode,
+                                offset: n > 1 ? (Double(i) - Double(n - 1) / 2) * 2.2 : 0,
+                                routeKey: line.key))
+            }
         }
         return out
     }
@@ -385,6 +450,14 @@ public enum Transitous {
         out.color = hex(l["routeColor"])
         out.textColor = hex(l["routeTextColor"])
         out.headsign = string(l["headsign"]) ?? (l["tripTo"] as? [String: Any]).flatMap { string($0["name"]) }
+        let routeType = (l["routeType"] as? NSNumber)?.intValue ?? (l["routeType"] as? Int)
+        out.lineIdentity = TransitLineIdentity.resolve(
+            shortName: out.line, longName: string(l["routeLongName"]), headsign: out.headsign,
+            mode: TransitMode(gtfsRouteType: routeType ?? -1) ?? TransitMode(mode: mode),
+            routeType: routeType, officialColor: out.color, officialTextColor: out.textColor,
+            provider: "transitous.org", feedID: string(l["feedId"]) ?? string(l["source"]),
+            agencyID: out.agencyId, routeID: out.routeId, operatorName: out.agency,
+            source: .provider, freshness: out.liveFreshness)
         out.stops = intermediate.count + 1
         if l["realTime"] as? Bool == true {
             if let start, let scheduled = date(l["scheduledStartTime"]) {
