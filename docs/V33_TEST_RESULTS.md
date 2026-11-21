@@ -50,6 +50,7 @@ Linux runner (single process, no network, wall clock, pure algorithms — **not*
 | `DiagnosticRedactor.sanitize` | 20,000 | 6.43 |
 | `OfflineRouteSnapshot` encode + restore | 2,000 | 1246.64 |
 | `SavedJourney` decode | 10,000 | 24.11 |
+| `RouteControlCache` store + load | 10,000 | 1.18 |
 
 These are baseline measurements, not claims of improvement. No before/after percentage is asserted.
 

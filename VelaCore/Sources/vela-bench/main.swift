@@ -75,6 +75,15 @@ results.append(measure("SavedJourney decode", iterations: 10_000) {
     _ = try? JSONDecoder().decode(SavedJourney.self, from: journeyData)
 })
 
+let controlCache = RouteControlCache(lifetime: 3600, capacity: 48)
+var cacheCounter = 0
+results.append(measure("RouteControlCache store + load", iterations: 10_000) {
+    cacheCounter += 1
+    let key = "bench-\(cacheCounter)"
+    controlCache.store([], for: key)
+    _ = controlCache.controls(for: key)
+})
+
 var memory: [String: Any] = ["source": "unavailable"]
 #if os(Linux)
 if let status = try? String(contentsOfFile: "/proc/self/status", encoding: .utf8),
