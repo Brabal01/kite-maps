@@ -17,6 +17,10 @@ final class Navigator: ObservableObject {
     @Published private(set) var progress: RouteTracker.Progress?
     @Published private(set) var rerouting = false
     @Published private(set) var arrived = false
+    /** One authoritative lifecycle for this guidance session. */
+    @Published private(set) var navigationState: NavigationState = .preparing
+    let sessionID: UUID
+    private var stateMachine: NavigationSessionState
     /** What the voice says: everything, only warnings (cameras, police, hazards), or nothing. */
     @Published var voiceMode: VoiceMode {
         didSet {
@@ -209,6 +213,9 @@ final class Navigator: ObservableObject {
     private var spokenAircraft: Set<String> = []
 
     init(route: Route, destination: Place, stops: [Place] = [], settings: AppSettings, coverage: RouteEventCoverage? = nil) {
+        let machine = NavigationSessionState()
+        stateMachine = machine
+        sessionID = machine.id
         self.route = route
         self.destination = destination
         self.stops = stops
@@ -219,6 +226,8 @@ final class Navigator: ObservableObject {
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .voicePrompt, options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers])
         UIApplication.shared.isIdleTimerDisabled = true
         speech.delegate = speechDone
+        _ = stateMachine.send(.started)
+        navigationState = stateMachine.state
         let first = route.maneuvers.first { $0.type != .depart } ?? route.maneuvers.first
         bindCoverage(coverage.flatMap { $0.routeID == route.id ? $0 : nil } ?? RouteEventCoverage(route))
         loadCameras()
@@ -231,6 +240,7 @@ final class Navigator: ObservableObject {
                 let lost = gap > 8
                 if lost != self.gpsLost { self.gpsLost = lost }
                 self.estimate(gap)
+                self.syncNavigationState()
             }
         }
         // The first step with how far it is ("In 300 yards, turn left"), so a turn a little way off
@@ -248,6 +258,8 @@ final class Navigator: ObservableObject {
 
     func stop() {
         stopped = true
+        _ = stateMachine.send(.ended)
+        navigationState = stateMachine.state
         rerouteTask?.cancel()
         trafficTask?.cancel()
         trafficTask = nil
@@ -392,10 +404,21 @@ final class Navigator: ObservableObject {
     /** [estimated]: a position worked out along the route while GPS is gone, not a real fix. */
     func waitForFreshLocation() {
         gpsLost = true
+        syncNavigationState()
+    }
+
+    /** Keeps the explicit state machine in step with the existing navigation facts. */
+    private func syncNavigationState() {
+        let next = stateMachine.update(hasProgress: progress != nil, arrived: arrived,
+                                       rerouting: rerouting, gpsLost: gpsLost,
+                                       estimating: estimating, offRoute: progress?.offRoute ?? false,
+                                       remainingMeters: progress?.remainingMeters)
+        if navigationState != next { navigationState = next }
     }
 
     func handle(_ loc: CLLocation, estimated: Bool = false) {
         guard !arrived else { return }
+        defer { syncNavigationState() }
         if !estimated {
             realFixAt = loc.timestamp
             gpsLost = false
@@ -1209,6 +1232,7 @@ final class Navigator: ObservableObject {
     func avoidSegment(_ segment: RouteExclusion, completion: @escaping (Bool) -> Void) {
         guard !rerouting, !arrived, let fix = lastFix else { completion(false); return }
         rerouting = true
+        syncNavigationState()
         rerouteRequest += 1
         let request = rerouteRequest
         let from = latLng(fix), to = destination.location
@@ -1221,12 +1245,17 @@ final class Navigator: ObservableObject {
                                                  via: stops, heading: heading, alternatives: true)
             guard !stopped, !arrived, request == rerouteRequest else { return }
             rerouting = false
+            syncNavigationState()
             guard let next = result.routes.filter({ segment.allows($0) }).min(by: { $0.durationSeconds < $1.durationSeconds }) else {
+                _ = stateMachine.send(.rerouteFailed)
+                syncNavigationState()
                 completion(false)
                 return
             }
             exclusion = segment
             adopt(next)
+            _ = stateMachine.send(.rerouteSucceeded)
+            syncNavigationState()
             completion(true)
         }
     }
@@ -1239,6 +1268,7 @@ final class Navigator: ObservableObject {
     private func reroute(from loc: CLLocation, quiet: Bool = false, adding: Place? = nil) {
         Self.trace.info("reroute from \(String(format: "%.5f,%.5f", loc.coordinate.latitude, loc.coordinate.longitude), privacy: .public) heading \(self.heading(loc).map { Int($0) } ?? -1)")
         rerouting = true
+        syncNavigationState()
         lastReroute = Date()
         if !Connectivity.shared.online {
             // Without signal there's no new route to get: say so once, not every few seconds.
@@ -1274,6 +1304,8 @@ final class Navigator: ObservableObject {
             // Parked at the destination while the new route was loading: the trip is over, keep it that way.
             if self.arrived { return }
             guard let fresh = r.routes.filter({ self.exclusion?.allows($0) ?? true }).min(by: { $0.durationSeconds < $1.durationSeconds }) else {
+                _ = self.stateMachine.send(.rerouteFailed)
+                self.syncNavigationState()
                 if let adding {
                     self.stopFailed = true
                     self.speakTemplate("Couldn't add a stop at %@. Carrying on to %@.", adding.name, self.stops.first?.name ?? self.destination.name)
@@ -1283,6 +1315,8 @@ final class Navigator: ObservableObject {
             self.toldNoSignal = false
             if let adding { self.stops.insert(adding, at: 0) }
             self.adopt(fresh)
+            _ = self.stateMachine.send(.rerouteSucceeded)
+            self.syncNavigationState()
             if !quiet { self.sayNewRoute() }
         }
     }
@@ -1369,6 +1403,10 @@ final class Navigator: ObservableObject {
         Self.log.info("say: \(said, privacy: .public)")
         // Test drives on a Mac (launched with -KiteSilent): logged, never played out loud.
         if Self.silent { return }
+        if AppSettings.shared.haptics, !UIAccessibility.isReduceMotionEnabled {
+            let generator = UIImpactFeedbackGenerator(style: alert || urgent ? .heavy : .light)
+            generator.impactOccurred()
+        }
         let u = AVSpeechUtterance(string: said)
         u.voice = czech ? AVSpeechSynthesisVoice(language: "cs-CZ") : Self.voice
         u.rate = AVSpeechUtteranceDefaultSpeechRate * 0.95

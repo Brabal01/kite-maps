@@ -60,6 +60,22 @@ struct DirectionsOverlay: View {
                                                    set: { if !$0 { model.transitStartNotice = nil } })) {
                 Button("OK") { model.transitStartNotice = nil }
             } message: { Text(L10n.text(model.transitStartNotice ?? "")) }
+            .sheet(item: $model.gpxExport) { export in
+                VStack(spacing: 18) {
+                    Image(systemName: "map").font(.system(size: 42, weight: .semibold))
+                        .foregroundColor(KiteColor.accentText)
+                    Text(L10n.text("Export GPX")).font(KiteText.title())
+                    Text(export.name).font(KiteText.caption()).foregroundColor(KiteColor.inkSecondary)
+                    ShareLink(item: export.url) {
+                        Label(L10n.text("Share .gpx file"), systemImage: "square.and.arrow.up")
+                    }
+                    .buttonStyle(KitePrimaryButtonStyle(height: 52))
+                    Button(L10n.text("Done")) { model.gpxExport = nil }
+                        .font(KiteText.label(16))
+                }
+                .padding(24)
+                .presentationDetents([.height(300)])
+            }
         }
     }
 }
@@ -296,6 +312,12 @@ struct TripHeader: View {
 
     private var optionsMenu: some View {
         Menu {
+            Button { model.saveCurrentJourney() } label: {
+                Label(L10n.text("Save journey"), systemImage: "bookmark")
+            }
+            Button { model.prepareGPXExport() } label: {
+                Label(L10n.text("Export GPX"), systemImage: "square.and.arrow.up")
+            }
             if model.directions?.mode == .walk {
                 Picker("Walking speed", selection: $walkingSpeed) {
                     ForEach(4...16, id: \.self) { step in

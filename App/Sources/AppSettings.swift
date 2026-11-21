@@ -95,10 +95,26 @@ final class AppSettings: ObservableObject {
     var lastMapCenter: LatLng? { didSet { save(lastMapCenter, "lastMapCenter") } }
     var lastMapZoom: Double { didSet { d.set(lastMapZoom, forKey: "lastMapZoom") } }
     @Published var voice: Bool { didSet { d.set(voice, forKey: "voice") } }
+    /** Optional haptic taps for maneuvers and alerts; off when the user turns it off. */
+    @Published var haptics: Bool { didSet { d.set(haptics, forKey: "haptics") } }
     /** The speaker button was last left on "Alerts only" (cameras and police, no turns). */
     @Published var voiceAlertsOnly: Bool { didSet { d.set(voiceAlertsOnly, forKey: "voiceAlertsOnly") } }
     @Published var traffic: Bool { didSet { d.set(traffic, forKey: "traffic") } }
     @Published var satellite: Bool { didSet { d.set(satellite, forKey: "satellite") } }
+    /** One coherent map look; the old individual switches remain readable and additive. */
+    @Published var mapPreset: MapPreset {
+        didSet { d.set(mapPreset.rawValue, forKey: "mapPreset") }
+    }
+    var mapPresetProfile: MapPresetProfile { MapPresetCatalog.profile(for: mapPreset) }
+    /** Navigation HUD 3.0: one coherent density choice. */
+    @Published var hudMode: HUDMode { didSet { d.set(hudMode.rawValue, forKey: "hudMode") } }
+    @Published var hudCustomLanes: Bool { didSet { d.set(hudCustomLanes, forKey: "hudCustomLanes") } }
+    @Published var hudCustomThen: Bool { didSet { d.set(hudCustomThen, forKey: "hudCustomThen") } }
+    @Published var hudCustomJunction: Bool { didSet { d.set(hudCustomJunction, forKey: "hudCustomJunction") } }
+    var hudProfile: HUDProfile {
+        HUDCatalog.profile(for: hudMode, customLanes: hudCustomLanes,
+                           customThen: hudCustomThen, customJunction: hudCustomJunction)
+    }
     /** Hill shading, and metro/rail lines in their colors. */
     @Published var terrain: Bool { didSet { d.set(terrain, forKey: "terrain") } }
     @Published var transitLines: Bool { didSet { d.set(transitLines, forKey: "transitLines") } }
@@ -181,6 +197,8 @@ final class AppSettings: ObservableObject {
     @Published var welcomed: Bool { didSet { d.set(welcomed, forKey: "welcomed") } }
     @Published var defaultMode: TravelMode { didSet { d.set(defaultMode.rawValue, forKey: "defaultMode") } }
     @Published var saved: [Place] { didSet { save(saved, "saved") } }
+    /** Complete journeys the user saved, separate from an interrupted drive. */
+    @Published var savedJourneys: [SavedJourney] { didSet { save(savedJourneys, "savedJourneys") } }
     @Published var recents: [String] { didSet { d.set(recents, forKey: "recents") } }
     /** Places you opened lately, newest first. */
     @Published var recentPlaces: [Place] { didSet { save(recentPlaces, "recentPlaces") } }
@@ -195,9 +213,15 @@ final class AppSettings: ObservableObject {
         lastMapCenter = d.data(forKey: "lastMapCenter").flatMap { try? JSONDecoder().decode(LatLng.self, from: $0) }
         lastMapZoom = d.object(forKey: "lastMapZoom") as? Double ?? 0
         voice = d.object(forKey: "voice") as? Bool ?? true
+        haptics = d.object(forKey: "haptics") as? Bool ?? true
         voiceAlertsOnly = d.bool(forKey: "voiceAlertsOnly")
         traffic = d.object(forKey: "traffic") as? Bool ?? true
         satellite = d.bool(forKey: "satellite")
+        mapPreset = MapPreset(rawValue: d.string(forKey: "mapPreset") ?? "") ?? .classic
+        hudMode = HUDMode(rawValue: d.string(forKey: "hudMode") ?? "") ?? .advanced
+        hudCustomLanes = d.object(forKey: "hudCustomLanes") as? Bool ?? true
+        hudCustomThen = d.object(forKey: "hudCustomThen") as? Bool ?? true
+        hudCustomJunction = d.object(forKey: "hudCustomJunction") as? Bool ?? true
         terrain = d.bool(forKey: "terrain")
         transitLines = d.bool(forKey: "transitLines")
         avoidTolls = d.bool(forKey: "avoidTolls")
@@ -244,6 +268,8 @@ final class AppSettings: ObservableObject {
         welcomed = d.bool(forKey: "welcomed") || d.object(forKey: "saved") != nil
         defaultMode = TravelMode(rawValue: d.integer(forKey: "defaultMode")) ?? .drive
         saved = (d.data(forKey: "saved")).flatMap { try? JSONDecoder().decode([Place].self, from: $0) } ?? []
+        savedJourneys = (d.data(forKey: "savedJourneys"))
+            .flatMap { try? JSONDecoder().decode([SavedJourney].self, from: $0) } ?? []
         recents = d.stringArray(forKey: "recents") ?? []
         recentPlaces = d.data(forKey: "recentPlaces").flatMap { try? JSONDecoder().decode([Place].self, from: $0) } ?? []
         // The OpenWeb Ninja key and counter from 0.7.3, no longer used: don't leave the key on the phone.
@@ -257,6 +283,29 @@ final class AppSettings: ObservableObject {
 
     private func save<T: Encodable>(_ v: T, _ key: String) {
         if let data = try? JSONEncoder().encode(v) { d.set(data, forKey: key) }
+    }
+
+    /** Apply one preset as a coherent set of map choices, without deleting old settings. */
+    func applyMapPreset(_ preset: MapPreset) {
+        mapPreset = preset
+        satellite = preset == .satellite
+        switch preset {
+        case .outdoors:
+            terrain = true
+            transitLines = false
+        case .transit:
+            terrain = false
+            transitLines = true
+        case .minimal, .navigation:
+            terrain = false
+            transitLines = false
+        case .satellite:
+            terrain = false
+            transitLines = false
+        case .classic, .explore:
+            terrain = false
+            transitLines = false
+        }
     }
 
     /** Forget the restored browse camera (used by tests and by "centre on me"). */

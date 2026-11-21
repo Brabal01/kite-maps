@@ -1,5 +1,6 @@
 import MapLibre
 import UIKit
+import VelaCore
 
 /** Restyles the Liberty basemap while preserving its layers and zoom ranges. */
 enum MapStyler {
@@ -50,6 +51,50 @@ enum MapStyler {
         waterLabel: UIColor(hex: 0x296788), roadLabel: UIColor(hex: 0x4B565E), halo: UIColor(hex: 0xF9F7EF))
 
     private static func c(_ u: UIColor) -> NSExpression { NSExpression(forConstantValue: u) }
+
+    /**
+     Apply a v30 map preset without rebuilding the style. Only the categories
+     the preset owns are changed; everything else keeps MapLibre's own rules.
+     */
+    static func preset(_ style: MLNStyle, preset: MapPreset) {
+        let p = MapPresetCatalog.profile(for: preset)
+        for layer in style.layers {
+            let id = layer.identifier.lowercased()
+            if id.hasPrefix("vela") { continue }
+            if let symbol = layer as? MLNSymbolStyleLayer {
+                if id.contains("poi") || id.contains("airport") {
+                    symbol.isVisible = p.showPOI
+                } else if id.contains("housenumber") {
+                    symbol.isVisible = p.showHouseNumbers
+                } else if id.contains("rail") || id.contains("transit") {
+                    symbol.isVisible = p.showTransit
+                } else if id.contains("road_shield") || id.contains("road-label") {
+                    symbol.isVisible = p.showMinorLabels
+                } else if id.contains("minor") || id.contains("place_other") {
+                    symbol.isVisible = p.showMinorLabels
+                }
+            } else if let fill = layer as? MLNFillStyleLayer {
+                if id == "building" {
+                    fill.isVisible = p.showBuildings
+                }
+            } else if let extrusion = layer as? MLNFillExtrusionStyleLayer, id == "building-3d" {
+                extrusion.isVisible = p.showBuildings && p.show3DBuildings
+            } else if let line = layer as? MLNLineStyleLayer {
+                if id.contains("path") || id.contains("pedestrian") {
+                    line.isVisible = p.showPaths
+                } else if id.contains("rail") {
+                    line.isVisible = p.showTransit
+                } else if id.hasPrefix("road_") || id.hasPrefix("bridge_") || id.hasPrefix("tunnel_") {
+                    let major = id.contains("motorway") || id.contains("trunk") || id.contains("primary")
+                    if p.dimMinorRoads, !major {
+                        line.lineOpacity = NSExpression(forConstantValue: 0.58)
+                    } else {
+                        line.lineOpacity = NSExpression(forConstantValue: 1)
+                    }
+                }
+            }
+        }
+    }
 
     static func apply(_ style: MLNStyle, dark: Bool) {
         let p = dark ? Self.dark : Self.light

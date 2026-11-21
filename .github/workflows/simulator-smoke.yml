@@ -3,9 +3,9 @@ name: iOS simulator smoke test
 on:
   workflow_dispatch:
   push:
-    branches: [iphone-custom-v29-redesign]
+    branches: [iphone-custom-v30-advanced-navigation]
   pull_request:
-    branches: [iphone-custom-v29-redesign]
+    branches: [iphone-custom-v29-redesign, iphone-custom-v30-advanced-navigation]
 
 permissions:
   contents: read
@@ -180,7 +180,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Kite-v29-Simulator-Screenshots
+          name: Kite-v30-Simulator-Screenshots
           path: |
             demo-*.png
             screenshots-check.txt
@@ -189,7 +189,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: simulator-smoke-logs
+          name: simulator-smoke-logs-v30
           path: |
             simulator-build.log
             planning-ui-test.log

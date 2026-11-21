@@ -122,9 +122,15 @@ public enum LocationUsability: Equatable, Sendable {
         }
     }
 
-    /// A route kept from this fix may be started in navigation without asking for a new fix.
+    /**
+     A route kept from this fix may be started in navigation without asking for
+     a new one. Planning "usable" is deliberately looser than this: 30 s and
+     250 m can plan a preview, never guide a car.
+     */
     public var isNavigationGrade: Bool {
-        if case .usable = self { return true }
+        if case .usable(let age, let accuracy) = self {
+            return age <= 8 && accuracy <= 60
+        }
         return false
     }
 
@@ -171,6 +177,19 @@ public struct PlanningFix: Equatable, Sendable {
         self.timestamp = timestamp
         self.horizontalAccuracy = horizontalAccuracy
         self.fromDevice = fromDevice
+    }
+
+    /** Reject a damaged sensor answer before it can become a route start. */
+    public var hasValidCoordinate: Bool {
+        point.lat.isFinite && point.lng.isFinite &&
+            (-90...90).contains(point.lat) && (-180...180).contains(point.lng) &&
+            !(point.lat == 0 && point.lng == 0)
+    }
+
+    /** A fix stamped far in the future is a broken clock, not a current position. */
+    public func hasPlausibleTimestamp(at now: Date) -> Bool {
+        let ahead = timestamp.timeIntervalSince(now)
+        return ahead <= 2
     }
 }
 
@@ -232,8 +251,12 @@ public struct PlanningLocationPolicy: Equatable, Sendable {
     public init() {}
 
     public func usability(of fix: PlanningFix, at now: Date) -> LocationUsability {
-        usability(point: fix.point, timestamp: fix.timestamp,
-                  accuracy: fix.horizontalAccuracy, now: now)
+        guard fix.hasValidCoordinate, fix.hasPlausibleTimestamp(at: now) else {
+            return .imprecise(age: max(0, now.timeIntervalSince(fix.timestamp)),
+                              accuracy: fix.horizontalAccuracy)
+        }
+        return usability(point: fix.point, timestamp: fix.timestamp,
+                         accuracy: fix.horizontalAccuracy, now: now)
     }
 
     public func usability(of origin: PlanningOrigin, at now: Date) -> LocationUsability {
@@ -245,7 +268,13 @@ public struct PlanningLocationPolicy: Equatable, Sendable {
     }
 
     public func usability(point: LatLng?, timestamp: Date?, accuracy: Double, now: Date) -> LocationUsability {
-        guard point != nil, let timestamp else { return .missing }
+        guard let point, let timestamp else { return .missing }
+        guard point.lat.isFinite, point.lng.isFinite,
+              (-90...90).contains(point.lat), (-180...180).contains(point.lng),
+              !(point.lat == 0 && point.lng == 0) else { return .missing }
+        guard timestamp.timeIntervalSince(now) <= 2 else {
+            return .imprecise(age: 0, accuracy: accuracy)
+        }
         guard accuracy >= 0, accuracy.isFinite else {
             return .imprecise(age: 0, accuracy: accuracy)
         }
@@ -269,7 +298,8 @@ public struct PlanningLocationPolicy: Equatable, Sendable {
         guard let timestamp else { return false }
         let age = now.timeIntervalSince(timestamp)
         return (-2...navigationMaximumAge).contains(age) &&
-            (0...navigationMaximumAccuracy).contains(accuracy)
+            (0...navigationMaximumAccuracy).contains(accuracy) &&
+            accuracy.isFinite
     }
 
     /** Whether a newer fix should move the snapshotted start, or only refresh its age. */
@@ -764,7 +794,8 @@ public struct PlanningSession: Equatable, Sendable {
                                          origin: origin, failure: .impreciseFix,
                                          effects: [requestLocation(.navigation, at: now)])
         }
-        guard policy.acceptsForNavigation(timestamp: fix.timestamp,
+        guard fix.hasValidCoordinate, fix.hasPlausibleTimestamp(at: now),
+              policy.acceptsForNavigation(timestamp: fix.timestamp,
                                           accuracy: fix.horizontalAccuracy, now: now) else {
             return NavigationPreparation(canStart: false, rerouted: false, requestID: requestID,
                                          origin: origin, failure: .impreciseFix,

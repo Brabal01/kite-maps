@@ -3,6 +3,32 @@
 Every version of Kite Maps, newest first. The small number goes up for fixes and polish, and
 the middle number for big milestones.
 
+## v30 advanced navigation (iPhone custom, branch `iphone-custom-v30-advanced-navigation`)
+
+Built on the v29 planning fix (`bb0cdfe`); the app version stays 0.8.0 until
+the v30 release number is chosen.
+
+- **NavigationSession 3.0:** explicit lifecycle and session ID, navigation-grade
+  start guard, no illogical GPS/reroute/arrival combinations.
+- **Reroute Engine 3.0:** cancellable generations, offline route preservation,
+  explicit rerouting/recovered/unavailable states, stops and preferences kept.
+- **AlertCoordinator:** one tested priority engine with direction filtering,
+  de-duplication, hysteresis, cooldown and maneuver protection.
+- **Lane Guidance 3.0:** straight approaches, merges/splits, exits and
+  roundabouts; recommended/suitable/unknown lanes; no invented lanes.
+- **Motorway Junction View:** vector diagram from real exit signs, lanes and road
+  references, with destinations, exit number, lanes and the follow-up turn.
+- **Map Engine 3.0:** Classic, Navigation, Minimal, Explore, Transit, Outdoors
+  and Satellite presets; adaptive POI/labels/buildings; 3D buildings stay on
+  during guidance; MapKit applies the compatible subset.
+- **HUD 3.0:** Simple, Advanced, Highway and Custom, with a live preview.
+- **Saved Journeys and GPX:** save/reverse/delete complete trips; bounded GPX
+  import and route export, clearly labelled as a track rather than turn-by-turn.
+- **Road controls:** direction- and mode-aware traffic-light/stop/crossing
+  policy; unknown direction is not shown as our light.
+- **Haptics:** optional maneuver/alert cues respecting Reduce Motion.
+- **Settings:** map presets, HUD, haptics, Public transport and Diagnostics.
+
 ## 0.8.0 (iPhone custom, v29)
 
 Kite Maps 2.0: a redesign that also fixes the packaging.

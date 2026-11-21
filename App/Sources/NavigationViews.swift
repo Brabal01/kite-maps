@@ -25,29 +25,21 @@ struct NavigationOverlay: View {
     @ObservedObject private var settings = AppSettings.shared
     /** The warning shown for a few seconds after tapping the "also ahead" pill. */
     @State private var peek: NavAlert?
+    @StateObject private var alertStore = NavAlertStore()
 
-    /**
-     * Every warning that's up, most important first. Only the first gets the big card, like Waze;
-     * the rest wait in one small pill. Whatever you'll reach first along the route wins, except a
-     * camera while you're over its limit, which always wins (that's the one that costs a fine).
-     * An average check and a police aircraft aren't a spot on the road ahead, so they only get the
-     * big card when nothing else is up.
-     */
-    private var alertsUp: [NavAlert] {
-        guard !nav.arrived else { return [] }
-        var ahead: [(NavAlert, Double)] = []
-        if let c = nav.cameraAhead { ahead.append((.camera, c.meters)) }
-        // Traffic jams don't get a card up top: they show as a small line over the trip bar instead.
-        if let w = nav.wazeAhead, w.alert.kind != .jam { ahead.append((.waze, w.meters)) }
-        var list = ahead.sorted { $0.1 < $1.1 }.map(\.0)
-        if let c = nav.cameraAhead, let limit = c.limitKmh ?? nav.speedLimitKmh, nav.speedMps * 3.6 > limit + 3,
-           let i = list.firstIndex(of: .camera), i > 0 {
-            list.remove(at: i)
-            list.insert(.camera, at: 0)
-        }
-        if nav.averageCheck != nil { list.append(.average) }
-        if nav.aircraftNear != nil { list.append(.aircraft) }
-        return list
+    /** Every warning that's up, ordered by the tested AlertCoordinator. */
+    private var alertsUp: [NavAlert] { nav.arrived ? [] : alertStore.ordered }
+
+    private var alertKey: String {
+        [
+            nav.cameraAhead.map { "\($0.meters)-\($0.limitKmh ?? 0)" } ?? "-",
+            nav.wazeAhead.map { "\($0.alert.id)-\($0.meters)-\($0.alert.heading ?? -1)" } ?? "-",
+            nav.averageCheck.map { "\($0.metersLeft)-\($0.averageKmh)" } ?? "-",
+            nav.aircraftNear.map { "\($0.aircraft.id)-\($0.meters)" } ?? "-",
+            "\(nav.speedMps.rounded())-\(nav.speedLimitKmh ?? 0)",
+            "\(nav.thenDistanceMeters ?? -1)-\(nav.progress?.distanceToNext ?? -1)",
+            "\(nav.navigationState.rawValue)"
+        ].joined(separator: "|")
     }
 
     private var roadEventsStatus: String {
@@ -57,9 +49,8 @@ struct NavigationOverlay: View {
 
     /** The one warning on the big card. */
     private var mainAlert: NavAlert? {
-        let list = alertsUp
-        if let peek, list.contains(peek) { return peek }
-        return list.first
+        if let peek, alertsUp.contains(peek) { return peek }
+        return alertStore.primary
     }
 
     /** A traffic jam ahead, shown small over the trip bar rather than as a big card. */
@@ -127,7 +118,10 @@ struct NavigationOverlay: View {
                     if let w = nav.wazeAhead {
                         WazeCard(ahead: w)
                             .fixedSize(horizontal: false, vertical: true)
-                            .onTapGesture { withAnimation { nav.dismissWaze() } }
+                            .onTapGesture {
+                                alertStore.dismiss(.waze, now: Date())
+                                withAnimation { nav.dismissWaze() }
+                            }
                             .accessibilityHint("Tap to hide")
                             .transition(.move(edge: .top).combined(with: .opacity))
                     }
@@ -135,6 +129,10 @@ struct NavigationOverlay: View {
                     if let check = nav.averageCheck { AverageCheckCard(check: check) }
                 case .aircraft?:
                     if let air = nav.aircraftNear { AircraftCard(aircraft: air.aircraft, meters: air.meters) }
+                case .control?:
+                    if let next = nav.upcomingControls.first {
+                        RoadControlAheadCard(control: next)
+                    }
                 case nil:
                     EmptyView()
                 }
@@ -150,6 +148,11 @@ struct NavigationOverlay: View {
                 // row: the card matters more, and the GPS and rerouting notes come back once it's gone.
                 if mainAlert != nil && Self.shortScreen {
                     EmptyView()
+                } else if nav.navigationState == .waitingForGPS, !nav.arrived {
+                    Label("Waiting for GPS", systemImage: "location.fill")
+                        .font(.system(size: 16, weight: .bold))
+                        .padding(.horizontal, 16).frame(height: 38)
+                        .glass(Capsule())
                 } else if nav.estimating, !nav.arrived {
                     // In a tunnel Kite carries on along the route at the speed you went in: say it's a best guess.
                     Label("No GPS · estimated", systemImage: "location.slash")
@@ -180,6 +183,9 @@ struct NavigationOverlay: View {
                 guard peek != nil else { return }
                 try? await Task.sleep(nanoseconds: 4_000_000_000)
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { peek = nil }
+            }
+            .task(id: alertKey) {
+                alertStore.refresh(nav: nav, settings: settings)
             }
 
             if !nav.arrived {
@@ -419,6 +425,7 @@ struct NavigationOverlay: View {
  */
 struct InstructionBanner: View {
     @ObservedObject var nav: Navigator
+    @ObservedObject private var settings = AppSettings.shared
     @Environment(\.colorScheme) private var scheme
     @State private var preview = 0
 
@@ -451,7 +458,8 @@ struct InstructionBanner: View {
             Text(Self.headline(step)).font(.title3.weight(.bold)).lineLimit(2)
             let distance = max(0, step.alongMeters - (nav.progress?.alongMeters ?? 0))
             Text(Fmt.distance(distance)).font(.subheadline.monospacedDigit())
-            if let lanes = LaneGuide.lanes(for: step, leftTraffic: Geo.drivesOnLeft(step.location)),
+            if settings.hudProfile.showLanes,
+               let lanes = LaneGuide.lanes(for: step, leftTraffic: Geo.drivesOnLeft(step.location)),
                !lanes.lanes.isEmpty {
                 LaneStrip(lanes: lanes.lanes, turn: step.type)
             }
@@ -503,11 +511,20 @@ struct InstructionBanner: View {
      alert coordinator below, not stacked into this card.
      */
     private func full(_ m: Maneuver?, leftTraffic: Bool, refs: [String]) -> some View {
+        let hud = settings.hudProfile
         let lanes: (lanes: [Lane], words: String)? = {
-            guard let m, nav.route.mode == .drive, let p = nav.progress,
+            guard hud.showLanes, let m, nav.route.mode == .drive, let p = nav.progress,
                   LaneApproach.showsStrip(distance: p.distanceToNext, speed: nav.speedMps,
-                                          laneCount: m.lanes.count, offRoute: p.offRoute) else { return nil }
+                                          laneCount: m.lanes.count, offRoute: p.offRoute,
+                                          leadMultiplier: hud.laneLeadMultiplier) else { return nil }
             return LaneGuide.lanes(for: m, leftTraffic: leftTraffic)
+        }()
+        let junction: JunctionGuide? = {
+            guard hud.showJunction, let m, let p = nav.progress, nav.route.mode == .drive else { return nil }
+            return JunctionGuideBuilder.guide(for: m, distance: p.distanceToNext,
+                                              speed: nav.speedMps, leftTraffic: leftTraffic,
+                                              next: nav.thenManeuver,
+                                              nextDistance: nav.thenDistanceMeters)
         }()
         return VStack(alignment: .leading, spacing: KiteSpace.s) {
             HStack(alignment: .center, spacing: KiteSpace.s) {
@@ -554,6 +571,9 @@ struct InstructionBanner: View {
             if let sign = m?.exitSign {
                 exitSign(sign, refs: refs)
             }
+            if let junction {
+                JunctionCard(guide: junction)
+            }
 
             if let lanes {
                 VStack(alignment: .leading, spacing: 6) {
@@ -573,7 +593,7 @@ struct InstructionBanner: View {
                 }
             }
 
-            if let then = nav.thenManeuver {
+            if hud.showThen, let then = nav.thenManeuver {
                 thenRow(then)
             }
         }
@@ -1469,7 +1489,114 @@ struct PoliceRiskChip: View {
 }
 
 /** The warnings that can take the big card while driving. */
-enum NavAlert: Equatable { case camera, waze, average, aircraft }
+enum NavAlert: Hashable { case camera, waze, average, aircraft, control }
+
+/** Maps Navigator's typed warnings into the tested AlertCoordinator. */
+@MainActor
+final class NavAlertStore: ObservableObject {
+    @Published private(set) var ordered: [NavAlert] = []
+    @Published private(set) var primary: NavAlert?
+    private var coordinator = AlertCoordinator()
+    private var key = ""
+    private var ids: [NavAlert: String] = [:]
+
+    func refresh(nav: Navigator, settings: AppSettings) {
+        let nextKey = [
+            nav.cameraAhead.map { "\($0.meters)-\($0.limitKmh ?? 0)" } ?? "-",
+            nav.wazeAhead.map { "\($0.alert.id)-\($0.meters)-\($0.alert.heading ?? -1)" } ?? "-",
+            nav.averageCheck.map { "\($0.metersLeft)-\($0.averageKmh)" } ?? "-",
+            nav.aircraftNear.map { "\($0.aircraft.id)-\($0.meters)" } ?? "-",
+            nav.upcomingControls.prefix(2).map { "\($0.control.kind.rawValue)-\(Int($0.meters / 25))" }.joined(separator: ","),
+            "\(nav.speedMps.rounded())-\(nav.speedLimitKmh ?? 0)",
+            "\(nav.thenDistanceMeters ?? -1)-\(nav.progress?.distanceToNext ?? -1)",
+            settings.hudProfile.alertDensity.description
+        ].joined(separator: "|")
+        guard nextKey != key else { return }
+        key = nextKey
+        guard !nav.arrived, settings.hudProfile.showAlerts else {
+            ordered = []
+            primary = nil
+            return
+        }
+        coordinator.maxQueue = max(0, settings.hudProfile.alertDensity)
+        let now = Date()
+        let routeBearing = nav.progress?.routeBearing
+        var candidates: [AlertCandidate] = []
+        ids = [:]
+        if let c = nav.cameraAhead {
+            ids[.camera] = "camera"
+            candidates.append(AlertCandidate(
+                id: "camera", kind: .camera, source: "camera", severity: .warning,
+                title: "Speed camera", distanceMeters: c.meters,
+                alongMeters: (nav.progress?.alongMeters ?? 0) + c.meters,
+                routeBearing: routeBearing, confidence: 0.9, reportedAt: now,
+                speedLimitKmh: c.limitKmh ?? nav.speedLimitKmh,
+                vehicleSpeedKmh: nav.speedMps * 3.6))
+        }
+        if let w = nav.wazeAhead, w.alert.kind != .jam {
+            ids[.waze] = "waze:\(w.alert.id)"
+            let kind: AlertKind
+            switch w.alert.kind {
+            case .police: kind = .police
+            case .accident: kind = .accident
+            case .closure: kind = .closure
+            case .hazard, .weather, .roadworks: kind = .hazard
+            case .jam: kind = .traffic
+            }
+            let severity: AlertSeverity = w.alert.kind == .closure ||
+                w.alert.subtype.contains("MAJOR") ? .critical : .warning
+            candidates.append(AlertCandidate(
+                id: "waze:\(w.alert.id)", kind: kind, source: "waze", severity: severity,
+                title: w.alert.title, distanceMeters: w.meters,
+                alongMeters: (nav.progress?.alongMeters ?? 0) + w.meters,
+                eventBearing: w.alert.heading, routeBearing: routeBearing,
+                confidence: min(1, 0.4 + Double(w.alert.reliability) / 10 * 0.6),
+                reportedAt: w.alert.reportedAt,
+                expiresAt: now.addingTimeInterval(45 * 60)))
+        }
+        if let check = nav.averageCheck {
+            ids[.average] = "average"
+            candidates.append(AlertCandidate(
+                id: "average", kind: .averageCheck, source: "camera", severity: .notice,
+                title: "Average speed check", distanceMeters: check.metersLeft,
+                confidence: 0.9, reportedAt: now))
+        }
+        if let air = nav.aircraftNear {
+            ids[.aircraft] = "aircraft:\(air.aircraft.id)"
+            candidates.append(AlertCandidate(
+                id: "aircraft:\(air.aircraft.id)", kind: .aircraft, source: "adsb",
+                severity: .notice, title: "Police aircraft",
+                distanceMeters: air.meters, confidence: 0.7, reportedAt: now))
+        }
+        if let control = nav.upcomingControls.first,
+           [.light, .stop, .railway, .yield].contains(control.control.kind) {
+            ids[.control] = "control:\(control.control.kind.rawValue)"
+            candidates.append(AlertCandidate(
+                id: "control:\(control.control.kind.rawValue)", kind: .roadControl,
+                source: "osm", severity: .notice,
+                title: control.control.kind.rawValue,
+                distanceMeters: control.meters, routeBearing: routeBearing,
+                confidence: 0.85, reportedAt: now))
+        }
+        let urgent = (nav.progress?.distanceToNext ?? .infinity) < 90 ||
+            (nav.thenDistanceMeters ?? .infinity) < 120
+        let presentation = coordinator.update(candidates, now: now, maneuverUrgent: urgent)
+        let mapped = ([presentation.primary].compactMap { $0 } + presentation.queued)
+            .compactMap { candidate -> NavAlert? in
+                ids.first { $0.value == candidate.id }?.key
+            }
+        ordered = Array(mapped.prefix(max(1, settings.hudProfile.alertDensity)))
+        primary = ordered.first
+    }
+
+    func dismiss(_ alert: NavAlert, now: Date = Date()) {
+        guard let id = ids[alert] else { return }
+        coordinator.dismiss(id, now: now)
+        key = ""
+        ordered.removeAll { $0 == alert }
+        if primary == alert { primary = ordered.first }
+    }
+}
 
 /** "Also ahead": the warnings waiting their turn, small, in one pill. Tap to peek at the next one. */
 struct AlsoAheadPill: View {
@@ -1528,10 +1655,62 @@ struct AlsoAheadPill: View {
                     Image(systemName: air.aircraft.helicopter ? "fanblades.fill" : "airplane").font(.system(size: 17, weight: .bold))
                     Text(Fmt.distance(air.meters))
                 }
+            case .control:
+                if let next = nav.upcomingControls.first {
+                    Image(systemName: Self.controlIcon(next.control.kind))
+                        .font(.system(size: 17, weight: .bold))
+                    Text(Fmt.distance(next.meters))
+                }
             }
         }
         .font(.system(size: 16, weight: .bold)).monospacedDigit()
         .lineLimit(1)
+    }
+
+    static func controlIcon(_ kind: RouteControl.Kind) -> String {
+        switch kind {
+        case .light: return "trafficlight"
+        case .stop: return "octagon.fill"
+        case .yield: return "triangle.fill"
+        case .railway: return "tram.fill"
+        case .crossing: return "figure.walk"
+        case .tram: return "tram.fill"
+        case .oneWay: return "arrow.right"
+        }
+    }
+}
+
+/** A traffic light or stop line that the coordinator promoted to the card. */
+struct RoadControlAheadCard: View {
+    let control: UpcomingRoadControl
+    @Environment(\.colorScheme) private var scheme
+
+    private var title: String {
+        switch control.control.kind {
+        case .light: return "Traffic light ahead"
+        case .stop: return "Stop sign ahead"
+        case .yield: return "Give way ahead"
+        case .railway: return "Railway crossing ahead"
+        default: return "Road control ahead"
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: AlsoAheadPill.controlIcon(control.control.kind))
+                .font(.system(size: 25, weight: .heavy))
+                .foregroundColor(KiteColor.accentText)
+                .frame(width: 46, height: 46)
+                .background(Circle().fill(KiteColor.accentSoft))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(L10n.text(title)).font(KiteText.headline(17))
+                Text(Fmt.distance(control.meters)).font(KiteText.digits(22, weight: .heavy))
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .glass(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -1768,22 +1947,7 @@ struct AlongRouteSheet: View {
 /** Road numbers in an instruction ("I-80", "US 50", "CA 113", "A9"), for shields in the banner. */
 enum RoadRefs {
     static func find(_ text: String) -> [String] {
-        let pattern = #"\b(I|US|CA|SR|State Route|Route|Hwy|Highway|A|B|M|E|N|D|B|SS)[- ]?(\d{1,4}[A-Z]?)\b"#
-        guard let re = try? NSRegularExpression(pattern: pattern) else { return [] }
-        let ns = text as NSString
-        var out: [String] = []
-        for m in re.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
-            let net = ns.substring(with: m.range(at: 1)), num = ns.substring(with: m.range(at: 2))
-            let ref: String
-            switch net {
-            case "I": ref = "I-\(num)"
-            case "US": ref = "US \(num)"
-            case "CA", "SR", "State Route", "Route", "Hwy", "Highway": ref = "SR \(num)"
-            default: ref = net + num
-            }
-            if !out.contains(ref) { out.append(ref) }
-        }
-        return Array(out.prefix(3))
+        RoadReferenceParser.find(text)
     }
 }
 
@@ -1968,6 +2132,118 @@ struct LaneStrip: View {
  * The roundabout as it really is: the way in at the bottom, every road around the circle, and
  * only your way round and out lit up. Without the real layout, the exits are spread evenly.
  */
+/**
+ Motorway Junction View 3.0. The diagram is drawn only when a junction guide
+ was built from a real exit sign, lane list or road reference.
+ */
+struct JunctionCard: View {
+    let guide: JunctionGuide
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        HStack(spacing: 12) {
+            JunctionDiagram(guide: guide)
+                .frame(width: 108, height: 74)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    if let exit = guide.exitNumber {
+                        Text(L10n.format("Exit %@", exit))
+                            .font(KiteText.label(13))
+                            .padding(.horizontal, 7).padding(.vertical, 2)
+                            .foregroundColor(Color(hex: 0x0B3B2A))
+                            .background(RoundedRectangle(cornerRadius: 5).fill(.white))
+                    }
+                    ForEach(Array(guide.roadRefs.prefix(3).enumerated()), id: \.offset) { _, ref in
+                        RoadShield(ref: ref)
+                    }
+                }
+                if !guide.destinations.isEmpty {
+                    Text(guide.destinations.prefix(2).joined(separator: " · "))
+                        .font(KiteText.headline(16)).lineLimit(1).minimumScaleFactor(0.75)
+                } else {
+                    Text(L10n.text(guide.title)).font(KiteText.headline(16)).lineLimit(1)
+                }
+                HStack(spacing: 8) {
+                    if guide.laneCount > 1 {
+                        Label(L10n.format("%@ lanes", String(guide.laneCount)), systemImage: "road.lanes")
+                            .font(KiteText.caption())
+                    }
+                    if !guide.recommendedLanes.isEmpty {
+                        Text(L10n.format("Use %@", guide.recommendedLanes.map { String($0 + 1) }.joined(separator: ", ")))
+                            .font(KiteText.caption()).foregroundColor(KiteColor.accentText)
+                    }
+                }
+                .foregroundColor(KiteColor.inkSecondary)
+                .lineLimit(1)
+                if let next = guide.nextInstruction, !next.isEmpty {
+                    Text(L10n.format("Then %@", next)).font(KiteText.caption())
+                        .foregroundColor(KiteColor.inkSecondary).lineLimit(1)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous)
+            .fill(KiteColor.fill))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(L10n.format("Motorway exit %@ towards %@",
+                                        guide.exitNumber ?? "",
+                                        guide.destinations.joined(separator: ", ")))
+    }
+}
+
+struct JunctionDiagram: View {
+    let guide: JunctionGuide
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        let ink: Color = scheme == .dark ? .white : Color(hex: 0x0F172A)
+        Canvas { ctx, size in
+            let road = StrokeStyle(lineWidth: size.height * 0.16, lineCap: .round, lineJoin: .round)
+            let faint = GraphicsContext.Shading.color(ink.opacity(0.22))
+            let lit = GraphicsContext.Shading.color(KiteColor.accent)
+            let middle = CGPoint(x: size.width / 2, y: size.height)
+            let fork = CGPoint(x: size.width / 2, y: size.height * 0.38)
+            // The road in from the bottom and the two ways out.
+            var stem = Path()
+            stem.move(to: middle)
+            stem.addLine(to: fork)
+            ctx.stroke(stem, with: faint, style: road)
+            for (index, _) in guide.branches.enumerated() {
+                let taken = index == guide.takenBranch
+                let left = index == 0
+                let end = CGPoint(x: left ? size.width * 0.08 : size.width * 0.92,
+                                  y: size.height * 0.06)
+                var branch = Path()
+                branch.move(to: fork)
+                branch.addCurve(to: end,
+                                control1: CGPoint(x: fork.x, y: size.height * 0.2),
+                                control2: CGPoint(x: end.x, y: size.height * 0.3))
+                ctx.stroke(branch, with: taken ? lit : faint, style: road)
+                if taken {
+                    let dir = CGPoint(x: end.x - fork.x, y: end.y - fork.y)
+                    let len = max(1, sqrt(dir.x * dir.x + dir.y * dir.y))
+                    let ux = dir.x / len, uy = dir.y / len
+                    let side = CGPoint(x: -uy, y: ux)
+                    let tip = CGPoint(x: end.x + ux * 3, y: end.y + uy * 3)
+                    let base = CGPoint(x: tip.x - ux * size.height * 0.15,
+                                       y: tip.y - uy * size.height * 0.15)
+                    var head = Path()
+                    head.move(to: tip)
+                    head.addLine(to: CGPoint(x: base.x + side.x * size.height * 0.09,
+                                             y: base.y + side.y * size.height * 0.09))
+                    head.addLine(to: CGPoint(x: base.x - side.x * size.height * 0.09,
+                                             y: base.y - side.y * size.height * 0.09))
+                    head.closeSubpath()
+                    ctx.fill(head, with: lit)
+                }
+            }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
 struct RoundaboutDiagram: View {
     let shape: RoundaboutShape?
     let exit: Int

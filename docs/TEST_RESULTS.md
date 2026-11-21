@@ -1,5 +1,33 @@
 # Test results
 
+## v30 advanced navigation (branch `iphone-custom-v30-advanced-navigation`)
+
+### Unit tests (VelaCore, Linux Swift 6.0)
+
+- **282 tests, 0 failures, 1 Darwin-only skip** on the local Linux harness.
+  The skipped test is the zlib Waze camera fixture, which requires Apple
+  Compression and runs on macOS CI.
+- New deterministic suites:
+  - `NavigationStateTests` (7) — lifecycle, GPS loss/recovery, reroute
+    lifecycle, terminal ended state, two independent sessions.
+  - `AlertCoordinatorTests` (7) — dedupe, opposite direction, over-limit camera,
+    hysteresis, cooldown, urgent maneuver, expired/weak/reply events.
+  - `LaneGuidanceTests` (6) — exits, straight junction, split fallback, unknown
+    lanes, left/right roundabout, off-route/lead limits.
+  - `JunctionGuideTests` (6) — right-hand exit, left-hand fork, insufficient
+    data, city/roundabout rejection, follow-up maneuver, road refs.
+  - `ControlDisplayPolicyTests` (5) — car/walk/browse, unknown direction,
+    ordered upcoming controls.
+  - `MapPresetTests` (5), `HUDProfileTests` (4), `SavedJourneyTests` (2),
+    `GPXTests` (3).
+  - `PlanningSessionTests` gained navigation-grade strictness and invalid
+    coordinate/future-clock tests (21 total).
+
+### CI
+
+The v30 IPA, VelaCore macOS tests and simulator UI test are recorded after the
+branch is pushed. They must not be inferred from the v29 numbers below.
+
 ## v29 redesign (branch `iphone-custom-v29-redesign`)
 
 ### Unit tests (VelaCore, macOS CI)

@@ -161,8 +161,17 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
      A fix as the planner sees it. The session classifies it as fresh,
      approximate, stale or expired; this only refuses nonsense.
      */
+    /** A valid current-position fix, never an invalid coordinate or a clock from the future. */
+    private func hasValidPosition(_ loc: CLLocation, at now: Date = Date()) -> Bool {
+        let c = loc.coordinate
+        return c.latitude.isFinite && c.longitude.isFinite &&
+            (-90...90).contains(c.latitude) && (-180...180).contains(c.longitude) &&
+            !(c.latitude == 0 && c.longitude == 0) &&
+            loc.timestamp.timeIntervalSince(now) <= 2
+    }
+
     func planningFix(at now: Date = Date()) -> PlanningFix? {
-        guard let fix else { return nil }
+        guard let fix, hasValidPosition(fix, at: now) else { return nil }
         let age = now.timeIntervalSince(fix.timestamp)
         guard age <= 15 * 60, fix.horizontalAccuracy >= 0,
               fix.horizontalAccuracy <= 20_000 else { return nil }
@@ -170,10 +179,11 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
                            timestamp: fix.timestamp, horizontalAccuracy: fix.horizontalAccuracy)
     }
 
-    /** A navigation-grade fix, still strict about both age and accuracy. */
+    /** A navigation-grade fix, still strict about position, age and accuracy. */
     func navigationFix(maximumError: Double) -> CLLocation? {
-        guard !reducedAccuracy, let fix,
-              RouteTracker.isFreshFix(age: Date().timeIntervalSince(fix.timestamp),
+        let now = Date()
+        guard !reducedAccuracy, let fix, hasValidPosition(fix, at: now),
+              RouteTracker.isFreshFix(age: now.timeIntervalSince(fix.timestamp),
                                       accuracy: fix.horizontalAccuracy,
                                       maximumError: maximumError) else { return nil }
         return fix
@@ -438,9 +448,12 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
             // consumer decides whether it is fresh, approximate or stale.
             let maximumAge = self.navigating ? 30.0 : 15 * 60.0
             let maximumError = self.reducedAccuracy ? 20_000.0 : 2_000.0
+            let now = Date()
             guard let loc = locations.filter({
+                $0.horizontalAccuracy >= 0 && $0.horizontalAccuracy.isFinite &&
                 (0...maximumError).contains($0.horizontalAccuracy) &&
-                (-2...maximumAge).contains(Date().timeIntervalSince($0.timestamp))
+                (-2...maximumAge).contains(now.timeIntervalSince($0.timestamp)) &&
+                self.hasValidPosition($0, at: now)
             }).max(by: { $0.timestamp < $1.timestamp }) else { return }
             if let earlier = self.fix {
                 let elapsed = loc.timestamp.timeIntervalSince(earlier.timestamp)

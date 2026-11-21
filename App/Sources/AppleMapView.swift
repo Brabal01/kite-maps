@@ -237,9 +237,12 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
                 native.preferredConfiguration = MKStandardMapConfiguration(elevationStyle: elevation, emphasisStyle: .muted)
             }
         }
-        let showBuildings = !settings.satellite && (!navigating || settings.navBuildings)
+        let preset: MapPreset = navigating && settings.mapPreset != .minimal ? .navigation : settings.mapPreset
+        let profile = MapPresetCatalog.profile(for: preset)
+        native.pointOfInterestFilter = profile.showPOI ? .includingAll : .excludingAll
+        let showBuildings = !settings.satellite && profile.showBuildings && (!navigating || settings.navBuildings)
         if native.showsBuildings != showBuildings { native.showsBuildings = showBuildings }
-        let showTraffic = settings.traffic && settings.welcomed
+        let showTraffic = settings.traffic && settings.welcomed && profile.showTraffic
         if native.showsTraffic != showTraffic { native.showsTraffic = showTraffic }
         let showHeat = settings.wazeOn && settings.wazeHeatmap && settings.wazePolice
         if showHeat && heatLayer == nil {

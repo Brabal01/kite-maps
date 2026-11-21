@@ -3,6 +3,23 @@
 This is a living backlog, not a claim that everything below exists. Items already shipped are
 marked **done**; everything else needs code and tests.
 
+## v30 status
+
+- **Done (v30)**: explicit `NavigationSessionState` and navigation-grade entry
+  guard; reroute lifecycle and offline route preservation.
+- **Done (v30)**: tested `AlertCoordinator`, `LaneGuidanceEngine`,
+  `JunctionGuideBuilder`, `ControlDisplayPolicy`.
+- **Done (v30)**: seven map presets, adaptive POI/label/building density,
+  Navigation mode while driving, MapKit POI/building subset.
+- **Done (v30)**: HUD Simple/Advanced/Highway/Custom with preview.
+- **Done (v30)**: saved journeys, GPX import/export with bounded validation.
+- **Partial (v30)**: settings regrouped and search is not yet implemented;
+  offline journey/map/routing are documented but not shipped.
+- Next (P1): physical-device reroute/GPS/performance verification.
+- Next (P2): settings search, along-route detour ranking, richer Live Activity
+  fields, offline journey persistence.
+- Next (P3): offline map areas and local routing graph.
+
 ## v29 status
 
 - **Done (v29)**: one packaging/signing/verification path, two IPA variants from

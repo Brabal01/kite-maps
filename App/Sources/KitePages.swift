@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import VelaCore
 
 /**
@@ -79,6 +80,7 @@ struct RoutesPage: View {
     @ObservedObject var model: AppModel
     @ObservedObject private var settings = AppSettings.shared
     @Environment(\.colorScheme) private var scheme
+    @State private var importingGPX = false
 
     var body: some View {
         GeometryReader { geo in
@@ -91,9 +93,10 @@ struct RoutesPage: View {
                         if let trip = model.resumeOffer {
                             resumeCard(trip)
                         }
+                        savedJourneys
                         homeWork
                         recent
-                        if settings.recentPlaces.isEmpty {
+                        if settings.recentPlaces.isEmpty && settings.savedJourneys.isEmpty {
                             KiteEmptyState(icon: "clock.arrow.circlepath",
                                            title: "No recent journeys yet",
                                            detail: "Places you open or navigate to will be listed here, ready for the next trip.",
@@ -105,6 +108,76 @@ struct RoutesPage: View {
                     .padding(.bottom, KiteDock.height + 44)
                 }
                 KiteDock(model: model, bottomInset: geo.safeAreaInsets.bottom)
+            }
+        }
+        .fileImporter(isPresented: $importingGPX,
+                      allowedContentTypes: [UTType(filenameExtension: "gpx") ?? .xml],
+                      allowsMultipleSelection: false) { result in
+            if case .success(let urls) = result, let url = urls.first {
+                model.importGPX(from: url)
+            }
+        }
+    }
+
+    private var savedJourneys: some View {
+        VStack(alignment: .leading, spacing: KiteSpace.s) {
+            KiteSectionHeader(title: "Saved journeys", actionTitle: "Import GPX") {
+                importingGPX = true
+            }
+            if settings.savedJourneys.isEmpty {
+                Text(L10n.text("Save a planned trip from its menu to keep every stop, or import a GPX track. Imported tracks are shown as a route between their ends, not turn-by-turn track guidance."))
+                    .font(KiteText.caption()).foregroundColor(KiteColor.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .kiteCard()
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(settings.savedJourneys.enumerated()), id: \.element.id) { index, journey in
+                        if index > 0 { Divider().padding(.leading, 54) }
+                        savedJourneyRow(journey)
+                    }
+                }
+                .background(RoundedRectangle(cornerRadius: KiteRadius.card, style: .continuous)
+                    .fill(KiteColor.surface)
+                    .overlay(RoundedRectangle(cornerRadius: KiteRadius.card, style: .continuous)
+                        .strokeBorder(KiteColor.stroke, lineWidth: 1)))
+            }
+        }
+    }
+
+    private func savedJourneyRow(_ journey: SavedJourney) -> some View {
+        Button { model.openSavedJourney(journey) } label: {
+            HStack(spacing: KiteSpace.s) {
+                Image(systemName: journey.isGPXTrack ? "point.topleft.down.to.point.bottomright.curvepath" : "bookmark.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(KiteColor.accentText)
+                    .frame(width: 36, height: 36)
+                    .background(Circle().fill(KiteColor.accentSoft))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(journey.displayName).font(KiteText.label(16)).foregroundColor(KiteColor.ink).lineLimit(1)
+                    let details: [String?] = [
+                        L10n.text(journey.mode.label),
+                        journey.stops.isEmpty ? nil : L10n.format("%@ stops", String(journey.stops.count)),
+                        journey.isGPXTrack ? L10n.text("GPX track") : nil
+                    ]
+                    Text(details.compactMap { $0 }.joined(separator: " · "))
+                        .font(KiteText.caption()).foregroundColor(KiteColor.inkSecondary).lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").font(.caption.weight(.bold))
+                    .foregroundColor(KiteColor.inkSecondary)
+            }
+            .padding(.horizontal, KiteSpace.m)
+            .frame(minHeight: 58)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("saved-journey-\(journey.id.uuidString)")
+        .contextMenu {
+            Button { model.reverseSavedJourney(journey) } label: {
+                Label("Reverse", systemImage: "arrow.left.arrow.right")
+            }
+            Button(role: .destructive) { model.deleteSavedJourney(journey) } label: {
+                Label("Delete", systemImage: "trash")
             }
         }
     }
