@@ -269,7 +269,7 @@ final class AppSettings: ObservableObject {
         // An offline first launch has no verified country. The device region is a hint only, and only
         // for someone who has explicitly accepted responsibility for checking the local law.
         if cameraJurisdictionResponsible {
-            cameraJurisdiction = CameraJurisdiction.policy(isoCountryCode: Locale.current.region.identifier)
+            cameraJurisdiction = CameraJurisdiction.policy(isoCountryCode: Locale.current.region?.identifier)
         }
         speedingAlert = d.bool(forKey: "speedingAlert")
         mapZoom = MapZoom(rawValue: d.string(forKey: "mapZoom") ?? "") ?? .normal

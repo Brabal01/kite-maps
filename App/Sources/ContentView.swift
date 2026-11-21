@@ -707,12 +707,8 @@ struct SuggestionsPanel: View {
         .padding(.horizontal, 12)
         .frame(maxHeight: 460)
         .task {
-            // Only checks whether the clipboard looks like a link; it doesn't read it.
-            guard UIPasteboard.general.hasStrings || UIPasteboard.general.hasURLs else { return }
-            // Async API (iOS 15+) replaces the deprecated completion-handler overload.
-            let found = (try? await UIPasteboard.general.detectPatterns(for: [.probableWebURL]))?
-                .contains(.probableWebURL) ?? false
-            copiedLink = found
+            // A non-deprecated check that does not read the clipboard's contents.
+            copiedLink = UIPasteboard.general.hasURLs
         }
     }
 
