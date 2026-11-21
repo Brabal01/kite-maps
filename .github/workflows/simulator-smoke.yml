@@ -136,13 +136,14 @@ jobs:
           # A place search first warms up the simulated GPS; only then is the
           # navigation route planned. Otherwise the first request has no origin
           # and the screen honestly shows "No route found".
-          for step in home routes place uk directions roundabout roundaboutuncertain signals transitcolors settings; do
+          for step in home routes place uk directions roundaboutsynthetic roundaboutuncertainsynthetic signalsynthetic transitsynthetic settings; do
             case "$step" in
               home|routes) wait=16;; place) wait=26;;
-              uk|roundabout|roundaboutuncertain|signals) wait=52;;
-              directions) wait=45;; transitcolors) wait=34;; *) wait=12;;
+              uk) wait=52;; directions) wait=45;;
+              transitsynthetic) wait=30;;
+              *synthetic) wait=22;; *) wait=12;;
             esac
-            if [ "$step" = "uk" ] || [ "$step" = "roundabout" ] || [ "$step" = "roundaboutuncertain" ] || [ "$step" = "signals" ]; then
+            if [ "$step" = "uk" ]; then
               xcrun simctl location "$UDID" set 56.3960,-3.4300 >/dev/null 2>&1 || true
             else
               xcrun simctl location "$UDID" set 38.5449,-121.7405 >/dev/null 2>&1 || true
@@ -152,7 +153,7 @@ jobs:
             xcrun simctl launch "$UDID" app.vela.ios -demo "$step" | tee "demo-$step.txt"
             # Inject again once the app has started listening.
             sleep 3
-            if [ "$step" = "uk" ] || [ "$step" = "roundabout" ] || [ "$step" = "roundaboutuncertain" ] || [ "$step" = "signals" ]; then
+            if [ "$step" = "uk" ]; then
               xcrun simctl location "$UDID" set 56.3960,-3.4300 >/dev/null 2>&1 || true
             else
               xcrun simctl location "$UDID" set 38.5449,-121.7405 >/dev/null 2>&1 || true
@@ -166,17 +167,24 @@ jobs:
               cp ~/Library/Logs/DiagnosticReports/*Kite* . 2>/dev/null || true
               exit 1
             fi
-            xcrun simctl io "$UDID" screenshot "demo-$step.png" >/dev/null || true
+            case "$step" in
+              roundaboutsynthetic) name=roundabout;;
+              roundaboutuncertainsynthetic) name=roundaboutuncertain;;
+              signalsynthetic) name=signals;;
+              transitsynthetic) name=transitcolors;;
+              *) name=$step;;
+            esac
+            xcrun simctl io "$UDID" screenshot "demo-$name.png" >/dev/null || true
           done
 
           # The same home and navigation screens in dark mode.
           xcrun simctl ui "$UDID" appearance dark >/dev/null 2>&1 || true
-          for step in home uk roundabout transitcolors; do
+          for step in home uk roundaboutsynthetic transitsynthetic; do
             wait=16
             if [ "$step" = "uk" ]; then wait=48; fi
-            if [ "$step" = "roundabout" ]; then wait=52; fi
-            if [ "$step" = "transitcolors" ]; then wait=34; fi
-            if [ "$step" = "uk" ] || [ "$step" = "roundabout" ]; then
+            if [ "$step" = "roundaboutsynthetic" ]; then wait=22; fi
+            if [ "$step" = "transitsynthetic" ]; then wait=30; fi
+            if [ "$step" = "uk" ]; then
               xcrun simctl location "$UDID" set 56.3960,-3.4300 >/dev/null 2>&1 || true
             else
               xcrun simctl location "$UDID" set 38.5449,-121.7405 >/dev/null 2>&1 || true
@@ -191,7 +199,12 @@ jobs:
                 --predicate 'process == "Kite"' > "crash-dark-$step.log" || true
               exit 1
             fi
-            xcrun simctl io "$UDID" screenshot "demo-dark-$step.png" >/dev/null || true
+            case "$step" in
+              roundaboutsynthetic) name=roundabout;;
+              transitsynthetic) name=transitcolors;;
+              *) name=$step;;
+            esac
+            xcrun simctl io "$UDID" screenshot "demo-dark-$name.png" >/dev/null || true
           done
 
           # A large Dynamic Type transit card, to check the line chips and the timeline
@@ -200,8 +213,8 @@ jobs:
           xcrun simctl ui "$UDID" content_size accessibility-extra-large >/dev/null 2>&1 || true
           xcrun simctl location "$UDID" set 38.5449,-121.7405 >/dev/null 2>&1 || true
           xcrun simctl terminate "$UDID" app.vela.ios >/dev/null 2>&1 || true
-          xcrun simctl launch "$UDID" app.vela.ios -demo transitcolors | tee demo-transit-large-type.txt
-          sleep 34
+          xcrun simctl launch "$UDID" app.vela.ios -demo transitsynthetic | tee demo-transit-large-type.txt
+          sleep 30
           xcrun simctl io "$UDID" screenshot "demo-transit-large-type.png" >/dev/null || true
           xcrun simctl ui "$UDID" content_size large >/dev/null 2>&1 || true
 
