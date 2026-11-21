@@ -9,6 +9,9 @@ import java.util.Locale
 import kotlin.properties.ReadWriteProperty
 import kotlin.reflect.KProperty
 
+enum class MapStyleMode(val label: String) { SYSTEM("App"), LIGHT("Light"), DARK("Dark"), SUN("Sunrise & sunset") }
+enum class RoadStripPosition(val label: String) { BOTTOM("Bottom"), TOP("Top"), LEFT("Left"), RIGHT("Right") }
+
 enum class ThemeMode(val label: String) { SYSTEM("System"), LIGHT("Light"), DARK("Dark") }
 
 enum class UnitsMode(val label: String) {
@@ -47,6 +50,20 @@ object AppSettings {
     /** The voice button's middle setting, "Alerts only": remembered with `voice`, so the next drive starts the same. */
     var voiceAlertsOnly by bool("voiceAlertsOnly")
     var mapboxEnabled by bool("mapboxEnabled", true)
+    var mapStyleMode by Pref("mapStyleMode", { p ->
+        MapStyleMode.entries.firstOrNull { it.name == p.getString("mapStyleMode", null) } ?: MapStyleMode.SYSTEM
+    }, { e, v -> e.putString("mapStyleMode", v.name) })
+    var roadStripPosition by Pref("roadStripPosition", { p ->
+        RoadStripPosition.entries.firstOrNull { it.name == p.getString("roadStripPosition", null) } ?: RoadStripPosition.BOTTOM
+    }, { e, v -> e.putString("roadStripPosition", v.name) })
+    var swapMapSides by bool("swapMapSides")
+    var solidMapSearch by bool("solidMapSearch", true)
+    private fun mapColor(key: String) = Pref<String?>(key,
+        { it.getString(key, null)?.takeIf { value -> MapPalette.isColor(value) } },
+        { e, value -> e.putString(key, value) })
+    var mapUiAccent by mapColor("mapUiAccent")
+    var mapUiDayPanel by mapColor("mapUiDayPanel")
+    var mapUiNightPanel by mapColor("mapUiNightPanel")
     var standardMap by bool("standardMap", true)
     private fun palette(key: String, dark: Boolean) = Pref(key,
         { MapPalette.decode(it.getString(key, null)) ?: MapPalette.default(dark) },
@@ -141,6 +158,25 @@ object AppSettings {
     var welcomed by bool("welcomed")
     var defaultMode: TravelMode by Pref("defaultMode", { p -> TravelMode.entries.firstOrNull { it.raw == p.getInt("defaultMode", 0) } ?: TravelMode.DRIVE },
         { e, v -> e.putInt("defaultMode", v.raw) })
+    var savedPlans: List<SavedPlan> by Pref("savedPlans",
+        { p -> p.getString("savedPlans", null)?.let { Json.parse(it).asMaps()?.mapNotNull(SavedPlan::fromMap) }.orEmpty() },
+        { e, value -> e.putString("savedPlans", Json.write(value.map(SavedPlan::toMap))) })
+    var placeFolders: List<PlaceFolder> by Pref("placeFolders",
+        { p -> p.getString("placeFolders", null)?.let { Json.parse(it).asMaps()?.mapNotNull(PlaceFolder::fromMap) }.orEmpty() },
+        { e, value -> e.putString("placeFolders", Json.write(value.map(PlaceFolder::toMap))) })
+
+    fun removeSaved(id: String) {
+        saved = saved.filter { it.id != id }
+        placeFolders = placeFolders.map { it.copy(members = it.members - id) }
+    }
+
+    fun toggleFolderMember(folderId: String, placeId: String) {
+        placeFolders = placeFolders.map { folder ->
+            if (folder.id != folderId) folder else folder.copy(members =
+                if (placeId in folder.members) folder.members - placeId else folder.members + placeId)
+        }
+    }
+
     var saved: List<Place> by places("saved")
     var recents: List<String> by Pref("recents", { p -> p.getString("recents", null)?.let { (Json.parse(it) as? List<*>)?.filterIsInstance<String>() } ?: emptyList() },
         { e, v -> e.putString("recents", Json.write(v)) })
@@ -173,7 +209,8 @@ object AppSettings {
     fun isSaved(p: Place) = saved.any { it.matchesNearby(p) }
 
     fun toggleSaved(p: Place) {
-        saved = if (isSaved(p)) saved.filterNot { it.matchesNearby(p) } else listOf(p) + saved
+        val existing = saved.firstOrNull { it.matchesNearby(p) }
+        if (existing != null) removeSaved(existing.id) else saved = listOf(p) + saved
     }
 
     fun renameSaved(id: String, name: String) {

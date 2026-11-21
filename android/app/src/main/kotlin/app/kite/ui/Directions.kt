@@ -4,6 +4,7 @@ package app.kite.ui
 
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.background
@@ -34,6 +35,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -53,6 +55,7 @@ import java.util.Calendar
 import java.util.Date
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.roundToInt
 
 /** Route preview: the from/to card on top, routes on the map, the trip sheet below. */
 @Composable
@@ -84,39 +87,108 @@ fun DirectionsOverlay(model: AppModel, showMapbox: Boolean) {
 @Composable
 fun EndpointsCard(model: AppModel, state: DirectionsState) {
     val dark = LocalDark.current
-    Row(Modifier.padding(horizontal = 16.dp).fillMaxWidth().glass(RoundedCornerShape(24.dp)).padding(start = 6.dp, end = 10.dp, top = 8.dp, bottom = 8.dp),
+    val points = state.orderedPlaces()
+    var edit by remember { mutableStateOf(false) }
+    Row(Modifier.padding(horizontal = 16.dp).fillMaxWidth().glass(RoundedCornerShape(24.dp)).padding(8.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        Box(Modifier.size(48.dp).clip(CircleShape).tap { model.closeDirections() }, contentAlignment = Alignment.Center) {
-            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = primaryText, modifier = Modifier.size(26.dp))
+        IconButton(model::closeDirections) {
+            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = primaryText)
         }
         Column(Modifier.weight(1f)) {
-            Endpoint(Icons.Outlined.Circle, Vela.tealLight, if (state.reversed) state.destination.name else "Your location")
-            state.stops.forEachIndexed { i, stop ->
-                HorizontalDivider(Modifier.padding(start = 30.dp))
-                Row(Modifier.height(52.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Box(Modifier.size(18.dp).clip(CircleShape).background(secondaryText), contentAlignment = Alignment.Center) {
-                        Text("${i + 1}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                    }
-                    Text(stop.name, fontSize = KType.body, fontWeight = FontWeight.Medium, color = primaryText, maxLines = 1,
-                        overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                    Icon(Icons.Filled.Close, "Remove stop", tint = secondaryText, modifier = Modifier.size(20.dp).clip(CircleShape).tap { model.removeStop(i) })
-                }
+            Endpoint(Icons.Outlined.Circle, Vela.tealLight, points.first().waypointName())
+            if (points.size > 2) {
+                Text(points.drop(1).dropLast(1).joinToString(" → ") { it.waypointName() },
+                    color = secondaryText, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth().tap { edit = true }.padding(start = 30.dp, bottom = 5.dp))
             }
             HorizontalDivider(Modifier.padding(start = 30.dp))
-            Endpoint(Icons.Filled.Place, Vela.closed, if (state.reversed) "Your location" else state.destination.name)
-            if (!state.transit && state.stops.size < 8) {
-                HorizontalDivider(Modifier.padding(start = 30.dp))
-                Row(Modifier.fillMaxWidth().height(44.dp).tap { model.addingStop = true }, verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Icon(Icons.Filled.Add, null, tint = Vela.accentText(dark), modifier = Modifier.size(18.dp))
-                    Text("Add stop", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = Vela.accentText(dark))
-                }
+            Endpoint(Icons.Filled.Place, Vela.closed, points.last().waypointName())
+            if (!state.transit && state.stops.size < 8) TextButton({ model.addingStop = true }) {
+                Icon(Icons.Filled.Add, null)
+                Text("Add stop")
             }
         }
-        Box(Modifier.size(48.dp).clip(CircleShape).background(Vela.chip(dark)).tap { model.reverseDirections() }, contentAlignment = Alignment.Center) {
-            Icon(Icons.Filled.SwapVert, "Swap start and end", tint = primaryText, modifier = Modifier.size(24.dp))
+        Box(Modifier.size(48.dp).clip(CircleShape).background(Vela.chip(dark)).tap { edit = true }, contentAlignment = Alignment.Center) {
+            Icon(Icons.Filled.Reorder, "Edit route", tint = primaryText)
         }
     }
+    if (edit) RouteEditor(model, state) { edit = false }
+}
+
+private fun Place?.waypointName() = this?.name ?: "Your location"
+
+@Composable
+private fun RouteEditor(model: AppModel, state: DirectionsState, close: () -> Unit) {
+    val ctx = LocalContext.current
+    val points = state.orderedPlaces()
+    val draft = model.routePlan("")
+    var naming by remember { mutableStateOf(false) }
+    var name by remember { mutableStateOf("") }
+    val canMove = model.userLatLng != null || points.none { it == null }
+    var dragged by remember { mutableStateOf<Int?>(null) }
+    var offset by remember { mutableFloatStateOf(0f) }
+    val rowHeight = 68.dp
+    val stepPixels = with(LocalDensity.current) { (rowHeight + 1.dp).toPx() }
+    TripSheet("Edit route", "Done", close) {
+        Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 6.dp)) {
+            points.forEachIndexed { index, place ->
+                val highlighted = dragged == index || dragged?.let {
+                    (it + (offset / stepPixels).roundToInt()).coerceIn(0, points.lastIndex) == index
+                } == true
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().height(rowHeight)
+                    .background(if (highlighted) Vela.chip(LocalDark.current) else Color.Transparent)) {
+                    Icon(Icons.Filled.DragHandle, null, tint = secondaryText, modifier = Modifier.size(42.dp).padding(10.dp)
+                        .pointerInput(points, canMove) {
+                            if (!canMove) return@pointerInput
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = { dragged = index; offset = 0f },
+                                onDrag = { change, amount -> change.consume(); offset += amount.y },
+                                onDragEnd = {
+                                    val target = (index + (offset / stepPixels).roundToInt()).coerceIn(0, points.lastIndex)
+                                    if (target != index) model.moveWaypoint(index, target - index)
+                                    dragged = null
+                                    offset = 0f
+                                },
+                                onDragCancel = { dragged = null; offset = 0f })
+                        })
+                    Column(Modifier.weight(1f).padding(vertical = 6.dp)) {
+                        Text(when (index) {
+                            0 -> "Start"
+                            points.lastIndex -> "Destination"
+                            else -> "Stop $index"
+                        }, color = secondaryText, fontSize = KType.caption)
+                        Text(place.waypointName(), color = primaryText, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+                    IconButton({ model.moveWaypoint(index, -1) }, enabled = canMove && index > 0) {
+                        Icon(Icons.Filled.KeyboardArrowUp, "Move up")
+                    }
+                    IconButton({ model.moveWaypoint(index, 1) }, enabled = canMove && index < points.lastIndex) {
+                        Icon(Icons.Filled.KeyboardArrowDown, "Move down")
+                    }
+                    if (index in 1 until points.lastIndex) IconButton({ model.removeStop(index - 1) }) {
+                        Icon(Icons.Filled.Close, "Remove stop")
+                    }
+                }
+                HorizontalDivider()
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                TextButton(model::reverseDirections) { Text("Reverse") }
+                if (!state.transit && state.stops.size < 8) TextButton({ close(); model.addingStop = true }) { Text("Add stop") }
+                TextButton({ name = draft?.name.orEmpty(); naming = true }, enabled = draft != null) { Text("Save route") }
+                TextButton({ draft?.let { ctx.share(it.shareText()) } }, enabled = draft != null) { Text("Share route") }
+            }
+        }
+    }
+    if (naming) AlertDialog(
+        onDismissRequest = { naming = false },
+        title = { Text("Save route") },
+        text = { OutlinedTextField(name, { name = it }, singleLine = true, label = { Text("Name") }) },
+        confirmButton = { TextButton({
+            model.routePlan(name)?.let { AppSettings.savedPlans = listOf(it) + AppSettings.savedPlans }
+            naming = false
+            close()
+        }, enabled = name.isNotBlank()) { Text("Save") } },
+        dismissButton = { TextButton({ naming = false }) { Text("Cancel") } })
 }
 
 @Composable
@@ -230,7 +302,7 @@ fun TripHeader(model: AppModel) {
         Column(Modifier.padding(horizontal = 18.dp).padding(bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             cards.forEachIndexed { i, r -> RouteCard(r, r.id == d.route?.id) { model.selectRoute(i) } }
             Box(Modifier.padding(top = 2.dp)) { ClosingLine(d) }
-            if (!d.reversed) Box(Modifier.padding(top = 2.dp)) { GoButton(model) }
+            Box(Modifier.padding(top = 2.dp)) { GoButton(model) }
             Row(Modifier.padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Box(Modifier.weight(1f)) { ModeTabs(model, d) }
                 RouteOptionsButton(model)
@@ -272,7 +344,7 @@ fun TripHeader(model: AppModel) {
         ClosingLine(d)
         if (d.transit && !d.reversed && d.pickedTrip != null)
             Button(model::startTransitNavigation, Modifier.fillMaxWidth()) { Text("Start transit navigation") }
-        if (!d.transit && !d.reversed && d.route != null) GoButton(model)
+        if (!d.transit && d.route != null) GoButton(model)
     }
 }
 

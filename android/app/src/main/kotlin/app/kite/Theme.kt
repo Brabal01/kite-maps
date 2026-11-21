@@ -73,6 +73,9 @@ object Vela {
 }
 
 /** Whether the screen is in dark colors right now. */
+data class MapChrome(val accent: Color?, val panel: Color?)
+val LocalMapChrome = staticCompositionLocalOf<MapChrome?> { null }
+
 val LocalDark = staticCompositionLocalOf { true }
 
 /** The rounded type, like the iPhone's SF Rounded. */
@@ -316,11 +319,12 @@ fun maneuverIcon(t: ManeuverType): ImageVector = when (t) {
  * map showing faintly through it and a thin bright edge. No shadow: one would show through the glass.
  */
 @Composable
-fun Modifier.glass(shape: Shape): Modifier {
+fun Modifier.glass(shape: Shape, solid: Boolean = false): Modifier {
     val dark = LocalDark.current
+    val surface = LocalMapChrome.current?.panel ?: Vela.surface(dark)
     return this
         .clip(shape)
-        .background(Vela.surface(dark).copy(alpha = if (dark) 0.84f else 0.88f))
+        .background(surface.copy(alpha = if (solid) 1f else if (dark) 0.84f else 0.88f))
         .border(0.75.dp, Color.White.copy(alpha = if (dark) 0.10f else 0.6f), shape)
 }
 
@@ -328,7 +332,7 @@ fun Modifier.glass(shape: Shape): Modifier {
 @Composable
 fun MapFab(icon: ImageVector, tint: Color? = null, size: Dp = 48.dp, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Box(modifier.size(size).glass(CircleShape).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
-        Icon(icon, null, tint = tint ?: primaryText, modifier = Modifier.size(size * 0.46f))
+        Icon(icon, null, tint = tint ?: LocalMapChrome.current?.accent ?: primaryText, modifier = Modifier.size(size * 0.46f))
     }
 }
 

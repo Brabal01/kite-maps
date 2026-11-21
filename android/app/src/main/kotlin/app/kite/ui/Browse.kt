@@ -72,7 +72,7 @@ fun BrowseOverlay(model: AppModel, showMapbox: Boolean) {
         // Map buttons: layers, parking and the 3D/2D/north-up button on the right, under the top cards.
         Column(Modifier.fillMaxSize().statusBarsPadding().padding(horizontal = 16.dp)) {
             Row(Modifier.fillMaxWidth().padding(top = if (idle) (if (model.resumeOffer != null) 266.dp else 166.dp) else 76.dp)) {
-                Spacer(Modifier.weight(1f))
+                if (!s.swapMapSides) Spacer(Modifier.weight(1f))
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     MapFab(Icons.Outlined.Layers) { model.showLayers = true }
                     if (s.parkingButton || s.parking != null) {
@@ -90,16 +90,11 @@ fun BrowseOverlay(model: AppModel, showMapbox: Boolean) {
             if (sheetH < full * 0.6f) {
                 Row(Modifier.fillMaxWidth().padding(bottom = if (hasSheet) (sheetH - navBottom).coerceAtLeast(0.dp) + 14.dp else 86.dp),
                     verticalAlignment = Alignment.Bottom) {
-                    if (idle) WazeMapChips(model)
+                    if (s.swapMapSides) LocateButton(model) else if (idle) WazeMapChips(model)
                     Spacer(Modifier.weight(1f))
-                    LocateButton(model)
+                    if (!s.swapMapSides) LocateButton(model) else if (idle) WazeMapChips(model)
                 }
             }
-        }
-
-        if (showMapbox && sheetH < full * 0.6f) {
-            MapboxAttribution(Modifier.align(Alignment.BottomCenter)
-                .padding(bottom = if (hasSheet) sheetH + 8.dp else navBottom + 86.dp))
         }
 
         AnimatedVisibility(hasSheet, Modifier.align(Alignment.BottomCenter), enter = slideInVertically { it }, exit = slideOutVertically { it }) {
@@ -121,6 +116,7 @@ fun BrowseOverlay(model: AppModel, showMapbox: Boolean) {
 
         Column(Modifier.fillMaxWidth().statusBarsPadding().padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             SearchBar(model, focused, { focused = it }, unfocus = { focus.clearFocus(); focused = false })
+            if (showMapbox && !focused) MapboxAttribution(Modifier.padding(start = 16.dp))
             if (focused) SuggestionsPanel(model) { focus.clearFocus(); focused = false }
             val n = model.notice
             if (n != null && !focused) NoticeBanner(n) { model.notice = null }
@@ -174,7 +170,7 @@ fun SearchBar(model: AppModel, focused: Boolean, onFocus: (Boolean) -> Unit, unf
         val text = r.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
         if (!text.isNullOrBlank()) { model.query = text; model.search(text) }
     }
-    Row(Modifier.padding(horizontal = 16.dp).fillMaxWidth().height(54.dp).glass(CircleShape).padding(start = 12.dp, end = 4.dp),
+    Row(Modifier.padding(horizontal = 16.dp).fillMaxWidth().height(54.dp).glass(CircleShape, AppSettings.solidMapSearch).padding(start = 12.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
         if (focused || model.results.isNotEmpty() || model.selected != null) {
             Box(Modifier.size(44.dp).clip(CircleShape).tap { if (focused) unfocus() else model.clearSearch() }, contentAlignment = Alignment.Center) {
@@ -189,7 +185,7 @@ fun SearchBar(model: AppModel, focused: Boolean, onFocus: (Boolean) -> Unit, unf
                 Modifier.fillMaxWidth().focusRequester(requester).onFocusChanged { if (it.isFocused != focused) onFocus(it.isFocused) },
                 singleLine = true,
                 textStyle = TextStyle(fontSize = 19.sp, fontWeight = FontWeight.Medium, color = primaryText, fontFamily = Rounded),
-                cursorBrush = SolidColor(Vela.accent(dark)),
+                cursorBrush = SolidColor(LocalMapChrome.current?.accent ?: Vela.accent(dark)),
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false, imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { unfocus(); model.search() }))
         }
@@ -225,7 +221,7 @@ fun SuggestionsPanel(model: AppModel, done: () -> Unit) {
     val clip = remember { ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager }
     // Only checks whether the clipboard looks like a link (its type), without reading it.
     val copiedLink = remember { clip.primaryClipDescription?.let { it.hasMimeType("text/plain") || it.hasMimeType("text/uri-list") } == true }
-    Column(Modifier.padding(horizontal = 12.dp).heightIn(max = 460.dp).glass(RoundedCornerShape(20.dp))
+    Column(Modifier.padding(horizontal = 12.dp).heightIn(max = 460.dp).glass(RoundedCornerShape(20.dp), AppSettings.solidMapSearch)
         .verticalScroll(rememberScrollState()).padding(vertical = 8.dp)) {
         val sug = model.suggestions
         if (model.query.isNotEmpty() && !(sug.places.isEmpty() && sug.queries.isEmpty())) {

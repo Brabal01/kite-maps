@@ -43,7 +43,8 @@ class TransitRideTests {
           {"type":"node","id":1,"lat":50.004,"lon":14.0002,"tags":{"highway":"traffic_signals"}},
           {"type":"node","id":2,"lat":50.0041,"lon":14.0002,"tags":{"highway":"traffic_signals"}},
           {"type":"node","id":3,"lat":50.007,"lon":14.001,"tags":{"highway":"stop"}},
-          {"type":"node","id":4,"lat":50.011,"lon":14,"tags":{"railway":"level_crossing"}}
+          {"type":"node","id":4,"lat":50.011,"lon":14,"tags":{"railway":"level_crossing"}},
+          {"type":"node","id":5,"lat":50.015,"lon":14.00016,"tags":{"railway":"level_crossing"}}
           ]}"""
         val projected = Overpass.projectControls(Overpass.parseRoadControls(raw.toByteArray()), line)
         assertEquals(listOf(Overpass.ControlKind.SIGNAL, Overpass.ControlKind.RAIL), projected.map { it.kind })

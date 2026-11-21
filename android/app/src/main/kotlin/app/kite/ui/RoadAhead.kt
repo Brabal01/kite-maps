@@ -17,6 +17,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -30,6 +31,7 @@ import app.kite.Fmt
 import app.kite.core.Overpass
 import app.kite.glass
 import app.kite.LocalDark
+import app.kite.LocalMapChrome
 import app.kite.primaryText
 import app.kite.secondaryText
 import app.kite.KType
@@ -37,7 +39,8 @@ import app.kite.KType
 private data class AheadMarker(val distance: Double, val name: String, val icon: ImageVector, val color: Color, val alert: WazeAlert? = null)
 
 @Composable
-fun RoadAheadStrip(nav: Navigator, modifier: Modifier = Modifier, showLabels: Boolean = true, onAlert: (WazeAlert) -> Unit = {}) {
+fun RoadAheadStrip(nav: Navigator, modifier: Modifier = Modifier, showLabels: Boolean = true,
+                   verticalHeight: androidx.compose.ui.unit.Dp? = null, onAlert: (WazeAlert) -> Unit = {}) {
     val progress = nav.progress ?: return
     if (progress.offRoute || progress.remainingMeters <= 0) return
     val start = progress.alongMeters
@@ -64,60 +67,66 @@ fun RoadAheadStrip(nav: Navigator, modifier: Modifier = Modifier, showLabels: Bo
         Color(0xFF000000 or MapIcons.wazeColor(it.alert.kind)), it.alert) }
     val markers = (reports + controls + cameras).sortedBy { it.distance }.toList()
 
-    Column(modifier.fillMaxWidth().glass(RoundedCornerShape(18.dp)).padding(horizontal = 12.dp, vertical = 6.dp)) {
-        if (showLabels) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Road ahead", color = primaryText, fontSize = KType.caption, fontWeight = FontWeight.SemiBold)
-                val congestion = traffic.minByOrNull { it.startMeters }
-                val status = congestion?.let {
-                    val label = when (it.level) {
-                        1 -> "Slow traffic"
-                        2 -> "Heavy traffic"
-                        else -> "Standstill traffic"
-                    }
-                    if (it.startMeters <= start) label else "$label · ${Fmt.distance(it.startMeters - start)}"
-                }
-                Text(status ?: Fmt.distance(range), color = secondaryText, fontSize = KType.caption)
+    val vertical = verticalHeight != null
+    val railColor = if (dark) Color(0xFF667994) else Color(0xFF90A6BC)
+    val railEdge = if (dark) Color(0xFF1E2B41) else Color(0xFFDCE6EF)
+    val origin = LocalMapChrome.current?.accent ?: if (dark) Color(0xFF82E6D8) else Color(0xFF0B8074)
+    val shape = RoundedCornerShape(if (vertical) 27.dp else 19.dp)
+    val stripSize = if (vertical) Modifier.width(51.dp).height(requireNotNull(verticalHeight))
+        else Modifier.fillMaxWidth()
+    Column(modifier.then(stripSize).glass(shape, solid = true).padding(if (vertical) 5.dp else 8.dp)) {
+        if (showLabels && !vertical) Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("Road ahead", color = primaryText, fontSize = KType.caption, fontWeight = FontWeight.SemiBold)
+            val incident = traffic.minByOrNull { it.startMeters }
+            val label = when (incident?.level) {
+                1 -> "Slow traffic"
+                2 -> "Heavy traffic"
+                3 -> "Standstill traffic"
+                else -> null
             }
+            Text(label?.let { if (incident != null && incident.startMeters > start)
+                "$it · ${Fmt.distance(incident.startMeters - start)}" else it } ?: Fmt.distance(range),
+                color = secondaryText, fontSize = KType.caption)
         }
-        val base = if (dark) Color(0xFF698298) else Color(0xFF9BABB6)
-        val startColor = if (dark) Color(0xFF87E8DA) else Color(0xFF007B70)
-        val dualRows = showLabels && markers.any { it.alert != null } && markers.any { it.alert == null }
-        val height = if (markers.isEmpty()) 12.dp else if (dualRows) 52.dp else 32.dp
-        BoxWithConstraints(Modifier.fillMaxWidth().height(height)) {
-            val width = (maxWidth - 24.dp).coerceAtLeast(1.dp)
-            Canvas(Modifier.fillMaxWidth().align(Alignment.BottomCenter).height(10.dp)) {
-                val left = 12.dp.toPx()
-                val right = size.width - left
-                val y = size.height / 2
-                fun x(along: Double) = left + ((along - start) / range).coerceIn(0.0, 1.0).toFloat() * (right - left)
-                drawLine(base, Offset(left, y), Offset(right, y), strokeWidth = 4.dp.toPx(), cap = StrokeCap.Round)
+        val badge = 32.dp
+        BoxWithConstraints(if (vertical) Modifier.fillMaxSize()
+            else Modifier.fillMaxWidth().height(if (markers.isEmpty()) 14.dp else 38.dp)) {
+            val length = (if (vertical) maxHeight else maxWidth) - badge
+            Canvas(Modifier.fillMaxSize()) {
+                val inset = (badge / 2).toPx()
+                fun point(distance: Double): Offset {
+                    val f = (distance / range).coerceIn(0.0, 1.0).toFloat()
+                    return if (vertical) Offset(size.width / 2, size.height - inset - f * (size.height - 2 * inset))
+                    else Offset(inset + f * (size.width - 2 * inset), size.height / 2)
+                }
+                drawLine(railEdge, point(0.0), point(range), strokeWidth = 12.dp.toPx(), cap = StrokeCap.Round)
+                drawLine(railColor, point(0.0), point(range), strokeWidth = 6.dp.toPx(), cap = StrokeCap.Round)
                 for (span in traffic) {
                     val color = when (span.level) {
                         1 -> Color(0xFFF59E0B)
                         2 -> Color(0xFFF05240)
-                        else -> Color(0xFFB91C3C)
+                        else -> Color(0xFFC01E40)
                     }
-                    drawLine(color, Offset(x(span.startMeters), y), Offset(x(span.startMeters + span.lengthMeters), y),
-                        strokeWidth = 4.dp.toPx(), cap = StrokeCap.Round)
+                    drawLine(color, point(span.startMeters - start), point(span.startMeters + span.lengthMeters - start),
+                        strokeWidth = 6.dp.toPx(), cap = StrokeCap.Round)
                 }
-                drawCircle(startColor, radius = 3.7.dp.toPx(), center = Offset(left, y))
+                drawCircle(origin, radius = 5.dp.toPx(), center = point(0.0))
             }
-            val spacing = range * (23.dp / width)
-            val rows = if (dualRows) markers.partition { it.alert != null }.let { listOf(it.first, it.second) }
-                else listOf(markers)
-            for ((row, candidates) in rows.withIndex()) {
-                var last = -spacing
-                for (marker in candidates) {
-                    if (marker.distance - last < spacing) continue
-                    last = marker.distance
-                    val offset = width * (marker.distance / range).toFloat()
-                    val action = marker.alert?.let { alert -> Modifier.clickable { onAlert(alert) } } ?: Modifier
-                    Box(Modifier.offset(x = offset + 1.dp, y = (row * 20).dp).size(22.dp)
-                        .background(marker.color.copy(alpha = 0.13f), CircleShape).then(action), contentAlignment = Alignment.Center) {
-                        Icon(marker.icon, "${marker.name}, ${Fmt.distance(marker.distance)} ahead", tint = marker.color,
-                            modifier = Modifier.size(16.dp))
-                    }
+            val spacing = range * ((badge + 3.dp) / length.coerceAtLeast(1.dp))
+            var last = -spacing
+            for (marker in markers) {
+                if (marker.distance - last < spacing) continue
+                last = marker.distance
+                val offset = length * (marker.distance / range).toFloat()
+                val action = marker.alert?.let { alert -> Modifier.clickable { onAlert(alert) } } ?: Modifier
+                val position = if (vertical) Modifier.align(Alignment.TopCenter).offset(y = length - offset)
+                    else Modifier.align(Alignment.CenterStart).offset(x = offset)
+                Box(position.size(badge).background(marker.color.copy(alpha = 0.23f), CircleShape)
+                    .then(action), contentAlignment = Alignment.Center) {
+                    Icon(marker.icon, "${marker.name}, ${Fmt.distance(marker.distance)} ahead",
+                        tint = if (marker.color.luminance() < 0.20f && dark) Color.White else marker.color,
+                        modifier = Modifier.size(23.dp))
                 }
             }
         }

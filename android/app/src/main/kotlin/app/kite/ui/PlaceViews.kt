@@ -97,9 +97,36 @@ fun PlaceBody(model: AppModel, place: Place) {
         }
         return
     }
-    val ctx = LocalContext.current
     var tab by remember(place.id) { mutableIntStateOf(0) }
+    val mediaId = place.featureId.takeUnless { AppSettings.noGoogle }
+    val canReview = mediaId != null && (place.reviewCount ?: 1) > 0
+    var reviews by remember(mediaId) { mutableStateOf<List<PlaceReview>?>(null) }
+    var reviewsFailed by remember(mediaId) { mutableStateOf(false) }
+    var attempt by remember(mediaId) { mutableIntStateOf(0) }
+    var gallery by remember(mediaId) { mutableStateOf<List<String>?>(null) }
     var driveSeconds by remember(place.id) { mutableStateOf<Double?>(null) }
+    LaunchedEffect(mediaId, canReview, attempt) {
+        if (mediaId == null || !canReview) return@LaunchedEffect
+        reviewsFailed = false
+        try {
+            reviews = GoogleClient.shared.reviews(mediaId)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            reviewsFailed = true
+        }
+    }
+    LaunchedEffect(mediaId) {
+        gallery = if (mediaId == null) emptyList() else try {
+            GoogleClient.shared.photos(mediaId)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+    val previews = if (AppSettings.noGoogle) place.photoUrls.filterNot(::isGooglePhoto) else place.photoUrls
+    val photos = (gallery.orEmpty() + previews).distinctBy { it.substringBeforeLast("=w") }
     LaunchedEffect(place.id) {
         val from = model.userLatLng ?: return@LaunchedEffect
         val d = from.distanceTo(place.location)
@@ -110,14 +137,15 @@ fun PlaceBody(model: AppModel, place: Place) {
         if (r.isNullOrEmpty()) r = runCatching { OSRM.route(from, place.location, TravelMode.DRIVE) }.getOrNull()
         driveSeconds = r?.minOfOrNull { it.durationSeconds }
     }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 80.dp),
+    val scroll = rememberScrollState()
+    LaunchedEffect(tab) { scroll.scrollTo(0) }
+    Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(horizontal = 16.dp).padding(bottom = 80.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)) {
         PlaceActions(model, place, driveSeconds)
-        val googleMedia = !AppSettings.noGoogle && place.featureId != null
         val mediaTabs = buildList {
             add("Overview")
-            if (googleMedia && (place.reviewCount ?: 1) > 0) add("Reviews")
-            if (googleMedia || place.photoUrls.isNotEmpty()) add("Photos")
+            if (canReview) add("Reviews")
+            if (mediaId != null || photos.isNotEmpty()) add("Photos")
             if (place.about.isNotEmpty()) add("About")
         }
         val selectedTab = mediaTabs.getOrNull(tab) ?: "Overview"
@@ -131,12 +159,19 @@ fun PlaceBody(model: AppModel, place: Place) {
             }
         }
         when (selectedTab) {
-            "Reviews" -> PlaceReviews(place)
-            "Photos" -> PlacePhotos(place)
+            "Reviews" -> PlaceReviews(place, reviews, reviewsFailed) { attempt++ }
+            "Photos" -> PlacePhotos(place, photos, loading = mediaId != null && gallery == null)
             "About" -> PlaceAbout(place)
             else -> {
-                PhotoStrip(place.photoUrls, 140.dp, opensViewer = true, streetView = place, model = model)
+                PhotoStrip(photos.take(5), 140.dp, opensViewer = true, streetView = place, model = model)
+                if (photos.isNotEmpty()) TextButton({ tab = mediaTabs.indexOf("Photos") }) { Text("See more photos") }
                 PlaceOverview(place)
+                if (reviews.orEmpty().isNotEmpty() || canReview && !place.featuredReview.isNullOrBlank()) {
+                    Text("Reviews", fontWeight = FontWeight.Bold, color = primaryText, fontSize = KType.headline)
+                    if (reviews.orEmpty().isEmpty()) place.featuredReview?.let { Text(it, color = secondaryText) }
+                    reviews.orEmpty().take(3).forEach { ReviewRow(it) }
+                    TextButton({ tab = mediaTabs.indexOf("Reviews") }) { Text("See more reviews") }
+                }
             }
         }
         val attribution = when (place.source) {
@@ -149,53 +184,18 @@ fun PlaceBody(model: AppModel, place: Place) {
 }
 
 @Composable
-private fun PlaceReviews(place: Place) {
+private fun PlaceReviews(place: Place, reviews: List<PlaceReview>?, failed: Boolean, retry: () -> Unit) {
     val ctx = LocalContext.current
-    val id = place.featureId ?: return
-    var reviews by remember(id) { mutableStateOf<List<PlaceReview>?>(null) }
-    var failed by remember(id) { mutableStateOf(false) }
-    var attempt by remember(id) { mutableIntStateOf(0) }
-    var openWeb by remember(id) { mutableStateOf(false) }
-    LaunchedEffect(id, attempt) {
-        failed = false
-        try {
-            reviews = GoogleClient.shared.reviews(id)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {
-            failed = true
-        }
-    }
+    var openWeb by remember(place.id) { mutableStateOf(false) }
     if (failed) {
         Text("Reviews are temporarily unavailable.", color = secondaryText)
-        TextButton({ attempt++ }) { Text("Try again") }
+        TextButton(retry) { Text("Try again") }
     } else if (reviews == null) {
         CircularProgressIndicator(Modifier.size(26.dp))
     } else if (reviews.orEmpty().isEmpty()) {
         Text(place.featuredReview ?: "No reviews returned for this place.", color = secondaryText)
     }
-    reviews.orEmpty().forEach { review ->
-        Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-            Text(review.author, fontWeight = FontWeight.Bold, color = primaryText)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                review.stars?.let { rating ->
-                    val stars = rating.coerceIn(0, 5)
-                    Row(Modifier.semantics { contentDescription = "$stars out of 5 stars" }) {
-                        repeat(5) { index ->
-                            val filled = index < stars
-                            Icon(if (filled) Icons.Filled.Star else Icons.Outlined.StarBorder, null,
-                                tint = if (filled) Color(if (LocalDark.current) 0xFFFFC55E else 0xFF985300) else secondaryText,
-                                modifier = Modifier.size(17.dp))
-                        }
-                    }
-                }
-                review.relativeTime?.let { Text(it, fontSize = KType.caption, color = secondaryText) }
-            }
-            review.text?.let { Text(it, color = primaryText) }
-            if (review.photos.isNotEmpty()) PhotoStrip(review.photos, 82.dp, opensViewer = true)
-        }
-        HorizontalDivider()
-    }
+    reviews.orEmpty().forEach { ReviewRow(it) }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         TextButton({ openWeb = true }) { Text("Read all reviews") }
         TextButton({ ctx.open(place.shareUrl) }) { Text("Open Google Maps") }
@@ -204,23 +204,34 @@ private fun PlaceReviews(place: Place) {
 }
 
 @Composable
-private fun PlacePhotos(place: Place) {
-    val ctx = LocalContext.current
-    val id = place.featureId.takeUnless { AppSettings.noGoogle }
-    val previews = if (AppSettings.noGoogle) place.photoUrls.filterNot(::isGooglePhoto) else place.photoUrls
-    var gallery by remember(id) { mutableStateOf<List<String>?>(null) }
-    var viewing by remember(place.id) { mutableStateOf<Int?>(null) }
-    LaunchedEffect(id) {
-        gallery = if (id == null) emptyList() else try {
-            GoogleClient.shared.photos(id)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {
-            emptyList()
+private fun ReviewRow(review: PlaceReview) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Text(review.author, fontWeight = FontWeight.Bold, color = primaryText)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            review.stars?.let { rating ->
+                val stars = rating.coerceIn(0, 5)
+                Row(Modifier.semantics { contentDescription = "$stars out of 5 stars" }) {
+                    repeat(5) { index ->
+                        val filled = index < stars
+                        Icon(if (filled) Icons.Filled.Star else Icons.Outlined.StarBorder, null,
+                            tint = if (filled) Color(if (LocalDark.current) 0xFFFFC55E else 0xFF985300) else secondaryText,
+                            modifier = Modifier.size(17.dp))
+                    }
+                }
+            }
+            review.relativeTime?.let { Text(it, fontSize = KType.caption, color = secondaryText) }
         }
+        review.text?.let { Text(it, color = primaryText) }
+        if (review.photos.isNotEmpty()) PhotoStrip(review.photos, 82.dp, opensViewer = true)
     }
-    val photos = (previews + gallery.orEmpty()).distinctBy { it.substringBeforeLast("=w") }
-    if (gallery == null && id != null) CircularProgressIndicator(Modifier.size(26.dp))
+    HorizontalDivider()
+}
+
+@Composable
+private fun PlacePhotos(place: Place, photos: List<String>, loading: Boolean) {
+    val ctx = LocalContext.current
+    var viewing by remember(place.id) { mutableStateOf<Int?>(null) }
+    if (loading) CircularProgressIndicator(Modifier.size(26.dp))
     photos.chunked(3).forEachIndexed { row, urls ->
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             urls.forEachIndexed { col, url ->
@@ -231,8 +242,8 @@ private fun PlacePhotos(place: Place) {
             repeat(3 - urls.size) { Spacer(Modifier.weight(1f)) }
         }
     }
-    if (photos.isEmpty() && gallery != null) Text("No photos returned for this place.", color = secondaryText)
-    if (id != null) TextButton({ ctx.open(place.shareUrl) }) { Text("More photos on Google Maps") }
+    if (photos.isEmpty() && !loading) Text("No photos returned for this place.", color = secondaryText)
+    if (place.featureId != null && !AppSettings.noGoogle) TextButton({ ctx.open(place.shareUrl) }) { Text("More photos on Google Maps") }
     viewing?.takeIf { it in photos.indices }?.let { PhotoViewer(photos, it) { viewing = null } }
 }
 

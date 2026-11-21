@@ -17,6 +17,7 @@ class TransitGuidance(val trip: TransitTrip, val destination: Place) {
     var walkingError by mutableStateOf(false)
     var boarding by mutableStateOf(false)
     var liveDeparture by mutableStateOf<Transitous.Departure?>(null)
+    var overviewing by mutableStateOf(false)
     var following by mutableStateOf(true)
     var fix by mutableStateOf<Fix?>(null)
         private set
@@ -27,6 +28,7 @@ class TransitGuidance(val trip: TransitTrip, val destination: Place) {
     var lastAlongAt by mutableStateOf<Long?>(null)
         private set
     private var tracker: TransitRide? = null
+    private var departureMotion: TransitBoarding? = null
     private var toldExit = false
     private var closeFixes = 0
     private var boardedAt = 0L
@@ -49,7 +51,11 @@ class TransitGuidance(val trip: TransitTrip, val destination: Place) {
             false -> Phase.BOARD
             null -> Phase.COMPLETE
         }
-        if (phase == Phase.BOARD) announce("At ${leg?.fromName}. Board ${leg?.line} toward ${leg?.headsign ?: leg?.toName}.")
+        departureMotion = leg?.takeIf { phase == Phase.BOARD }?.let { ride ->
+            (ride.calls.firstOrNull()?.at ?: ride.path.firstOrNull())?.let { TransitBoarding(ride.path, it) }
+        }
+        fix?.let { shouldAutoBoard(it) }
+        if (phase == Phase.BOARD) announce("Board ${leg?.line} at ${leg?.fromName} toward ${leg?.headsign ?: leg?.toName}.")
         if (phase == Phase.COMPLETE) announce("You have arrived at ${destination.name}.")
     }
 
@@ -82,6 +88,11 @@ class TransitGuidance(val trip: TransitTrip, val destination: Place) {
         } else if (update.nextChanged) sayNext(nextStop, scheduled = false)
         closeFixes = if (nearExit && f.accuracy in 0.0..75.0) closeFixes + 1 else 0
         return closeFixes >= 2 && (!f.speedKnown || f.speed < 4)
+    }
+
+    fun shouldAutoBoard(f: Fix): Boolean {
+        if (phase != Phase.BOARD || boarding || f.ageMs !in 0..15_000) return false
+        return departureMotion?.observe(f.coord, f.accuracy, f.speed, f.course, f.timeMillis, liveDeparture?.time ?: leg?.depart) == true
     }
 
     fun scheduledNext(time: Long) = tracker?.scheduledNext(time)

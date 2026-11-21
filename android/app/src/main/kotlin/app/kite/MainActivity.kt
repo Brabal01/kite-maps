@@ -114,16 +114,29 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
     val driving = model.nav?.route?.mode == app.kite.core.TravelMode.DRIVE
     val mapboxToken = s.activeMapboxToken
     val satellite = s.satellite
+    var clock by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(s.mapStyleMode) {
+        while (s.mapStyleMode == MapStyleMode.SUN) {
+            clock = System.currentTimeMillis()
+            kotlinx.coroutines.delay(60_000)
+        }
+    }
+    val mapDark = when (s.mapStyleMode) {
+        MapStyleMode.SYSTEM -> dark
+        MapStyleMode.LIGHT -> false
+        MapStyleMode.DARK -> true
+        MapStyleMode.SUN -> app.kite.core.Daylight.isDark(LocationService.last?.coord ?: model.viewport.first, clock)
+    }
     val standardToken = mapboxToken.takeIf { s.standardMap && s.welcomed }
     LaunchedEffect(standardToken) { scenery.allowRetry() }
     val usableStandardToken = standardToken.takeUnless { scenery.failed }
     val standardReady = usableStandardToken != null && scenery.ready
     val showingMapbox = standardReady || kiteMap.showingMapbox
-    val look = MapboxScenery.Look(dark, satellite, s.terrain3D, s.terrain, s.buildingShadows, s.streetLamps, s.traffic && !driving,
-        if (dark) s.nightMapPalette else s.dayMapPalette)
+    val look = MapboxScenery.Look(mapDark, satellite, s.terrain3D, s.terrain, s.buildingShadows, s.streetLamps, s.traffic && !driving,
+        if (mapDark) s.nightMapPalette else s.dayMapPalette, driving)
     LaunchedEffect(look) { scenery.setLook(look) }
-    LaunchedEffect(dark, driving, satellite, mapboxToken, standardReady) {
-        kiteMap.applyBasemap(dark, driving, satellite && !standardReady, mapboxToken.takeUnless { standardReady })
+    LaunchedEffect(mapDark, driving, satellite, mapboxToken, standardReady) {
+        kiteMap.applyBasemap(mapDark, driving, satellite && !standardReady, mapboxToken.takeUnless { standardReady })
     }
     LaunchedEffect(s.googleMapPlaces, s.openMapPlaces, s.openPlaceGroups, s.hikingTrails, s.bikeTrails, s.transitLines, s.noGoogle, model.tab, model.nav, model.transitGuidance, model.directions, model.selected?.id, model.results.isEmpty()) {
         kiteMap.refreshGooglePlaces()
@@ -134,7 +147,7 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
     // Redraw the map's layers whenever anything they show changes.
     LaunchedEffect(Unit) {
         snapshotFlow {
-            listOf(model.mapTick, model.results, model.selected?.id, model.directions, model.nav, model.nav?.following, model.transitGuidance?.legIndex, model.stopSearch, model.measurement, model.nav?.routeWaze, model.nav?.roadControls, model.nav?.roadTraffic, model.openNowOnly, model.rating4Only,
+            listOf(model.mapTick, model.results, model.selected?.id, model.directions, model.nav, model.nav?.following, model.transitGuidance?.legIndex, model.transitGuidance?.overviewing, model.stopSearch, model.measurement, model.nav?.routeWaze, model.nav?.roadControls, model.nav?.roadTraffic, model.openNowOnly, model.rating4Only,
                 s.traffic, s.satellite, s.terrain, s.transitLines, s.speedCameras, s.plateCameras, s.wazeOnMap, s.wazeHeatmap,
                 s.home, s.work, s.parking, s.saved, LocationService.authorized, model.tab,
                 s.welcomed, s.noGoogle, s.surveillanceCameras, s.wazeOn, s.wazeKinds, s.wazeMaxAge,
@@ -179,7 +192,13 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
         )
 
         val nav = model.nav
-        CompositionLocalProvider(LocalMapboxAttribution provides if (standardReady) scenery::openAttribution else null) {
+        fun color(value: String?) = value?.let { androidx.compose.ui.graphics.Color(android.graphics.Color.parseColor(it)) }
+        val chrome = if (model.tab == AppTab.MAP || nav != null || model.directions != null)
+            MapChrome(color(s.mapUiAccent), color(if (dark) s.mapUiNightPanel else s.mapUiDayPanel)) else null
+        CompositionLocalProvider(
+            LocalMapboxAttribution provides if (standardReady) scenery::openAttribution else null,
+            LocalMapChrome provides chrome,
+        ) {
             when {
                 model.placingStop -> StopPinOverlay(model, showingMapbox) { scenery.centerPoint() ?: kiteMap.centerPoint() }
                 model.stopSearch != null -> StopMapOverlay(model, showingMapbox)

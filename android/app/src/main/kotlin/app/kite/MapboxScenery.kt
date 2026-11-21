@@ -53,7 +53,7 @@ import kotlin.math.floor
 class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
     data class Look(val dark: Boolean, val satellite: Boolean, val terrain: Boolean, val shade: Boolean,
                     val shadows: Boolean, val lamps: Boolean, val traffic: Boolean = true,
-                    val palette: MapPalette = MapPalette.default(dark))
+                    val palette: MapPalette = MapPalette.default(dark), val driving: Boolean = false)
 
     private var view: MapView? = null
     private var attributionDialog: AttributionDialogManagerImpl? = null
@@ -157,14 +157,14 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
                 true
             } else if (!model.placingStop && model.nav == null && model.directions == null) {
                 val pixel = map.pixelForCoordinate(point)
-                map.queryRenderedFeatures(RenderedQueryGeometry(pixel), RenderedQueryOptions(listOf(KiteMap.TRANSIT_STOPS, GOOGLE_PLACES, OpenMapStyle.POIS, KiteMap.GOOGLE_UNREVIEWED), null)) { result ->
+                map.queryRenderedFeatures(RenderedQueryGeometry(pixel), RenderedQueryOptions(listOf("kite-search-hit", "kite-vela-results", KiteMap.TRANSIT_STOPS, GOOGLE_PLACES, OpenMapStyle.POIS, KiteMap.GOOGLE_UNREVIEWED), null)) { result ->
                     val feature = result.value?.firstOrNull()?.queriedFeature?.feature
                     val loc = feature?.geometry() as? Point
                     if (feature == null || loc == null) kite.sceneTap(point.kite())
                     else {
                         fun str(key: String) = feature.getProperty(key)?.takeIf { it.isJsonPrimitive }?.asString
                         val id = str("id")
-                        if (!kite.openOutdoorPlace(id) && !kite.openGooglePlace(id)) {
+                        if (!kite.openSearchResult(id) && !kite.openOutdoorPlace(id) && !kite.openGooglePlace(id)) {
                             val subclass = str("subclass")
                             val klass = str("class")
                             val name = OpenMapStyle.title(str("name"), subclass, klass)
@@ -196,6 +196,7 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
                 movingFromTouch = true
                 model.nav?.following = false
                 model.transitGuidance?.following = false
+                model.stopTransitOverview()
                 model.browseFollowing = false
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
@@ -217,7 +218,7 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
         val previous = look
         if (previous == value) return
         look = value
-        if (previous.satellite != value.satellite) load() else style?.let { applyLook(it, previous) }
+        style?.let { applyLook(it, previous) }
     }
 
     fun syncFromKite(camera: CameraPosition) {
@@ -300,7 +301,7 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
         lastLampCell = null
         lastLampCenter = null
         lampRequestAt = 0L
-        val uri = if (look.satellite) Style.STANDARD_SATELLITE else Style.STANDARD
+        val uri = Style.STANDARD
         val request = ++styleRequest
         watchdog?.cancel()
         watchdog = model.scope.launch {
@@ -312,6 +313,7 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
             watchdog?.cancel()
             try {
                 style = loaded
+                addBasemapDetails(loaded)
                 addOverlays(loaded)
                 addPlaces(loaded)
                 applyOutdoorLayers(loaded)
@@ -343,18 +345,28 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
             else st.addImage("puck", MapIcons.puck(look.dark))
         }
         val paletteChanged = previous?.palette != look.palette
-        if (themeChanged || (paletteChanged && !look.satellite)) {
+        if (themeChanged || paletteChanged || previous.satellite != look.satellite || previous.driving != look.driving) {
             val configs = hashMapOf(
-                "lightPreset" to Value.valueOf(if (look.dark) "night" else "day"),
+                "lightPreset" to Value.valueOf(if (look.dark && !look.satellite) "night" else "day"),
                 "showPointOfInterestLabels" to Value.valueOf(false),
             )
+            for (key in listOf("show3dObjects", "show3dTrees", "show3dLandmarks"))
+                configs[key] = Value.valueOf(!look.satellite)
+            configs["showHdRoads"] = Value.valueOf(look.driving && !look.satellite)
             if (!look.satellite) {
-                for (key in listOf("show3dObjects", "show3dTrees", "show3dLandmarks"))
-                    configs[key] = Value.valueOf(true)
                 for (field in MapColor.entries) field.styleKey?.let { configs[it] = Value.valueOf(look.palette[field]) }
                 configs["colorTrunks"] = Value.valueOf(look.palette[MapColor.HIGHWAYS])
             }
             st.setStyleImportConfigProperties("basemap", configs)
+            fun visible(id: String, on: Boolean) {
+                st.setStyleLayerProperty(id, "visibility", Value.valueOf(if (on) "visible" else "none"))
+            }
+            visible("kite-satellite-imagery", look.satellite)
+            visible("kite-driving-side-streets", look.driving && !look.satellite)
+            visible("kite-oneway", look.driving)
+            st.setStyleLayerProperty("kite-driving-side-streets", "line-color", Value.valueOf(if (look.dark) "#74839C" else "#FFFFFF"))
+            st.setStyleLayerProperty("kite-oneway", "text-color", Value.valueOf(if (look.dark || look.satellite) "#F4F7FF" else "#40536A"))
+            st.setStyleLayerProperty("kite-oneway", "text-halo-color", Value.valueOf(if (look.dark || look.satellite) "#203045" else "#FFFFFF"))
         }
         if (paletteChanged) {
             val color = look.palette[MapColor.ROUTE]
@@ -403,10 +415,31 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
             st.setStyleLayerProperty(TRAFFIC, "visibility", Value.valueOf(if (look.traffic) "visible" else "none"))
     }
 
+    private fun addBasemapDetails(st: Style) {
+        st.addSource(RasterSource.Builder("kite-satellite-imagery").url("mapbox://mapbox.satellite").tileSize(256).build())
+        st.addLayer(RasterLayer("kite-satellite-imagery", "kite-satellite-imagery").slot("middle").visibility(Visibility.NONE))
+        st.addSource(VectorSource.Builder("kite-streets-details").url("mapbox://mapbox.mapbox-streets-v8").build())
+        val street = """["all",["==",["geometry-type"],"LineString"],
+            ["match",["get","class"],["street","street_limited","tertiary","service","secondary"],true,false]]"""
+        st.addLayer(LineLayer("kite-driving-side-streets", "kite-streets-details").sourceLayer("road").slot("middle")
+            .minZoom(14.5).filter(Expression.fromRaw(street)).lineCap(LineCap.ROUND).lineEmissiveStrength(0.35)
+            .lineWidth(Expression.fromRaw("""["interpolate",["linear"],["zoom"],14,1.3,16,2.7,19,5.0]"""))
+            .lineOpacity(0.68).visibility(Visibility.NONE))
+        st.addLayer(SymbolLayer("kite-oneway", "kite-streets-details").sourceLayer("road").slot("top")
+            .minZoom(15.7).filter(Expression.fromRaw("""["all",$street,["==",["to-string",["get","oneway"]],"true"]]"""))
+            .symbolPlacement(SymbolPlacement.LINE).symbolSpacing(110.0).textField("→").textSize(15.0)
+            .textKeepUpright(false).textRotationAlignment(TextRotationAlignment.MAP).textHaloWidth(0.8)
+            .textHaloColor(if (look.dark) "#203045" else "#FFFFFF").visibility(Visibility.NONE))
+    }
+
     private fun addOverlays(st: Style) {
         for (id in overlaySources) st.addSource(GeoJsonSource.Builder(id).data(overlayData[id] ?: EMPTY).build())
         fun line(id: String, source: String, color: Int, width: Double) = LineLayer(id, source).slot("middle")
             .lineColor(color).lineWidth(width).lineCap(LineCap.ROUND).lineJoin(LineJoin.ROUND).lineEmissiveStrength(0.9)
+        st.addLayer(HeatmapLayer("kite-police-density", "vela-waze-heat").slot("middle").minZoom(5.0)
+            .heatmapRadius(Expression.fromRaw("""["interpolate",["linear"],["zoom"],5,13,13,32,17,42]"""))
+            .heatmapIntensity(1.3).heatmapOpacity(0.75)
+            .heatmapColor(Expression.fromRaw("""["interpolate",["linear"],["heatmap-density"],0,"rgba(66,98,240,0)",0.2,"#5374F4",0.55,"#9259EC",1,"#EF76D9"]""")))
         st.addLayer(line("kite-done", "vela-route-done", 0xFF68778E.toInt(), 7.0))
         st.addLayer(line("kite-alt", "vela-route-alt", 0xFF90BCD1.toInt(), 6.0))
         st.addLayer(line("kite-edge", "vela-route", 0xFF075964.toInt(), 13.0))
@@ -425,21 +458,29 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
         st.addLayer(CircleLayer(KiteMap.RIDE_STOPS, KiteMap.RIDE_STOPS).slot("top").circleRadius(5.5)
             .circleColor("#3659B0").circleStrokeColor(Color.WHITE).circleStrokeWidth(2.0).circleEmissiveStrength(1.0))
         st.addLayer(line("kite-turn-arrow", "vela-turn-arrow", Color.WHITE, 4.0))
+        st.addLayer(CircleLayer("kite-search-hit", "vela-results").slot("top").circleRadius(22.0)
+            .circleColor("#164B9F").circleStrokeColor("#C4E1FF").circleStrokeWidth(3.0).circleEmissiveStrength(1.0)
+            .circlePitchAlignment(CirclePitchAlignment.VIEWPORT).circlePitchScale(CirclePitchScale.VIEWPORT))
         val iconSources = mapOf(
             "vela-mine" to null, "vela-results" to null, "vela-selected" to null, "vela-waze" to null,
             "vela-waze-group" to null, "vela-cameras" to null, "vela-livecams" to null,
             "vela-signals" to null, "vela-turn-head" to "turn-head", NavGlide.PUCK to "puck",
         )
         for ((source, image) in iconSources) {
-            val layer = SymbolLayer("kite-$source", source).slot("top").iconSize(if (source == NavGlide.PUCK) 0.68 else 0.78)
-                .iconAllowOverlap(source in setOf(NavGlide.PUCK, "vela-selected", "vela-waze", "vela-turn-head"))
+            val layer = SymbolLayer("kite-$source", source).slot("top").iconSize(when (source) {
+                NavGlide.PUCK -> 0.68
+                "vela-results", "vela-signals", "vela-waze", "vela-waze-group", "vela-cameras" -> 1.17
+                else -> 0.78
+            }).iconAllowOverlap(source in setOf(NavGlide.PUCK, "vela-results", "vela-selected", "vela-waze", "vela-turn-head"))
             if (image == null) layer.iconImage(Expression.get("icon")) else layer.iconImage(image)
             if (source == "vela-signals") layer.minZoom(13.3).iconAllowOverlap(true)
             if (source == "vela-waze-group") layer.iconAllowOverlap(true)
             if (source == NavGlide.PUCK || source == "vela-turn-head") layer
                 .iconRotate(Expression.get("bearing")).iconRotationAlignment(IconRotationAlignment.MAP)
             if (source == "vela-mine" || source == "vela-results" || source == "vela-selected") layer
-                .textField(Expression.get("label")).textSize(12.0).textAnchor(TextAnchor.TOP).textOffset(listOf(0.0, 1.4))
+                .textField(Expression.get("label")).textSize(if (source == "vela-results") 14.0 else 12.0)
+                .textAnchor(TextAnchor.TOP).textOffset(listOf(0.0, if (source == "vela-results") 1.9 else 1.4))
+                .textOptional(true)
                 .textColor(if (look.dark) Color.WHITE else 0xFF23364B.toInt())
                 .textHaloColor(if (look.dark) 0xFF21304A.toInt() else Color.WHITE).textHaloWidth(1.5)
             st.addLayer(layer)
@@ -622,6 +663,6 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
         private const val LAMP_POOL = "kite-lamp-pool"
         private val overlaySources = setOf(LOCATION, NavGlide.PUCK, "vela-route", "vela-route-done", "vela-route-alt",
             "vela-route-traffic", "vela-turn-arrow", "vela-turn-head", "vela-transit", "vela-results", "vela-selected",
-            "vela-mine", "vela-waze", "vela-waze-group", "vela-cameras", "vela-livecams", "vela-signals", "kite-google-places", "kite-measure", "vela-rail", KiteMap.TRANSIT_STOPS, KiteMap.RIDE_STOPS, StopSearch.PINS)
+            "vela-mine", "vela-waze", "vela-waze-group", "vela-cameras", "vela-livecams", "vela-signals", "vela-waze-heat", "kite-google-places", "kite-measure", "vela-rail", KiteMap.TRANSIT_STOPS, KiteMap.RIDE_STOPS, StopSearch.PINS)
     }
 }

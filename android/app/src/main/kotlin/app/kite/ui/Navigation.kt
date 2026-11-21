@@ -76,6 +76,13 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
     val ctx = LocalContext.current
     var showSteps by remember { mutableStateOf(false) }
     var confirmEnd by remember { mutableStateOf(false) }
+    val parkingShown = nav.offerParking && !confirmEnd
+    LaunchedEffect(nav, parkingShown) {
+        if (parkingShown) {
+            delay(10_000)
+            nav.dismissParkingOffer()
+        }
+    }
     var turnPreview by remember(nav) { mutableStateOf(false) }
     // Screenshot run: the end trip question.
     if (DemoScript.step == "endtrip") LaunchedEffect(Unit) { kotlinx.coroutines.delay(4000); confirmEnd = true }
@@ -121,6 +128,8 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
         val w = maxWidth
         val showRoadAhead = AppSettings.roadAheadStrip && nav.route.mode == TravelMode.DRIVE &&
             !nav.arrived && !confirmEnd && (h >= 480.dp || mainAlert == null)
+        val roadPosition = AppSettings.roadStripPosition
+        val bottomStrip = showRoadAhead && roadPosition == RoadStripPosition.BOTTOM
         // The car, while the camera follows it: always at the same spot, pointing up the screen and
         // lying flat on the tilted map.
         // In 2D it lies round, and north up it moves up to the middle and turns the way you're going.
@@ -141,7 +150,7 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
         if (nav.following && !nav.arrived && !chipShowing && road != null) {
             // On a short phone (360 x 800) that spot is behind the trip bar: keep it just above the bar instead.
             val barTop = h - WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() -
-                (if (showRoadAhead) 124.dp else 68.dp)
+                (if (bottomStrip) 124.dp else 68.dp)
             val pillTop = minOf(NavGlide.carY(h.value, if (north) 1f else 0f).dp + 46.dp - 15.dp, barTop - 30.dp - 8.dp)
             Box(Modifier.fillMaxWidth().offset(y = pillTop), contentAlignment = Alignment.TopCenter) {
                 Text(road, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = primaryText, maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -150,12 +159,16 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
             }
         }
 
-        if (showMapbox) MapboxAttribution(Modifier.align(Alignment.BottomCenter).navigationBarsPadding()
-            .padding(bottom = if (showRoadAhead) 128.dp else 73.dp))
+        if (showRoadAhead && (roadPosition == RoadStripPosition.LEFT || roadPosition == RoadStripPosition.RIGHT)) {
+            val side = if (roadPosition == RoadStripPosition.LEFT) Alignment.CenterStart else Alignment.CenterEnd
+            RoadAheadStrip(nav, Modifier.align(side).padding(horizontal = 8.dp).offset(y = (-28).dp),
+                showLabels = false, verticalHeight = (h * 0.3f).coerceIn(120.dp, 280.dp)) { model.wazeInfo = it }
+        }
 
         // One column, so however many warnings are up, they push the map buttons down rather than cover them.
         Column(Modifier.fillMaxSize().systemBarsPadding(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Column(Modifier.padding(horizontal = 12.dp).padding(top = 4.dp).animateContentSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(Modifier.padding(horizontal = 12.dp).padding(top = 4.dp).animateContentSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (showMapbox) MapboxAttribution()
                 if (nav.arrived) {
                     ArrivedCard(nav.destination.name, if (nav.route.mode == TravelMode.DRIVE) ({ model.saveParking() }) else null,
                         note = if (nav.wazeWarned > 0) "Waze drivers warned you about ${nav.wazeWarned} report${if (nav.wazeWarned == 1) "" else "s"} on the way" else null) {
@@ -226,54 +239,64 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
                     }
                 }
             }
+            if (showRoadAhead && roadPosition == RoadStripPosition.TOP)
+                RoadAheadStrip(nav, Modifier.padding(horizontal = 12.dp), showLabels = h >= 550.dp) { model.wazeInfo = it }
             Spacer(Modifier.weight(1f))
             Row(Modifier.padding(horizontal = 16.dp).fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    // A Waze police card already says it louder; the chip comes back when it's gone.
-                    // On a short phone a warning card plus lanes leaves no room: the chip gives way to the card.
-                    // The same when the next speed limit is up: on a short phone the column would reach the cards.
-                    val limitDrop = nav.limitDropAhead
-                    if (showRiskChip && risk != null && !((mainAlert != null || limitDrop != null) && h < 700.dp)) PoliceRiskChip(risk)
-                    if (nav.route.mode == TravelMode.DRIVE && !nav.arrived) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                            MapFab(Icons.Filled.Remove, size = 48.dp,
-                                modifier = Modifier.semantics { contentDescription = "Zoom out" }) { model.zoomNavigation(-1) }
-                            MapFab(Icons.Filled.Add, size = 48.dp,
-                                modifier = Modifier.semantics { contentDescription = "Zoom in" }) { model.zoomNavigation(1) }
+                val controls: @Composable () -> Unit = {
+                    Column(horizontalAlignment = if (AppSettings.swapMapSides) Alignment.End else Alignment.Start,
+                        verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        // A Waze police card already says it louder; the chip comes back when it's gone.
+                        // On a short phone a warning card plus lanes leaves no room: the chip gives way to the card.
+                        // The same when the next speed limit is up: on a short phone the column would reach the cards.
+                        val limitDrop = nav.limitDropAhead
+                        if (risk != null && showRiskChip && !((mainAlert != null || limitDrop != null) && h < 700.dp)) PoliceRiskChip(risk)
+                        if (nav.route.mode == TravelMode.DRIVE && !nav.arrived) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                                MapFab(Icons.Filled.Remove, size = 48.dp,
+                                    modifier = Modifier.semantics { contentDescription = "Zoom out" }) { model.zoomNavigation(-1) }
+                                MapFab(Icons.Filled.Add, size = 48.dp,
+                                    modifier = Modifier.semantics { contentDescription = "Zoom in" }) { model.zoomNavigation(1) }
+                            }
+                            MapFab(Icons.Filled.AddLocationAlt, modifier = Modifier.semantics { contentDescription = "Add stop" }) {
+                                model.addingStop = true
+                            }
                         }
-                        MapFab(Icons.Filled.AddLocationAlt, modifier = Modifier.semantics { contentDescription = "Add stop" }) {
-                            model.addingStop = true
+                        MapLookButton(AppSettings.driveLook, size = 48.dp) {
+                            model.cycleDriveLook()
+                            val look = AppSettings.driveLook
+                            buttonNote = look.title to look.detail
                         }
-                    }
-                    MapLookButton(AppSettings.driveLook, size = 48.dp) {
-                        model.cycleDriveLook()
-                        val look = AppSettings.driveLook
-                        buttonNote = look.title to look.detail
-                    }
-                    val icon = when (nav.voiceMode) {
-                        VoiceMode.ALL -> Icons.AutoMirrored.Filled.VolumeUp
-                        VoiceMode.ALERTS -> Icons.Filled.Notifications
-                        VoiceMode.OFF -> Icons.AutoMirrored.Filled.VolumeOff
-                    }
-                    MapFab(icon, tint = if (nav.voiceMode == VoiceMode.ALERTS) Vela.accentText(dark) else null, size = 52.dp,
-                        modifier = Modifier.semantics { contentDescription = "Voice: ${nav.voiceMode.title}" }) {
-                        nav.voiceMode = nav.voiceMode.next
-                        buttonNote = nav.voiceMode.title to nav.voiceMode.detail
+                        val icon = when (nav.voiceMode) {
+                            VoiceMode.ALL -> Icons.AutoMirrored.Filled.VolumeUp
+                            VoiceMode.ALERTS -> Icons.Filled.Notifications
+                            VoiceMode.OFF -> Icons.AutoMirrored.Filled.VolumeOff
+                        }
+                        MapFab(icon, tint = if (nav.voiceMode == VoiceMode.ALERTS) Vela.accentText(dark) else null, size = 52.dp,
+                            modifier = Modifier.semantics { contentDescription = "Voice: ${nav.voiceMode.title}" }) {
+                            nav.voiceMode = nav.voiceMode.next
+                            buttonNote = nav.voiceMode.title to nav.voiceMode.detail
+                        }
                     }
                 }
-                Spacer(Modifier.weight(1f))
-                Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    buttonNote?.let { (title, detail) ->
-                        // Says which of the three the speaker (or the map view) is on now, for a moment.
-                        Column(Modifier.shadow(6.dp, RoundedCornerShape(18.dp)).clip(RoundedCornerShape(18.dp)).background(hex(0x0F172A).copy(alpha = 0.95f))
-                            .padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text(title, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Vela.accentText(true))
-                            Text(detail, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Color.White)
+                val speed: @Composable () -> Unit = {
+                    Column(horizontalAlignment = if (AppSettings.swapMapSides) Alignment.Start else Alignment.End,
+                        verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        buttonNote?.let { (title, detail) ->
+                            // Says which of the three the speaker (or the map view) is on now, for a moment.
+                            Column(Modifier.shadow(6.dp, RoundedCornerShape(18.dp)).clip(RoundedCornerShape(18.dp)).background(hex(0x0F172A).copy(alpha = 0.95f))
+                                .padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(title, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Vela.accentText(true))
+                                Text(detail, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Color.White)
+                            }
                         }
-                    }
-                    SpeedBadge(nav.speedMps, nav.speedLimitKmh, nav.limitDropAhead)
+                        SpeedBadge(nav.speedMps, nav.speedLimitKmh, nav.limitDropAhead)
 
+                    }
                 }
+                if (AppSettings.swapMapSides) speed() else controls()
+                Spacer(Modifier.weight(1f))
+                if (AppSettings.swapMapSides) controls() else speed()
             }
             if (!nav.following) {
                 Row(Modifier.align(Alignment.CenterHorizontally).height(52.dp).shadow(3.dp, CircleShape).clip(CircleShape).background(Vela.accent(dark))
@@ -285,17 +308,17 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
             }
             // A traffic jam ahead: small and calm over the trip bar, so the top stays for turns and cameras.
             val jam = nav.wazeAhead?.takeIf { it.alert.kind == WazeAlert.Kind.JAM && !nav.arrived && !confirmEnd }
-            if (nav.offerParking && !confirmEnd) {
+            if (parkingShown) {
                 Column(Modifier.padding(horizontal = 12.dp).fillMaxWidth().glass(RoundedCornerShape(18.dp))
                     .padding(horizontal = 12.dp, vertical = 6.dp)) {
                     Text("Near your destination", color = primaryText, fontWeight = FontWeight.SemiBold)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         TextButton({ nav.dismissParkingOffer() }) { Text("Continue to destination") }
-                        Button({ model.searchStops("parking", parking = true) }) { Text("Find parking") }
+                        Button({ nav.dismissParkingOffer(); model.searchStops("parking", parking = true) }) { Text("Find parking") }
                     }
                 }
             }
-            if (showRoadAhead) RoadAheadStrip(nav, Modifier.padding(horizontal = 12.dp), showLabels = h >= 550.dp) {
+            if (bottomStrip) RoadAheadStrip(nav, Modifier.padding(horizontal = 12.dp), showLabels = h >= 550.dp) {
                 model.wazeInfo = it
             }
             if (jam != null && !showRoadAhead) TrafficLine(jam, Modifier.align(Alignment.CenterHorizontally).tap { nav.dismissWaze() })
@@ -498,15 +521,17 @@ fun InstructionBanner(nav: Navigator) {
     val leftTraffic = Geo.drivesOnLeft(m?.location ?: LatLng(0.0, 0.0))
     val refs = RoadRefs.find(m?.instruction ?: "")
     val p = nav.progress
+    val approaching = !nav.arrived && (m == null || m.type == ManeuverType.ARRIVE)
+    val instruction = if (approaching) "Continue to ${nav.destination.name}" else Banner.headline(m)
     // A long way to the next turn (over 2 miles, on a motorway say): one slim line, and the map gets
     // the room. It grows back to full size well before the first spoken heads-up.
     if (nav.route.mode == TravelMode.DRIVE && p != null && p.distanceToNext > 3200 && m?.type != ManeuverType.ARRIVE) {
-        val head = Banner.headline(m)
+        val head = instruction
         Row(Modifier.fillMaxWidth()) {
             Row(Modifier.height(48.dp).glass(CircleShape).padding(horizontal = 16.dp)
                 .clearAndSetSemantics { contentDescription = "In ${Fmt.distance(p.distanceToNext)}, $head" },
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Icon(maneuverIcon(m?.type ?: ManeuverType.STRAIGHT), null, tint = Vela.accentText(dark), modifier = Modifier.size(28.dp))
+                Icon(maneuverIcon(if (approaching) ManeuverType.STRAIGHT else m?.type ?: ManeuverType.STRAIGHT), null, tint = Vela.accentText(dark), modifier = Modifier.size(28.dp))
                 Text(Fmt.distance(p.distanceToNext), fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, color = primaryText, maxLines = 1)
                 if (refs.isNotEmpty()) refs.take(2).forEach { RoadShield(it) }
                 else Text(Banner.split(head)?.second ?: head, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = primaryText, maxLines = 1,
@@ -520,11 +545,11 @@ fun InstructionBanner(nav: Navigator) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             if (m?.type == ManeuverType.ROUNDABOUT) RoundaboutDiagram(m.roundabout, m.exit ?: 1, leftTraffic, Modifier.size(76.dp))
             else Box(Modifier.size(64.dp, 72.dp), contentAlignment = Alignment.Center) {
-                Icon(maneuverIcon(m?.type ?: ManeuverType.STRAIGHT), null, tint = Vela.accentText(dark), modifier = Modifier.size(58.dp))
+                Icon(maneuverIcon(if (approaching) ManeuverType.STRAIGHT else m?.type ?: ManeuverType.STRAIGHT), null, tint = Vela.accentText(dark), modifier = Modifier.size(58.dp))
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                if (p != null) Text(Fmt.distance(p.distanceToNext), fontSize = 38.sp, fontWeight = FontWeight.ExtraBold, color = primaryText, maxLines = 1, lineHeight = 40.sp)
-                val head = Banner.headline(m)
+                if (p != null && !nav.arrived) Text(Fmt.distance(if (approaching) p.remainingMeters else p.distanceToNext), fontSize = 38.sp, fontWeight = FontWeight.ExtraBold, color = primaryText, maxLines = 1, lineHeight = 40.sp)
+                val head = instruction
                 val parts = Banner.split(head)
                 if (parts != null) {
                     // "At the end of the road, turn left" small, the road you turn onto big, like Waze.

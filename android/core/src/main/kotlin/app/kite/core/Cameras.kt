@@ -105,7 +105,7 @@ object Overpass {
             val radius = when (node.kind) {
                 ControlKind.SIGNAL -> 32.0
                 ControlKind.STOP -> 16.0
-                ControlKind.RAIL -> 25.0
+                ControlKind.RAIL -> 7.0
             }
             RoadControl(node.kind, hit.along, node.at).takeIf { hit.offset <= radius }
         }

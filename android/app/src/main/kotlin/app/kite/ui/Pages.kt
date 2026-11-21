@@ -57,8 +57,17 @@ private fun hex(v: Long) = Color(0xFF000000 or v)
 fun SavedPage(model: AppModel) {
     val dark = LocalDark.current
     val s = AppSettings
+    val ctx = LocalContext.current
+    var folderId by remember { mutableStateOf<String?>(null) }
+    val folder = s.placeFolders.firstOrNull { it.id == folderId }
+    val places = if (folder == null) s.saved else s.saved.filter { it.id in folder.members }
     var renaming by remember { mutableStateOf<Place?>(null) }
+    var assigning by remember { mutableStateOf<Place?>(null) }
+    var editingFolder by remember { mutableStateOf(false) }
+    var removingFolder by remember { mutableStateOf(false) }
+    var removePlan by remember { mutableStateOf<SavedPlan?>(null) }
     var newName by remember { mutableStateOf("") }
+    var folderName by remember { mutableStateOf("") }
     fun go(p: Place) { model.tab = AppTab.MAP; model.openDirections(p) }
     fun show(p: Place) { model.tab = AppTab.MAP; model.openSaved(p) }
     fun distance(p: Place) = model.userLatLng?.let { Fmt.distance(it.distanceTo(p.location)) }
@@ -66,32 +75,71 @@ fun SavedPage(model: AppModel) {
     Box(Modifier.fillMaxSize().background(Vela.ground(dark))) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).statusBarsPadding().padding(horizontal = 16.dp).padding(top = 12.dp, bottom = 140.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp)) {
-            Text("Saved", fontSize = 36.sp, fontWeight = FontWeight.ExtraBold, color = primaryText, modifier = Modifier.padding(horizontal = 4.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                MineTile(model, Icons.Filled.Home, Vela.routeBlue, "Home", s.home, PickKind.HOME, ::go, ::distance)
-                MineTile(model, Icons.Filled.Work, hex(0x8B5CF6), "Work", s.work, PickKind.WORK, ::go, ::distance)
-            }
-            s.parking?.let { car ->
-                Box(Modifier.clip(RoundedCornerShape(24.dp)).background(Vela.surface(dark))) {
-                    SavedRow(car, Icons.Filled.LocalParking, Vela.routeBlue, distance(car), null, ::show, ::go)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (folder != null) IconButton({ folderId = null }) { Icon(Icons.Filled.Close, "Back to Saved") }
+                Text(folder?.name ?: "Saved", fontSize = 36.sp, fontWeight = FontWeight.ExtraBold, color = primaryText,
+                    modifier = Modifier.weight(1f).padding(horizontal = 4.dp))
+                if (folder != null) {
+                    IconButton({ folderName = folder.name; editingFolder = true }) { Icon(Icons.Filled.Edit, "Rename list") }
+                    IconButton({ removingFolder = true }) { Icon(Icons.Filled.Delete, "Delete list") }
                 }
             }
-            if (s.saved.isEmpty()) {
+            if (folder == null) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    MineTile(model, Icons.Filled.Home, Vela.routeBlue, "Home", s.home, PickKind.HOME, ::go, ::distance)
+                    MineTile(model, Icons.Filled.Work, hex(0x8B5CF6), "Work", s.work, PickKind.WORK, ::go, ::distance)
+                }
+                s.parking?.let { car ->
+                    Box(Modifier.clip(RoundedCornerShape(24.dp)).background(Vela.surface(dark))) {
+                        SavedRow(car, Icons.Filled.LocalParking, Vela.routeBlue, distance(car), null, ::show, ::go)
+                    }
+                }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Lists", fontSize = KType.headline, fontWeight = FontWeight.Bold, color = primaryText)
+                    TextButton({ folderName = ""; editingFolder = true }) { Text("New list") }
+                }
+                s.placeFolders.forEach { list ->
+                    ListItem(headlineContent = { Text(list.name) }, leadingContent = { Icon(Icons.Filled.Folder, null) },
+                        supportingContent = { Text("${list.members.size} saved places") },
+                        modifier = Modifier.clip(RoundedCornerShape(18.dp)).tap { folderId = list.id })
+                }
+                if (s.savedPlans.isNotEmpty()) {
+                    Text("Saved routes", fontSize = KType.headline, fontWeight = FontWeight.Bold, color = primaryText)
+                    s.savedPlans.forEach { plan ->
+                        ListItem(
+                            headlineContent = { Text(plan.name) },
+                            supportingContent = { Text(plan.points.joinToString(" → ") { it.name }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            leadingContent = { Icon(Icons.Filled.Directions, null) },
+                            trailingContent = {
+                                Row {
+                                    IconButton({ ctx.share(plan.shareText()) }) { Icon(Icons.Filled.Share, "Share route") }
+                                    IconButton({ removePlan = plan }) { Icon(Icons.Filled.Delete, "Delete route") }
+                                }
+                            },
+                            modifier = Modifier.clip(RoundedCornerShape(18.dp)).tap { model.openSavedPlan(plan) })
+                    }
+                }
+            }
+            if (places.isEmpty()) {
                 Column(Modifier.fillMaxWidth().padding(vertical = 40.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Icon(Icons.Outlined.BookmarkBorder, null, tint = Vela.muted(dark), modifier = Modifier.size(44.dp))
-                    Text("No saved places yet", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = primaryText)
-                    Text("Open any place and tap Save to keep it here.", fontSize = KType.body, color = Vela.muted(dark), textAlign = TextAlign.Center)
+                    Text(if (folder == null) "No saved places yet" else "This list is empty", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = primaryText)
+                    Text(if (folder == null) "Open any place and tap Save to keep it here." else "Hold a saved place and choose Lists to add it here.", fontSize = KType.body, color = Vela.muted(dark), textAlign = TextAlign.Center)
                 }
             } else {
                 Column(Modifier.clip(RoundedCornerShape(24.dp)).background(Vela.surface(dark))) {
-                    s.saved.forEachIndexed { i, p ->
+                    places.forEachIndexed { i, p ->
                         if (i > 0) HorizontalDivider(Modifier.padding(start = 78.dp))
                         SavedRow(p, Icons.Filled.Bookmark, hex(0xF59E0B), distance(p), { action ->
-                            if (action == 0) { newName = p.name; renaming = p } else s.saved = s.saved.filter { it.id != p.id }
+                            when (action) {
+                                0 -> { newName = p.name; renaming = p }
+                                1 -> if (folder == null) s.removeSaved(p.id) else s.toggleFolderMember(folder.id, p.id)
+                                2 -> assigning = p
+                            }
                         }, ::show, ::go)
                     }
                 }
-                Text("Hold a place to rename or remove it.", fontSize = KType.subheadline, color = Vela.muted(dark), modifier = Modifier.padding(horizontal = 4.dp))
+                Text("Hold a place to manage it or add it to lists.", fontSize = KType.subheadline, color = Vela.muted(dark), modifier = Modifier.padding(horizontal = 4.dp))
             }
         }
         KiteDock(model, Modifier.align(Alignment.BottomCenter))
@@ -102,7 +150,48 @@ fun SavedPage(model: AppModel) {
             confirmButton = { TextButton({ s.renameSaved(p.id, newName); renaming = null }) { Text("Save") } },
             dismissButton = { TextButton({ renaming = null }) { Text("Cancel") } })
     }
-    BackHandler { model.tab = AppTab.MAP }
+    assigning?.let { place ->
+        AlertDialog(onDismissRequest = { assigning = null }, title = { Text("Lists for ${place.name}") }, text = {
+            Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
+                s.placeFolders.forEach { list ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(place.id in list.members, { s.toggleFolderMember(list.id, place.id) })
+                        Text(list.name, modifier = Modifier.weight(1f).tap { s.toggleFolderMember(list.id, place.id) })
+                    }
+                }
+            }
+        }, confirmButton = { TextButton({ assigning = null }) { Text("Done") } },
+            dismissButton = { TextButton({ folderName = ""; editingFolder = true }) { Text("New list") } })
+    }
+    if (editingFolder) AlertDialog(
+        onDismissRequest = { editingFolder = false },
+        title = { Text(if (folder == null || assigning != null) "New list" else "Rename list") },
+        text = { OutlinedTextField(folderName, { folderName = it }, singleLine = true, label = { Text("Name") }) },
+        confirmButton = { TextButton({
+            val assigned = assigning
+            s.placeFolders = if (folder == null || assigned != null) {
+                s.placeFolders + PlaceFolder(folderName.trim(), setOfNotNull(assigned?.id))
+            } else s.placeFolders.map { if (it.id == folder.id) it.copy(name = folderName.trim()) else it }
+            editingFolder = false
+        }, enabled = folderName.isNotBlank()) { Text("Save") } },
+        dismissButton = { TextButton({ editingFolder = false }) { Text("Cancel") } })
+    if (removingFolder && folder != null) AlertDialog(
+        onDismissRequest = { removingFolder = false },
+        title = { Text("Delete ${folder.name}?") },
+        text = { Text("Its places will still be in Saved.") },
+        confirmButton = { TextButton({
+            s.placeFolders = s.placeFolders.filter { it.id != folder.id }
+            removingFolder = false
+            folderId = null
+        }) { Text("Delete list") } },
+        dismissButton = { TextButton({ removingFolder = false }) { Text("Cancel") } })
+    removePlan?.let { plan ->
+        AlertDialog(onDismissRequest = { removePlan = null }, title = { Text("Delete ${plan.name}?") },
+            confirmButton = { TextButton({ s.savedPlans = s.savedPlans.filter { it.id != plan.id }; removePlan = null }) {
+                Text("Delete route")
+            } }, dismissButton = { TextButton({ removePlan = null }) { Text("Cancel") } })
+    }
+    BackHandler { if (folderId != null) folderId = null else model.tab = AppTab.MAP }
 }
 
 @Composable
@@ -130,7 +219,7 @@ private fun RowScope.MineTile(model: AppModel, icon: ImageVector, color: Color, 
     }
 }
 
-/** [edit]: 0 rename, 1 remove; null when the row can't be changed. */
+/** [edit]: 0 rename, 1 remove, 2 manage lists. */
 @Composable
 private fun SavedRow(p: Place, icon: ImageVector, color: Color, distance: String?, edit: ((Int) -> Unit)?, show: (Place) -> Unit, go: (Place) -> Unit) {
     val dark = LocalDark.current
@@ -154,6 +243,7 @@ private fun SavedRow(p: Place, icon: ImageVector, color: Color, distance: String
         }
         if (edit != null) DropdownMenu(menu, { menu = false }) {
             DropdownMenuItem(text = { Text("Rename") }, leadingIcon = { Icon(Icons.Filled.Edit, null) }, onClick = { menu = false; edit(0) })
+            DropdownMenuItem(text = { Text("Lists") }, leadingIcon = { Icon(Icons.Filled.Folder, null) }, onClick = { menu = false; edit(2) })
             DropdownMenuItem(text = { Text("Remove") }, leadingIcon = { Icon(Icons.Filled.Delete, null) }, onClick = { menu = false; edit(1) })
         }
     }
@@ -379,6 +469,17 @@ private fun MapSettings() {
         RowDivider()
         ToggleRow("Parking button on the map", Icons.Filled.LocalParking, 0x2563EB, s.parkingButton) { s.parkingButton = it }
     }
+    SettingsGroup(header = "Map interface") {
+        ToggleRow("Swap left and right controls", Icons.Filled.SwapHoriz, 0x2563EB, s.swapMapSides) { s.swapMapSides = it }
+        RowDivider()
+        ToggleRow("Solid search background", Icons.Filled.Search, 0x0F766E, s.solidMapSearch) { s.solidMapSearch = it }
+        RowDivider()
+        MapUiColorRow("Control accent", s.mapUiAccent) { s.mapUiAccent = it }
+        RowDivider()
+        MapUiColorRow("Light interface panels", s.mapUiDayPanel) { s.mapUiDayPanel = it }
+        RowDivider()
+        MapUiColorRow("Dark interface panels", s.mapUiNightPanel) { s.mapUiNightPanel = it }
+    }
     MapboxSettings()
     SettingsGroup(header = "Mapbox Standard", footer = "Mapbox Standard uses your Mapbox token. Street lamps use mapped posts and estimated placement on nearby streets at street zoom.") {
         ToggleRow("Mapbox Standard", Icons.Filled.ViewInAr, 0x0F766E, s.standardMap) { s.standardMap = it }
@@ -428,6 +529,9 @@ private fun MapSettings() {
         ToggleRow("Parking near destination", Icons.Filled.LocalParking, 0x2563EB, s.arrivalParking) { s.arrivalParking = it }
         RowDivider()
         ToggleRow("Road ahead strip", Icons.Filled.Traffic, 0x0F766E, s.roadAheadStrip) { s.roadAheadStrip = it }
+        RowDivider()
+        PickRow("Road ahead position", Icons.Filled.SwapVert, 0x0F766E,
+            s.roadStripPosition, RoadStripPosition.entries.toList(), { it.label }) { s.roadStripPosition = it }
     }
     SettingsGroup(header = "Road ahead and map", footer = "Choose which events appear in the road strip and on the driving map.") {
         ToggleRow("Traffic and jams", Icons.Filled.Traffic, 0xAD362C, s.aheadTraffic) { s.aheadTraffic = it }
@@ -457,6 +561,24 @@ private fun MapSettings() {
                 s.roadWazeKinds = if (on) s.roadWazeKinds + kind else s.roadWazeKinds - kind
             }
         }
+    }
+}
+
+@Composable
+private fun MapUiColorRow(label: String, current: String?, save: (String?) -> Unit) {
+    var editing by remember { mutableStateOf(false) }
+    var value by remember(current) { mutableStateOf(current.orEmpty()) }
+    Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).tap { editing = true }.padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        SettingLabel(label, Icons.Filled.Palette, 0x6D4EB0, Modifier.weight(1f))
+        Text(current ?: "Default", color = secondaryText)
+    }
+    if (editing) {
+        val hex = "#" + value.trim().removePrefix("#").uppercase()
+        AlertDialog(onDismissRequest = { editing = false }, title = { Text(label) },
+            text = { OutlinedTextField(value, { value = it }, label = { Text("Hex color") }, placeholder = { Text("#247BD6") }, singleLine = true) },
+            confirmButton = { TextButton({ save(hex); editing = false }, enabled = MapPalette.isColor(hex)) { Text("Save") } },
+            dismissButton = { TextButton({ save(null); editing = false }) { Text("Use default") } })
     }
 }
 
@@ -732,7 +854,7 @@ private fun WazeSettings() {
             PickRow("Ignore reports older than", null, 0, s.wazeMaxAge, ages.map { it.first }, { v -> ages.first { it.first == v }.second }) { s.wazeMaxAge = it }
         }
         if (WazeAlert.Kind.POLICE in Waze.shares) {
-            SettingsGroup(footer = "Heat map: where police get reported most, across the whole UK, from Highway Radar's own map (built from its drivers' reports; it may stop working one day). Risk score: low, medium or high for the road ahead (counting reports made at this time of day most), from the Waze reports Kite remembers on this phone, for 90 days and never anywhere else.") {
+            SettingsGroup(footer = "Heat map: density of recent police reports remembered by Kite on the Mapbox map. The classic map uses Highway Radar tiles. Risk score: low, medium or high for the road ahead (counting reports made at this time of day most), from the Waze reports Kite remembers on this phone, for 90 days and never anywhere else.") {
                 ToggleRow("Police heat map", null, 0, s.wazeHeatmap) { s.wazeHeatmap = it }
                 HorizontalDivider()
                 ToggleRow("Police risk score while driving", null, 0, s.policeRisk) { s.policeRisk = it }
@@ -775,6 +897,10 @@ fun LayersSheet(liveCount: Int? = null, close: () -> Unit) {
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 LayerTile("Default", !s.satellite, { Icon(Icons.Outlined.Map, null, tint = primaryText, modifier = Modifier.size(28.dp)) }) { s.satellite = false }
                 LayerTile("Satellite", s.satellite, { Icon(Icons.Filled.Public, null, tint = primaryText, modifier = Modifier.size(28.dp)) }) { s.satellite = true }
+            }
+            Text("Map appearance", fontSize = KType.subheadline, fontWeight = FontWeight.SemiBold, color = secondaryText)
+            Segmented(MapStyleMode.entries.toList(), s.mapStyleMode, { if (it == MapStyleMode.SUN) "Sun" else it.label }) {
+                s.mapStyleMode = it
             }
             Text("Place icons", fontSize = KType.subheadline, fontWeight = FontWeight.SemiBold, color = secondaryText)
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {

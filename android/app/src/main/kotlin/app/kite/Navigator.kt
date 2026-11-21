@@ -46,7 +46,7 @@ private fun String.lowercasedFirst() = if (isEmpty()) this else substring(0, 1).
  * One drive, walk or ride: follows the user along the route, speaks the turns, and reroutes
  * when they leave it. The same rules as the iPhone app, line for line.
  */
-class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private val scope: CoroutineScope) {
+class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private val scope: CoroutineScope, val transitWalk: Boolean = false) {
     var destination by mutableStateOf(destination0); private set
     var originalParkingDestination by mutableStateOf<Place?>(null); private set
     var parkingOfferDismissed by mutableStateOf(false); private set
@@ -352,6 +352,8 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
         return p.copy(remainingSeconds = p.remainingSeconds * trafficScale)
     }
 
+    private var transitArrival: Long? = null
+
     /** [estimated]: a position worked out along the route while GPS is gone, not a real fix. */
     fun handle(loc: Fix, estimated: Boolean = false) {
         if (arrived) return
@@ -379,7 +381,15 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
         val parked = stoppedNearEnd?.let {
             (loc.timeMillis - it) / 1000.0 > (if (p.remainingMeters >= 150 && !nearPin) 180 else if (offRoad) 20 else 90)
         } ?: false
-        if (p.arrived || parked || (route.mode == TravelMode.DRIVE && toPin < 40 && nearPin)) {
+        val atStop = if (transitWalk) {
+            val near = !estimated && loc.ageMs in 0..15_000 && loc.accuracy in 0.0..50.0 &&
+                toPin <= 40 && (p.remainingMeters <= 80 || toPin <= 18)
+            if (!near) transitArrival = null
+            val first = transitArrival
+            if (near && first == null) transitArrival = loc.elapsedMs
+            near && first != null && loc.elapsedMs - first >= 900
+        } else p.arrived || parked || (route.mode == TravelMode.DRIVE && toPin < 40 && nearPin)
+        if (atStop) {
             arrived = true
             fasterOffer = null
             fasterRoute = null

@@ -110,6 +110,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         routeContext = ""
         transitStopsKey = ""
         layerOptions = null
+        policeHeatKey = null
         lastResultsKey = ""; lastRouteKey = ""; lastMineKey = ""; lastCameraKey = ""
         lastWazeKey = ""; lastLiveKey = ""; lastSignalsKey = ""; lastHeadKey = ""; lastNextRoadKey = ""
         shownStopPins = null
@@ -119,6 +120,12 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         map?.let(::loadGooglePlaces)
         map?.style?.let { setShape(it, "vela-rail", railFeatures) }
         render()
+    }
+
+    fun openSearchResult(id: String?): Boolean {
+        val place = model.visibleResults.firstOrNull { it.id == id } ?: return false
+        model.select(place)
+        return true
     }
 
     fun openGooglePlace(id: String?): Boolean {
@@ -241,6 +248,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             fun stopFollowing() {
                 model.nav?.following = false
                 model.transitGuidance?.following = false
+                model.stopTransitOverview()
             }
             m.addOnCameraMoveStartedListener { reason ->
                 if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) stopFollowing()
@@ -353,6 +361,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         routeContext = ""
         transitStopsKey = ""
         layerOptions = null
+        policeHeatKey = null
         lastResultsKey = ""; lastRouteKey = ""; lastMineKey = ""; lastPuckKey = ""; lastHeadKey = ""; lastNextRoadKey = ""; lastCameraKey = ""; lastSignalsKey = ""; lastWazeKey = ""; lastLiveKey = ""
         enableLocation(style)
         shownStopPins = null
@@ -751,7 +760,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         src("vela-signals")
         style.addLayer(SymbolLayer("vela-signals", "vela-signals").withProperties(
             iconImage(get("icon")), iconAllowOverlap(true), iconAnchor(Property.ICON_ANCHOR_BOTTOM),
-            iconSize(interpolate(linear(), zoom(), stop(14, 0.75f), stop(17, 1.0f)))).apply { minZoom = 14f })
+            iconSize(interpolate(linear(), zoom(), stop(14, 1.05f), stop(17, 1.25f)))).apply { minZoom = 14f })
 
         // Live camera photos, under the speed cameras: Windy webcams from zoom 6 (a region), road
         // cameras from zoom 9 (a city). Zoomed out over a busy city (central London) they join into
@@ -777,7 +786,12 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         groupBubbles(style, "vela-cameras", 0xFF8A00)
 
         src("vela-waze-heat")
-        val heat = HeatmapLayer("vela-waze-heat", "vela-waze-heat").withProperties(visibility(Property.NONE))
+        val heat = HeatmapLayer("vela-waze-heat", "vela-waze-heat").withProperties(
+            visibility(Property.NONE), heatmapRadius(interpolate(linear(), zoom(), stop(5, 13f), stop(13, 32f), stop(17, 42f))),
+            heatmapIntensity(1.3f), heatmapOpacity(0.7f),
+            heatmapColor(interpolate(linear(), heatmapDensity(), stop(0, rgba(66, 98, 240, 0f)),
+                stop(0.2, rgb(83, 116, 244)), stop(0.55, rgb(146, 89, 236)), stop(1, rgb(239, 118, 217)))))
+            .apply { minZoom = 5f }
         style.getLayer("vela-route-alt-edge")?.let { style.addLayerBelow(heat, "vela-route-alt-edge") } ?: insert(heat)
         src("vela-waze")
         style.addLayer(SymbolLayer("vela-waze", "vela-waze").withProperties(
@@ -800,9 +814,11 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             textMaxWidth(8f)).apply { minZoom = 9f })
 
         src("vela-results")
+        style.addLayer(CircleLayer("kite-search-hit", "vela-results").withProperties(circleRadius(22f),
+            circleColor(c(0x164B9F)), circleStrokeColor(c(0xC4E1FF)), circleStrokeWidth(3f)))
         style.addLayer(SymbolLayer("vela-results", "vela-results").withProperties(
-            iconImage(get("icon")), iconAllowOverlap(true), textField(get("label")), textFont(overlayFont),
-            textSize(12f), textAnchor(Property.TEXT_ANCHOR_LEFT), textOffset(arrayOf(1.4f, 0f)), textOptional(true),
+            iconImage(get("icon")), iconSize(1.15f), iconAllowOverlap(true), textField(get("label")), textFont(overlayFont),
+            textSize(14f), textAnchor(Property.TEXT_ANCHOR_LEFT), textOffset(arrayOf(2.0f, 0f)), textOptional(true),
             textMaxWidth(8f), textJustify(Property.TEXT_JUSTIFY_LEFT), symbolSortKey(get("rank"))))
 
         src(StopSearch.PINS)
@@ -1056,13 +1072,22 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         val (alone, grouped) = shown.partition { it.kind in NEVER_GROUPED }
         setShape(style, "vela-waze", alone.map(::feature))
         setShape(style, "vela-waze-group", grouped.map(::feature))
-        visible(style, "vela-waze-heat", false)
     }
 
-    /** Highway Radar's police heat map for what's on screen, when it's switched on. */
+    /** Local Waze report density, plus Highway Radar's coverage on the classic map. */
+    private var policeHeatKey: Pair<Boolean, List<WazeHistory.Sighting>>? = null
     fun updateHeat(m: MapLibreMap) {
         val s = model.settings
-        heatTiles.update(m, styleReady && s.wazeOn && s.wazeHeatmap && s.wazePolice, "vela-waze-heat")
+        val enabled = styleReady && s.wazeOn && s.wazeHeatmap && s.wazePolice
+        if (scenery?.ready != true) heatTiles.update(m, enabled, "vela-waze-heat")
+        val history = if (enabled) WazeHistory.all else emptyList()
+        val key = enabled to history
+        if (policeHeatKey == key) return
+        policeHeatKey = key
+        m.style?.let {
+            visible(it, "vela-waze-heat", enabled && scenery?.ready != true)
+            setShape(it, "vela-waze-heat", history.takeLast(2500).map { p -> point(LatLng(p.lat, p.lng)) })
+        }
     }
 
     /** Live Waze reports for the view and a margin, asked again after two minutes or when the map leaves the box. */
@@ -1217,24 +1242,28 @@ class KiteMap(private val model: AppModel, private val context: Context) {
     private fun renderResults(style: Style) {
         val showList = model.directions == null && model.nav == null
         val list = if (showList) model.visibleResults else emptyList()
-        val target = model.nav?.destination ?: model.directions?.destination ?: model.selected
-        val stops = model.nav?.stops ?: model.directions?.stops ?: emptyList()
-        val key = "${list.joinToString(",") { it.id }}|${target?.id ?: ""}|${model.directions?.reversed ?: false}|${model.nav == null}|${stops.joinToString(",") { it.id }}"
+        val plan = model.directions.takeIf { model.nav == null }?.orderedPlaces()
+        val here = model.userLatLng
+        val target = model.nav?.destination ?: if (plan != null) plan.last() else model.selected
+        val destination = target?.location ?: here.takeIf { plan != null }
+        val origin = plan?.let { it.first()?.location ?: here }
+        val stops = model.nav?.stops ?: plan?.drop(1)?.dropLast(1)?.filterNotNull().orEmpty()
+        val searchSelection = target != null && list.any { it.id == target.id }
+        fun cell(at: LatLng?) = at?.let { "${(it.lat * 7000).toInt()},${(it.lng * 7000).toInt()}" }
+        val destinationKey = target?.id ?: cell(destination)
+        val key = "${list.joinToString(",") { it.id }}|$destinationKey|${cell(origin)}|${stops.joinToString(",") { it.id }}"
         if (key == lastResultsKey) return
         lastResultsKey = key
-        setShape(style, "vela-results", list.mapIndexedNotNull { i, p ->
-            if (p.id == target?.id) return@mapIndexedNotNull null
+        setShape(style, "vela-results", list.mapIndexed { i, p ->
             val rating = p.rating?.let { String.format(java.util.Locale.US, "%.1f", it) }
             point(p.location, mapOf("id" to p.id, "icon" to MapIcons.iconName(p), "label" to listOfNotNull(p.name, rating).joinToString("\n"), "rank" to i))
         })
         val sel = mutableListOf<Feature>()
-        if (target != null) {
-            sel.add(point(target.location, mapOf("id" to target.id, "icon" to "pin-selected", "anchor" to "bottom", "label" to target.name)))
-            stops.forEachIndexed { i, stop -> sel.add(point(stop.location, mapOf("id" to "stop$i", "icon" to "pin-stop", "anchor" to "center", "label" to stop.name))) }
-            val d = model.directions
-            val me = model.userLatLng
-            if (d != null && !d.reversed && model.nav == null && me != null) sel.add(point(me, mapOf("id" to "origin", "icon" to "pin-origin", "anchor" to "center", "label" to "")))
+        if (destination != null && !searchSelection) {
+            sel.add(point(destination, mapOf("id" to (target?.id ?: "destination"), "icon" to "pin-selected", "anchor" to "bottom", "label" to (target?.name ?: "Your location"))))
         }
+        stops.forEachIndexed { i, stop -> sel.add(point(stop.location, mapOf("id" to "stop$i", "icon" to "pin-stop", "anchor" to "center", "label" to stop.name))) }
+        origin?.let { sel.add(point(it, mapOf("id" to "origin", "icon" to "pin-origin", "anchor" to "center", "label" to ""))) }
         setShape(style, "vela-selected", sel)
     }
 
@@ -1249,17 +1278,20 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         var from = 0.0
         val n = model.nav
         val d = model.directions
-        if (n != null) { main = n.route; from = n.progress?.alongMeters ?: 0.0 }
-        else if (d != null) { main = d.route; alts = d.current.filter { it.id != main?.id } }
         val session = model.transitGuidance
+        val overview = session?.overviewing == true
+        if (n != null && !overview) { main = n.route; from = n.progress?.alongMeters ?: 0.0 }
+        else if (d != null && session == null) { main = d.route; alts = d.current.filter { it.id != main?.id } }
         val trip = if (session != null) session.trip else if (n == null) d?.pickedTrip else null
-        val keyForStops = "${session?.trip?.id}|${session?.legIndex}|${session?.phase}"
+        val keyForStops = "${session?.trip?.id}|${session?.legIndex}|${session?.phase}|$overview"
         if (transitStopsKey != keyForStops) {
             transitStopsKey = keyForStops
-            setShape(style, RIDE_STOPS, session?.leg?.calls.orEmpty().map { point(it.at, mapOf("name" to it.name)) })
+            val calls = if (overview) trip?.rides.orEmpty().flatMap { listOfNotNull(it.calls.firstOrNull(), it.calls.lastOrNull()) }
+                else session?.leg?.calls.orEmpty()
+            setShape(style, RIDE_STOPS, calls.distinctBy { it.at }.map { point(it.at, mapOf("name" to it.name)) })
         }
         val traffic = n?.roadTraffic ?: main?.trafficSpans.orEmpty().takeIf { AppSettings.traffic }.orEmpty()
-        val context = "${trip?.id}|${session?.legIndex}|${main?.id}|${alts.joinToString { it.id }}"
+        val context = "${trip?.id}|${session?.legIndex}|$overview|${main?.id}|${alts.joinToString { it.id }}"
         val follows = n?.following == true
         val key = "$context|${(from / if (n?.route?.mode == TravelMode.WALK) 6 else 24).toInt()}|$follows|" +
             "${n?.nextManeuver?.alongMeters}|${traffic.hashCode()}"
@@ -1268,7 +1300,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         if (routeContext != context) {
             routeContext = context
             setShape(style, "vela-route-alt", alts.map { polyline(it.polyline) })
-            val legs = if (session != null) trip?.legs?.drop(session.legIndex).orEmpty() else trip?.legs.orEmpty()
+            val legs = if (session != null && !overview) trip?.legs?.drop(session.legIndex).orEmpty() else trip?.legs.orEmpty()
             setShape(style, "vela-transit", legs.filter { it.path.size >= 2 }.map { leg ->
                 polyline(leg.path, mapOf("walk" to if (leg.isWalk) 1 else 0, "color" to hex(leg.color ?: 0x1F6FEB)))
             })
@@ -1460,7 +1492,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         m.queryRenderedFeatures(box, "vela-mine").firstOrNull()?.let { f ->
             str(f, "id")?.let { model.myPlace(it) }?.let { model.select(it); return true }
         }
-        m.queryRenderedFeatures(box, "vela-results").firstOrNull()?.let { f ->
+        m.queryRenderedFeatures(box, "vela-results", "kite-search-hit").firstOrNull()?.let { f ->
             val id = str(f, "id")
             model.results.firstOrNull { it.id == id }?.let { model.select(it); return true }
         }
