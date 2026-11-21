@@ -213,6 +213,7 @@ struct ContentView: View {
     private func didAppear() {
         LaunchTrace.mark("ContentView appeared")
         model.sideInset = panel
+        UITestSupport.install(model)
         DispatchQueue.main.asyncAfter(deadline: .now() + 10) { LaunchTrace.markReady() }
     }
 

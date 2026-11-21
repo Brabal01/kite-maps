@@ -254,6 +254,30 @@ public struct Route: Identifiable, Hashable, Sendable {
     public var stepsComplete = true
     public var routerReportedTolls: Bool?
 
+    /**
+     Public so the app can build a deterministic route for UI tests and
+     previews without pretending a network router answered.
+     */
+    public init(mode: TravelMode, polyline: [LatLng], distanceMeters: Double,
+                typicalSeconds: Double, trafficSeconds: Double? = nil,
+                summary: String? = nil, maneuvers: [Maneuver],
+                trafficSpans: [TrafficSpan] = [], speedLimits: [SpeedLimit] = [],
+                source: String, stepsComplete: Bool = true,
+                routerReportedTolls: Bool? = nil) {
+        self.mode = mode
+        self.polyline = polyline
+        self.distanceMeters = distanceMeters
+        self.typicalSeconds = typicalSeconds
+        self.trafficSeconds = trafficSeconds
+        self.summary = summary
+        self.maneuvers = maneuvers
+        self.trafficSpans = trafficSpans
+        self.speedLimits = speedLimits
+        self.source = source
+        self.stepsComplete = stepsComplete
+        self.routerReportedTolls = routerReportedTolls
+    }
+
     public var durationSeconds: Double { trafficSeconds ?? typicalSeconds }
 
     /**

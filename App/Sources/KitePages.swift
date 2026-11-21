@@ -182,6 +182,7 @@ struct RoutesPage: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(place == nil ? "Set \(L10n.text(title))" : "\(L10n.text(title)), \(place?.name ?? "")")
+        .accessibilityIdentifier(title == "Home" ? "favourite-home" : "favourite-work")
     }
 
     /** Never repeat "Home / Home": show the street or category instead. */

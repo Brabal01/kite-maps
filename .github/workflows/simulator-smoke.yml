@@ -46,6 +46,21 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             build | tee simulator-build.log | tail -n 150
+      - name: Planning UI regression test
+        # Opens the planner, feeds a deliberately late simulated fix and
+        # switches drive -> walk -> bike -> transit on a real simulator.
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project Kite.xcodeproj \
+            -scheme Kite \
+            -configuration Debug \
+            -destination "id=${{ steps.simulator.outputs.udid }}" \
+            -derivedDataPath build \
+            -only-testing:KiteUITests/PlanningUITests \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" | tee planning-ui-test.log | tail -n 120
       - name: Install and launch repeatedly
         run: |
           set -euo pipefail
@@ -177,6 +192,7 @@ jobs:
           name: simulator-smoke-logs
           path: |
             simulator-build.log
+            planning-ui-test.log
             launch-*.txt
             kite-*.log
             demo-*.txt
