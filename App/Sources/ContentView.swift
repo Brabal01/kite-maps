@@ -1077,7 +1077,7 @@ enum DemoScript {
             // No network: the same deterministic trips the screenshots use.
             let from = LatLng(38.5449, -121.7405), to = LatLng(38.5843, -121.5006)
             let destination = Place(id: "demo-sac-synthetic", name: "Sacramento Valley Station", location: to, source: "demo")
-            var state = DirectionsState(destination: destination, origin: nil, exclusion: nil, mode: .transit)
+            var state = DirectionsState(destination: destination, origin: nil, exclusion: nil, mode: .drive)
             state.transit = true
             state.trips = UITestSupport.demoTransitTrips(from: from, to: to)
             state.trip = 0

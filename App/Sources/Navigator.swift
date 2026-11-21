@@ -101,7 +101,7 @@ final class Navigator: ObservableObject {
             guard event.meters >= along else { return false }
             // While driving, an ambiguous light or a proximity fallback is not a
             // confirmed instruction and must not enter the upcoming strip.
-            if route.mode == .drive && !event.control.directionCertain { return false }
+            if self.route.mode == .drive && !event.control.directionCertain { return false }
             return true
         }.prefix(6)
         let remaining = Array(next).map { UpcomingRoadControl(control: $0.control, meters: (($0.meters - along) / 10).rounded() * 10) }
