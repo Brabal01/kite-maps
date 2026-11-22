@@ -2,6 +2,23 @@
 
 Branch: `iphone-custom-v33-reliability-ux`, PR #11 → `iphone-custom-v32-refinement`.
 
+## Verified build
+
+The code verified by CI is commit `13a78f4` (`v33: remove unused bundle info binding`),
+app **0.8.0 (1150)**, bundle `app.vela.ios`, iOS 16.2+, ARM64. Any later commit on the branch is
+documentation-only; the IPA artifacts come from `13a78f4`.
+
+* IPA workflow: https://github.com/Brabal01/kite-maps/actions/runs/45006863802 — **success**,
+  Full and SideStore packaged and verified from the same commit, **0 compiler warnings**.
+* Simulator workflow: https://github.com/Brabal01/kite-maps/actions/runs/45006863863 — **success**:
+  `PlanningUITests` 1/1, `V31UITests` 3/3, `V33UITests` 3/3, plus three launch/smoke cycles and
+  the screenshot pass (light and dark).
+* Live Transitous workflow on the same commit:
+  https://github.com/Brabal01/kite-maps/actions/runs/45009296635 — **success**.
+* Artifacts: `Kite-v33-Full-ipa` (14747933193), `Kite-v33-SideStore-ipa` (14747169678),
+  `Kite-v33-Test-Results` (14748187305), `Kite-v33-Simulator-Screenshots` (14748494558),
+  `Kite-v33-Performance-Results` (14747624858).
+
 ## VelaCore (Swift 6.0.3, local Linux)
 
 * `swift test`: **420 tests, 0 failures, 6 skipped** when live checks are off.
