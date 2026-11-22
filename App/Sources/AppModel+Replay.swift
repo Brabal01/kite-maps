@@ -38,6 +38,8 @@ extension AppModel {
         })
         replaySession = session
         replayName = L10n.text(fault.title)
+        // Deterministic simulator runs open the controls automatically; the banner still stays visible.
+        if ProcessInfo.processInfo.environment["KITE_UITEST_REPLAY_CONTROLS"] == "1" { showDiagnostics = true }
         session.start()
     }
 

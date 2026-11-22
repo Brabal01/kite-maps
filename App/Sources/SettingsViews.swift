@@ -166,43 +166,20 @@ struct SettingsView: View {
         NavigationView {
             // A short menu like Waze's: a few big rows, each opening a page with its switches.
             Form {
-                if settingsSearch.isEmpty {
-                    Section {
+                Section {
                     Picker("Language", selection: $settings.language) {
                         Text("System language").tag(KiteLanguage.system)
                         Text(verbatim: "Čeština").tag(KiteLanguage.czech)
                         Text(verbatim: "English").tag(KiteLanguage.english)
                     }
-                    menuRow("Voice & driving", detail: L10n.format("Voice, travel mode, avoid tolls and %@", String(describing: Fmt.yards ? "motorways" : "highways")),
-                            icon: "speaker.wave.2.fill", color: 0x0F766E) { drivingPage }
-                    menuRow("Cameras & speed", detail: "Camera warnings, speeding alert", icon: "camera.fill", color: 0xDC2626) { camerasPage }
-                    menuRow("Road alerts", detail: Waze.shares.contains(.police) ? "Police, crashes, closures" : "Closures, police aircraft",
-                            value: settings.wazeOn ? "On" : "Off", icon: "exclamationmark.triangle.fill", color: 0x7C3AED) {
-                        WazeSettingsView(settings: settings)
+                    // The same rows as the menu, filtered. Keeping one Section means the search
+                    // field itself is never rebuilt or removed while the query changes.
+                    ForEach(matchingPages, id: \.title) { entry in
+                        menuRow(entry.title, detail: entry.detail, value: entry.value,
+                                icon: entry.icon, color: entry.color) { entry.page() }
                     }
-                    menuRow("Live cameras", detail: "Road camera photos and scenic webcams", value: settings.liveCams ? "On" : "Off",
-                            icon: "web.camera.fill", color: 0x0284C7) { liveCamsPage }
-                    menuRow("Map & display", detail: "Map presets, HUD, theme, units and zoom", icon: "circle.lefthalf.filled", color: 0x334155) { mapPage }
-                    menuRow("Public transport", detail: "Live feeds, discovery and timetable fallback", value: settings.autoTransitFeeds ? "Auto" : nil,
-                            icon: "tram.fill", color: 0x7C3AED) { transitPage }
-                    menuRow("My places", detail: "Home and work", icon: "house.fill", color: 0x16A34A) { placesPage }
-                    menuRow("Privacy", detail: "Use Kite without Google", value: settings.noGoogle ? "On" : nil,
-                            icon: "lock.fill", color: 0x475569) { privacyPage }
-                    if let model {
-                        menuRow("Diagnostics", detail: "Provider checks and a shareable report", icon: "stethoscope", color: 0x0F766E) {
-                            DataDiagnosticsView(model: model)
-                        }
-                    }
-                    menuRow("About", detail: "Version " + version, icon: "info.circle.fill", color: 0x64748B) { aboutPage }
-                    }
-                } else {
-                    Section("Results") {
-                        ForEach(matchingPages, id: \.title) { entry in
-                            menuRow(entry.title, detail: entry.detail, icon: entry.icon, color: entry.color) { entry.page() }
-                        }
-                        if matchingPages.isEmpty {
-                            Text(L10n.text("No settings match that search.")).foregroundColor(.secondary)
-                        }
+                    if matchingPages.isEmpty {
+                        Text(L10n.text("No settings match that search.")).foregroundColor(.secondary)
                     }
                 }
             }
@@ -230,6 +207,7 @@ struct SettingsView: View {
         let keywords: String
         let icon: String
         let color: UInt32
+        var value: String? = nil
         let page: () -> AnyView
     }
 
@@ -247,11 +225,11 @@ struct SettingsView: View {
             .init(title: "Map & display", detail: "Map presets, HUD, theme, units and zoom",
                   keywords: "dark mode theme preset hud zoom map style units", icon: "circle.lefthalf.filled", color: 0x334155) { AnyView(mapPage) },
             .init(title: "Public transport", detail: "Live feeds, discovery and timetable fallback",
-                  keywords: "mhd transit tram bus gtfs realtime departure", icon: "tram.fill", color: 0x7C3AED) { AnyView(transitPage) },
+                  keywords: "mhd transit tram bus gtfs realtime departure", icon: "tram.fill", color: 0x7C3AED, value: settings.autoTransitFeeds ? "Auto" : nil) { AnyView(transitPage) },
             .init(title: "My places", detail: "Home and work",
                   keywords: "home work address favourite shortcut", icon: "house.fill", color: 0x16A34A) { AnyView(placesPage) },
             .init(title: "Privacy", detail: "Use Kite without Google",
-                  keywords: "google open data privacy search", icon: "lock.fill", color: 0x475569) { AnyView(privacyPage) },
+                  keywords: "google open data privacy search", icon: "lock.fill", color: 0x475569, value: settings.noGoogle ? "On" : nil) { AnyView(privacyPage) },
             .init(title: "About", detail: "Version, safe mode and credits",
                   keywords: "version crash safe mode license about", icon: "info.circle.fill", color: 0x64748B) { AnyView(aboutPage) },
         ]
