@@ -145,17 +145,10 @@ final class AppSettings: ObservableObject {
     @Published var plateCameras: Bool { didSet { d.set(plateCameras, forKey: "plateCameras") } }
     /** Say "Speed camera ahead" while navigating. Off by default: some countries restrict it. */
     @Published var cameraWarnings: Bool { didSet { d.set(cameraWarnings, forKey: "cameraWarnings") } }
-    /** Where the car is, resolved from a geocoded position — not from the device's language or region. */
+    /// An approximate jurisdiction derived from real GPS and offline boundary data.
     @Published var cameraJurisdiction: CameraWarningPolicy = .unknown
-    /** Honest acknowledgement that the user takes responsibility where no verified country is known. */
-    @Published var cameraJurisdictionResponsible: Bool {
-        didSet { d.set(cameraJurisdictionResponsible, forKey: "cameraJurisdictionResponsible") }
-    }
-    /** The only value the navigator may use: preference gated by a verified jurisdiction. */
-    var effectiveCameraWarnings: Bool {
-        CameraJurisdiction.warningsEnabled(userPreference: cameraWarnings, policy: cameraJurisdiction,
-                                           userAcceptsResponsibility: cameraJurisdictionResponsible)
-    }
+    @Published var cameraCountryCode: String?
+    var effectiveCameraWarnings: Bool { cameraWarnings && cameraJurisdiction == .allowed }
     /** Say so when driving over the posted limit. Off by default, like Vela. */
     @Published var speedingAlert: Bool { didSet { d.set(speedingAlert, forKey: "speedingAlert") } }
     /** How close the driving map sits: Closer, Normal (as Kite always was) or Wider. */
@@ -265,13 +258,6 @@ final class AppSettings: ObservableObject {
         plateCameras = d.object(forKey: "plateCameras") as? Bool ?? true
         // On for new users, except where warning of cameras is against the law.
         cameraWarnings = d.object(forKey: "cameraWarnings") as? Bool ?? true
-        let responsible = d.bool(forKey: "cameraJurisdictionResponsible")
-        cameraJurisdictionResponsible = responsible
-        // An offline first launch has no verified country. The device region is a hint only, and only
-        // for someone who has explicitly accepted responsibility for checking the local law.
-        if responsible {
-            cameraJurisdiction = CameraJurisdiction.policy(isoCountryCode: Locale.current.region?.identifier)
-        }
         speedingAlert = d.bool(forKey: "speedingAlert")
         mapZoom = MapZoom(rawValue: d.string(forKey: "mapZoom") ?? "") ?? .normal
         driveLook = MapLook(rawValue: d.string(forKey: "driveLook") ?? "") ?? .tilted

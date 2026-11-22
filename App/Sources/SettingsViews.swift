@@ -282,8 +282,8 @@ struct SettingsView: View {
 
     private var jurisdictionText: String {
         switch settings.cameraJurisdiction {
-        case .allowed: return "Checked where you are — warnings allowed"
-        case .restricted: return "Checked where you are — warnings suppressed"
+        case .allowed: return "Camera alerts available"
+        case .restricted: return "Camera alerts suppressed"
         case .unknown: return "Not known — warnings suppressed"
         }
     }
@@ -362,11 +362,12 @@ struct SettingsView: View {
         Form {
             Section("Warnings") {
                 Toggle(isOn: $settings.cameraWarnings) { SettingLabel("Say when a speed camera is ahead", icon: "speaker.wave.3.fill", color: 0xDC2626) }
-                Toggle(isOn: $settings.cameraJurisdictionResponsible) {
-                    SettingLabel("I check local camera-warning law myself", icon: "hand.raised.fill", color: 0xB45309)
-                }
-                LabeledContent("Current jurisdiction", value: L10n.text(jurisdictionText))
-                    .font(.subheadline)
+                LabeledContent("Current jurisdiction", value: [
+                    settings.cameraCountryCode, L10n.text(jurisdictionText)
+                ].compactMap { $0 }.joined(separator: " · "))
+                .font(.subheadline)
+                Text("Camera alerts use approximate borders and a limited policy list. Near borders or with uncertain GPS, speed camera alerts are turned off.")
+                    .font(.footnote)
                 Toggle(isOn: $settings.speedingAlert) { SettingLabel("Say when I'm over the speed limit", icon: "gauge.with.dots.needle.67percent", color: 0xEA580C) }
             }
             Section {

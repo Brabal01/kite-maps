@@ -100,14 +100,85 @@ final class Navigator: ObservableObject {
             events = orderedControls
         }
         let next = events.lazy.filter { event in
-            guard event.meters >= along else { return false }
-            // While driving, an ambiguous light or a proximity fallback is not a
-            // confirmed instruction and must not enter the upcoming strip.
-            if self.route.mode == .drive && !event.control.directionCertain { return false }
-            return true
+            if event.control.kind == .light {
+                return NavigationReplayIncident.isUpcomingSignal(
+                    along: event.meters, traveled: along, mode: self.route.mode,
+                    certain: event.control.directionCertain, ambiguous: event.control.relevance == .ambiguous
+                )
+            }
+            return event.meters >= along && (self.route.mode != .drive || event.control.directionCertain)
         }.prefix(6)
         let remaining = Array(next).map { UpcomingRoadControl(control: $0.control, meters: (($0.meters - along) / 10).rounded() * 10) }
         if remaining != upcomingControls { upcomingControls = remaining }
+    }
+
+    private var incidentFixes: [CLLocation] = []
+    private var incidentRouteID: UUID?
+
+    /// Retain only recent real fixes, in memory, while detailed diagnostics are enabled.
+    func recordIncidentFix(_ fix: CLLocation) {
+        guard DiagnosticsLog.shared.isDetailed else {
+            incidentFixes.removeAll()
+            return
+        }
+        if incidentRouteID != route.id { incidentFixes.removeAll(); incidentRouteID = route.id }
+        guard CLLocationCoordinate2DIsValid(fix.coordinate),
+              (0...1_000).contains(fix.horizontalAccuracy),
+              (-2...8).contains(Date().timeIntervalSince(fix.timestamp)),
+              incidentFixes.last.map({ $0.timestamp < fix.timestamp }) ?? true else { return }
+        incidentFixes.append(fix)
+        incidentFixes.removeAll { fix.timestamp.timeIntervalSince($0.timestamp) > 45 }
+        if incidentFixes.count > 180 { incidentFixes.removeFirst(incidentFixes.count - 180) }
+    }
+
+    func clearIncidentFixes() { incidentFixes.removeAll() }
+
+    func captureReplayIncident() -> NavigationReplayIncident? {
+        guard DiagnosticsLog.shared.isDetailed, incidentRouteID == route.id,
+              incidentFixes.count >= 2, let first = incidentFixes.first, let last = incidentFixes.last,
+              Date().timeIntervalSince(last.timestamp) <= 120, let progress else { return nil }
+        let origin = latLng(first)
+        let cumulative = Geo.cumulative(route.polyline)
+        let firstAlong = Geo.project(origin, on: route.polyline, cumulative: cumulative).along
+        let start = max(0, min(firstAlong, progress.alongMeters) - 120)
+        let end = min(cumulative.last ?? 0, max(progress.alongMeters + 750, (nextManeuver?.alongMeters ?? 0) + 120))
+        guard end > start, end - start < 10_000 else { return nil }
+        let line = Geo.slice(route.polyline, from: start, to: end, cumulative: cumulative)
+        let maneuvers = route.maneuvers.filter { (start...end).contains($0.alongMeters) }.map {
+            var step = $0
+            step.alongMeters -= start
+            return step
+        }
+        let localRoute = Route(mode: route.mode, polyline: line, distanceMeters: Geo.length(line),
+                               typicalSeconds: (end - start) / 10, maneuvers: maneuvers, source: "incident")
+        let fixes = incidentFixes.map { fix in
+            let offset = DiagnosticRedactor.offset(of: latLng(fix), from: origin)
+            return GPSReplayFixture.Fix(t: fix.timestamp.timeIntervalSince(first.timestamp), east: offset.east,
+                                       north: offset.north, accuracy: fix.horizontalAccuracy,
+                                       speed: max(-1, fix.speed), course: max(-1, fix.course))
+        }
+        let signals = orderedControls.filter {
+            $0.control.kind == .light && (start...end).contains($0.meters)
+        }.prefix(100).map {
+            NavigationReplayIncident.Signal(location: $0.control.location, alongMeters: $0.meters - start,
+                                            directionCertain: $0.control.directionCertain,
+                                            ambiguous: $0.control.relevance == .ambiguous)
+        }
+        return NavigationReplayIncident(
+            route: OfflineRouteSnapshot(localRoute),
+            gps: GPSReplayFixture(name: "Navigation incident", origin: origin, fixes: fixes),
+            signalCandidates: signals,
+            observed: .init(instruction: nextManeuver?.instruction ?? "", roundaboutExit: nextManeuver?.exit,
+                            trafficLights: upcomingControls.filter { $0.control.kind == .light }.count,
+                            offRoute: progress.offRoute)
+        )
+    }
+
+    func suppressSpeedCameraAlerts() {
+        if cameraAhead?.kind == .speed { cameraAhead = nil }
+        if averageCheck != nil { averageCheck = nil }
+        zoneEntry = nil
+        zoneCarry = nil
     }
 
     var allUpcomingControls: [UpcomingRoadControl] {
@@ -177,6 +248,7 @@ final class Navigator: ObservableObject {
     }
     /** Called a few minutes after arriving, to end the trip. */
     var onFinished: (() -> Void)?
+    var onFixUnavailable: (() -> Void)?
     var onArrival: (() -> Void)?
     /** Steps already given a "Continue for 7 miles". */
     private var toldContinue: Set<Int> = []
@@ -251,7 +323,10 @@ final class Navigator: ObservableObject {
                 guard let self, !self.demoAlerts, self.lastFix != nil else { return }
                 let gap = Date().timeIntervalSince(self.realFixAt)
                 let lost = gap > 8
-                if lost != self.gpsLost { self.gpsLost = lost }
+                if lost != self.gpsLost {
+                    self.gpsLost = lost
+                    if lost { self.onFixUnavailable?() }
+                }
                 self.estimate(gap)
                 self.syncNavigationState()
             }
@@ -762,6 +837,8 @@ final class Navigator: ObservableObject {
 
     private func checkCameras(_ p: RouteTracker.Progress) {
         guard !demoAlerts else { return }
+        let policyAllowsSpeedAlerts = AppSettings.shared.cameraJurisdiction == .allowed
+        if !policyAllowsSpeedAlerts, cameraAhead?.kind == .speed { cameraAhead = nil }
         let meters = routeCameras.map(\.along)
         if let ahead = cameraAhead {
             // Keep the card up, counting down, until its own camera is passed.
@@ -773,7 +850,10 @@ final class Navigator: ObservableObject {
                 cameraAhead = nil
             }
         }
-        let spoken = Set(routeCameras.indices.filter { spokenCameras.contains(routeCameras[$0].camera.id) })
+        let spoken = Set(routeCameras.indices.filter {
+            let camera = routeCameras[$0].camera
+            return spokenCameras.contains(camera.id) || (!policyAllowsSpeedAlerts && camera.kind == .speed)
+        })
         guard let i = CameraAlerts.due(cameraMeters: meters, traveled: p.alongMeters, speedMps: speedMps, spoken: spoken) else { return }
         let cam = routeCameras[i].camera
         // A speed camera's card stays up until it's passed: a plate camera just after it waits its turn.
@@ -954,6 +1034,10 @@ final class Navigator: ObservableObject {
 
     /** Average speed checks: say when one starts and ends, and keep the user's average on screen. */
     private func checkZones(_ p: RouteTracker.Progress) {
+        if !demoAlerts, AppSettings.shared.cameraJurisdiction != .allowed {
+            suppressSpeedCameraAlerts()
+            return
+        }
         guard !demoAlerts else { return }
         let at = p.alongMeters
         // How far along the carried check's road the car is now, while it's still on that road.
@@ -1363,6 +1447,11 @@ final class Navigator: ObservableObject {
                 toldNoSignal = true
                 speak("No signal. Keep going, and Kite will find a new route when it's back.")
             }
+            rerouting = false
+            if adding != nil { stopFailed = true }
+            lastReroute = .distantPast
+            syncNavigationState()
+            return
         } else if !quiet && Date().timeIntervalSince(rerouteSpokenAt) > 45
                     // Right by the destination a new route is only a few metres: saying "Rerouting"
                     // just before "You have arrived" (a simulated drive to Cardiff Castle) is noise.

@@ -99,10 +99,25 @@ struct NavigationOverlay: View {
                         .padding(12)
                         .glass(RoundedRectangle(cornerRadius: 14))
                     }
+                    if nav.route.mode == .drive, let here = model.userLatLng,
+                       here.distance(to: nav.destinationEntrance ?? nav.destination.location) > 20 {
+                        Button {
+                            var target = nav.destination
+                            if let entrance = nav.destinationEntrance { target.location = entrance }
+                            model.endNavigation()
+                            model.openDirections(to: target, mode: .walk)
+                        } label: {
+                            Label("Continue on foot", systemImage: "figure.walk")
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .padding(8)
+                        .glass(RoundedRectangle(cornerRadius: 12))
+                    }
                     ArrivedCard(name: nav.destination.name, onPark: nav.route.mode == .drive ? { model.saveParking() } : nil,
                                 note: nav.wazeWarned > 0 ? "Waze drivers warned you about \(nav.wazeWarned) report\(nav.wazeWarned == 1 ? "" : "s") on the way" : nil) { model.endNavigation() }
                 } else {
                     InstructionBanner(nav: nav)
+                        .accessibilityIdentifier("active-navigation-instruction")
                         .fixedSize(horizontal: false, vertical: true)
 
                 }
@@ -1928,9 +1943,10 @@ struct AlongRouteSheet: View {
                 guard at.offset < 800, at.along > here + 100 else { continue }
                 out.append((p, at.along - here))
             }
-            found = out.sorted { $0.1 < $1.1 }.prefix(12).map { (place: $0.0, ahead: $0.1) }
+            let candidates = out.sorted { $0.1 < $1.1 }.prefix(12).map { (place: $0.0, ahead: $0.1) }
+            found = candidates
             searching = false
-            for row in found {
+            for row in candidates {
                 guard !Task.isCancelled else { return }
                 let at = here + row.ahead
                 let approach = Geo.point(along: line, meters: max(here, at - 600), cumulative: cum)
@@ -1942,6 +1958,12 @@ struct AlongRouteSheet: View {
                 if let a = normal.routes.first, let b = withStop.routes.first {
                     detours[row.place.id] = max(0, b.durationSeconds - a.durationSeconds)
                 }
+            }
+            guard !Task.isCancelled else { return }
+            found = candidates.sorted {
+                let lhs = detours[$0.place.id] ?? .infinity
+                let rhs = detours[$1.place.id] ?? .infinity
+                return lhs == rhs ? $0.ahead < $1.ahead : lhs < rhs
             }
         }
     }

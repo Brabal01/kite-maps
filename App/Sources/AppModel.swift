@@ -355,7 +355,7 @@ final class AppModel: ObservableObject {
     private var transitLoadedAt = Date.distantPast
     private var searchTask: Task<Void, Never>?
     private var navSub: AnyCancellable?
-    /** A simulated GPS drive is running (developer tool). It is the only source of position while it does. */
+    /** A separate replay is being shown alongside live guidance. */
     @Published var replayName: String?
     @Published var replaySession: ReplaySession?
     var isReplaying: Bool { replayName != nil }
@@ -380,14 +380,15 @@ final class AppModel: ObservableObject {
     /** "Carry on": the same place, stops and way of travelling, started as soon as the route arrives. */
     func resumeTrip() {
         guard let t = resumeOffer else { return }
-        let saved = Self.interruptedJourneys.load()
+        let saved = Self.snapshotWrites.sync { Self.interruptedJourneys.load() }
         resumeOffer = nil
         settings.trip = nil
         selected = nil
         results = []
         // Without internet the saved route is the only one there is. Online, a fresh plan from where the
         // driver is now is better, so the snapshot is used only when planning cannot work.
-        if !Connectivity.shared.online, let saved, saved.destination.id == t.destination.id,
+        if !Connectivity.shared.online, let saved,
+           saved.matches(destinationID: t.destination.id, stopIDs: t.stops.map(\.id), modeRaw: t.mode),
            let route = saved.route.route() {
             settings.avoidTolls = saved.avoidTolls
             settings.avoidHighways = saved.avoidHighways
@@ -406,21 +407,35 @@ final class AppModel: ObservableObject {
     func dismissResume() {
         resumeOffer = nil
         settings.trip = nil
+        clearInterruptedJourney()
+    }
+
+    private func clearInterruptedJourney() {
+        savedRouteID = nil
+        savedRouteAt = .distantPast
+        Self.snapshotWrites.async { Self.interruptedJourneys.clear() }
     }
 
     private func rememberTrip(_ n: Navigator) {
         tripSavedAt = Date()
         settings.trip = SavedTrip(destination: n.destination, stops: n.stops, mode: n.route.mode.rawValue, at: Date())
         // The route itself goes to a file (a long route is too big for UserDefaults), only when it changed.
-        guard !isReplaying, savedRouteID != n.route.id else { return }
+        let stopIDs = n.stops.map(\.id)
+        guard savedRouteID != n.route.id || savedStopIDs != stopIDs ||
+                Date().timeIntervalSince(savedRouteAt) > 15 * 60 else { return }
+        savedStopIDs = stopIDs
+        savedRouteAt = Date()
         savedRouteID = n.route.id
         let journey = OfflineJourney(destination: n.destination, stops: n.stops, avoidTolls: settings.avoidTolls,
                                      avoidHighways: settings.avoidHighways, route: n.route)
-        DispatchQueue.global(qos: .utility).async { Self.interruptedJourneys.save(journey) }
+        Self.snapshotWrites.async { Self.interruptedJourneys.save(journey) }
     }
 
     nonisolated static let interruptedJourneys = OfflineJourneyStore.standard()
     private var savedRouteID: UUID?
+    private var savedStopIDs: [String] = []
+    private var savedRouteAt = Date.distantPast
+    nonisolated private static let snapshotWrites = DispatchQueue(label: "kite.offline-snapshot", qos: .utility)
 
     /**
      Search bias and distance labels only. Planning uses the stable snapshot
@@ -801,13 +816,13 @@ final class AppModel: ObservableObject {
 
     // MARK: Directions
 
-    func openDirections(to place: Place) {
+    func openDirections(to place: Place, mode: TravelMode? = nil) {
         // Going somewhere else: the old trip isn't wanted back.
         if resumeOffer != nil { dismissResume() }
         autoStart = false
         pendingNavigationStart = false
         detent = .half
-        startPlanning(DirectionsState(destination: place, mode: settings.defaultMode))
+        startPlanning(DirectionsState(destination: place, mode: mode ?? settings.defaultMode))
     }
 
     func closeDirections() {
@@ -1713,7 +1728,7 @@ final class AppModel: ObservableObject {
         selected = nil
         let n = Navigator(route: route, destination: destination, stops: stops, settings: settings, coverage: previewCoverage)
         n.compassHeading = location.deviceHeading
-        resolveJurisdiction(for: route)
+        jurisdiction.reset()
         n.exclusion = exclusion
         nav = n
         defer { refreshActivity() }
@@ -1737,8 +1752,17 @@ final class AppModel: ObservableObject {
             }
         }
         // In a tunnel GPS stops: the navigator works out where the car should be, and it's shown like a fix.
+        n.onFixUnavailable = { [weak self, weak n] in
+            guard let self, let n, self.nav === n, n.route.mode == .drive else { return }
+            self.jurisdiction.invalidate()
+            n.suppressSpeedCameraAlerts()
+        }
         n.onEstimate = { [weak self, weak n] loc in
             guard let self, let n, self.nav === n else { return }
+            if n.route.mode == .drive {
+                self.jurisdiction.invalidate()
+                n.suppressSpeedCameraAlerts()
+            }
             n.handle(loc, estimated: true)
             if self.nav === n { self.followCamera(n, loc, animated: true) }
             self.mapTick += 1
@@ -1759,6 +1783,7 @@ final class AppModel: ObservableObject {
         // Every real guidance path must begin from a navigation-grade fix, not
         // a five-minute-old search fix or a manual start.
         if let loc = location.navigationFix(maximumError: navigationAccuracy(for: route.mode)) {
+            if route.mode == .drive { jurisdiction.update(loc, navigator: n) }
             n.handle(loc)
             if nav === n { followCamera(n, loc, animated: false) }
         } else {
@@ -1766,18 +1791,15 @@ final class AppModel: ObservableObject {
             location.start()
         }
         // Simulator UI tests only: replay the route instead of waiting for a GPS that does not move.
-        if ProcessInfo.processInfo.environment["KITE_UITEST_REPLAY"] == "1" {
+        #if targetEnvironment(simulator)
+        if UITestSupport.planning, ProcessInfo.processInfo.environment["KITE_UITEST_REPLAY"] == "1" {
             let factor = Double(ProcessInfo.processInfo.environment["KITE_UITEST_REPLAY_SPEED"] ?? "") ?? 1
             startReplay(.clean, speedFactor: factor)
         }
+        #endif
     }
 
-    private func resolveJurisdiction(for route: Route) {
-        guard let origin = route.polyline.first else { return }
-        Task { @MainActor in
-            _ = await JurisdictionService.shared.resolve(origin)
-        }
-    }
+    private lazy var jurisdiction = JurisdictionService(settings: settings)
 
     @discardableResult func offerRouteExclusion(at point: LatLng) -> Bool {
         if let nav, !nav.showingOverview { return false }
@@ -2029,6 +2051,7 @@ final class AppModel: ObservableObject {
     }
 
     func endNavigation() {
+        jurisdiction.reset()
         stopReplay()
         stopPlanningGPS()
         clearNearbyControls()
@@ -2045,6 +2068,7 @@ final class AppModel: ObservableObject {
         nav = nil
         navSub = nil
         settings.trip = nil
+        clearInterruptedJourney()
         location.setNavigating(false)
         map?.showsUserLocation = true
         directions = nil
@@ -2232,17 +2256,14 @@ final class AppModel: ObservableObject {
         mapTick += 1
     }
 
-    func locationChanged(_ loc: CLLocation, simulated: Bool = false) {
-        // While a replay runs, the replay is the only source of position: a real fix must not leak into it,
-        // and a replayed one must never reach anything that is kept (trip memory, Live Activity, area data).
-        if isReplaying && !simulated { return }
-        defer { if !simulated { refreshActivity() } }
+    func locationChanged(_ loc: CLLocation) {
+        defer { refreshActivity() }
         // The planner is event-driven: the first usable fix continues the plan
         // no matter whether it arrives after 5, 30 or 90 seconds.
         if nav == nil, directions != nil, directions?.planning != nil {
             planningLocationChanged(loc)
         }
-        if !location.reducedAccuracy && !simulated { refreshNearbyControls(loc) }
+        if !location.reducedAccuracy { refreshNearbyControls(loc) }
         if location.reducedAccuracy || loc.horizontalAccuracy > 200 { areaRisk = nil }
         if let journey = transitJourney, !location.reducedAccuracy, updateTransitPosition(loc, journey: journey) { return }
         guard let n = nav else {
@@ -2257,14 +2278,21 @@ final class AppModel: ObservableObject {
             mapTick += 1
             return
         }
-        guard !location.reducedAccuracy, loc.horizontalAccuracy <= navigationAccuracy(for: n.route.mode) else { return }
+        if !location.reducedAccuracy { n.recordIncidentFix(loc) }
+        if n.route.mode == .drive {
+            if location.reducedAccuracy || loc.horizontalAccuracy > navigationAccuracy(for: .drive) { jurisdiction.invalidate() }
+            else { jurisdiction.update(loc, navigator: n) }
+            if settings.cameraJurisdiction != .allowed { n.suppressSpeedCameraAlerts() }
+        }
+        guard !location.reducedAccuracy, loc.horizontalAccuracy >= 0,
+              loc.horizontalAccuracy <= navigationAccuracy(for: n.route.mode) else { return }
         n.compassHeading = location.deviceHeading
         n.handle(loc)
         if nav === n, UIApplication.shared.applicationState == .active {
             followCamera(n, loc, animated: true)
             mapTick += 1
         }
-        if transitJourney == nil, nav === n, !simulated { tripCheck(n) }
+        if transitJourney == nil, nav === n { tripCheck(n) }
     }
 
     private func navigationAccuracy(for mode: TravelMode) -> Double { mode == .drive ? 60 : 40 }
@@ -2301,8 +2329,12 @@ final class AppModel: ObservableObject {
     /** Keeps the saved trip fresh while driving, and on arriving forgets it. */
     private func tripCheck(_ n: Navigator) {
         if n.arrived {
-            if settings.trip != nil { settings.trip = nil }
-        } else if Date().timeIntervalSince(tripSavedAt) > 60 || settings.trip?.stops.count != n.stops.count {
+            if settings.trip != nil {
+                settings.trip = nil
+                clearInterruptedJourney()
+            }
+        } else if savedRouteID != n.route.id || Date().timeIntervalSince(tripSavedAt) > 60 ||
+                    settings.trip?.stops.count != n.stops.count {
             rememberTrip(n)
         }
     }

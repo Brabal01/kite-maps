@@ -106,7 +106,12 @@ public final class DiagnosticsLog: @unchecked Sendable {
      * replay level contains a full relative trace, and it must be chosen explicitly in the UI.
      */
     public func report(appVersion: String, level: ReportLevel, now: Date = Date()) -> Data {
-        let events = snapshot(now: now)
+        let allowedFields: [String: Set<String>] = [
+            "fix": ["along", "off", "next", "toNext", "offRoute", "acc", "speed", "evidence"],
+            "reroute": ["heading", "acc"],
+            "newRoute": ["meters", "steps"]
+        ]
+        let events = snapshot(now: now).filter { allowedFields[$0.kind] != nil }
         let start = events.first?.time ?? now
         let anchor = events.compactMap(\.position).first
         let rows: [[String: Any]] = events.map { event in
@@ -114,9 +119,11 @@ public final class DiagnosticsLog: @unchecked Sendable {
                 "t": (event.time.timeIntervalSince(start) * 10).rounded() / 10,
                 "kind": DiagnosticRedactor.sanitize(event.kind),
             ]
-            if !event.fields.isEmpty {
-                row["fields"] = event.fields.mapValues { DiagnosticRedactor.sanitize($0) }
+            let fields = event.fields.filter { key, value in
+                guard allowedFields[event.kind]?.contains(key) == true else { return false }
+                return value == "true" || value == "false" || (Double(value)?.isFinite ?? false)
             }
+            if !fields.isEmpty { row["fields"] = fields }
             if level != .technical, let at = event.position, let anchor {
                 let local = DiagnosticRedactor.offset(of: at, from: anchor)
                 let grid = level == .pseudonymized ? 500.0 : 1.0

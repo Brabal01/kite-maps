@@ -16,6 +16,9 @@ public struct OfflineRouteSnapshot: Codable, Equatable, Sendable {
         public var length: Double
         public var road: String?
         public var exit: Int?
+        public var silent: Bool?
+        public var leavesRoundabout: Bool?
+        public var exitAmbiguous: Bool?
     }
 
     public var modeRaw: Int
@@ -39,7 +42,8 @@ public struct OfflineRouteSnapshot: Codable, Equatable, Sendable {
         steps = route.maneuvers.map {
             Step(type: $0.type.rawValue, instruction: $0.instruction, lat: Self.round($0.location.lat),
                  lng: Self.round($0.location.lng), along: $0.alongMeters, length: $0.distanceMeters,
-                 road: $0.road, exit: $0.exit)
+                 road: $0.road, exit: $0.exit, silent: $0.silent,
+                 leavesRoundabout: $0.leavesRoundabout, exitAmbiguous: $0.exitAmbiguous)
         }
     }
 
@@ -47,18 +51,31 @@ public struct OfflineRouteSnapshot: Codable, Equatable, Sendable {
 
     /** The route again, with a new identity, or nil when the stored data is not a usable line. */
     public func route() -> Route? {
-        guard coordinates.count >= 4, coordinates.count % 2 == 0,
+        guard let mode = TravelMode(rawValue: modeRaw),
+              distanceMeters.isFinite, distanceMeters > 0,
+              typicalSeconds.isFinite, typicalSeconds >= 0,
+              trafficSeconds.map({ $0.isFinite && $0 >= 0 }) ?? true,
+              coordinates.count >= 4, coordinates.count % 2 == 0,
               coordinates.allSatisfy({ $0.isFinite }) else { return nil }
         let line = stride(from: 0, to: coordinates.count, by: 2).map { LatLng(coordinates[$0], coordinates[$0 + 1]) }
         guard line.allSatisfy({ (-90...90).contains($0.lat) && (-180...180).contains($0.lng) }) else { return nil }
+        let length = Geo.length(line)
+        guard length > 0, steps.allSatisfy({
+            (-90...90).contains($0.lat) && (-180...180).contains($0.lng) &&
+            (0...(length + 50)).contains($0.along) && $0.length.isFinite && $0.length >= 0
+        }), zip(steps, steps.dropFirst()).allSatisfy({ $0.along <= $1.along }) else { return nil }
         let maneuvers = steps.map {
-            Maneuver(type: ManeuverType(rawValue: $0.type) ?? .unknown, instruction: $0.instruction,
+            var maneuver = Maneuver(type: ManeuverType(rawValue: $0.type) ?? .unknown, instruction: $0.instruction,
                      location: LatLng($0.lat, $0.lng), alongMeters: $0.along, distanceMeters: $0.length,
                      road: $0.road, exit: $0.exit)
+            maneuver.silent = $0.silent ?? false
+            maneuver.leavesRoundabout = $0.leavesRoundabout ?? false
+            maneuver.exitAmbiguous = $0.exitAmbiguous ?? false
+            return maneuver
         }
-        return Route(mode: TravelMode(rawValue: modeRaw) ?? .drive, polyline: line, distanceMeters: distanceMeters,
+        return Route(mode: mode, polyline: line, distanceMeters: distanceMeters,
                      typicalSeconds: typicalSeconds, trafficSeconds: trafficSeconds, summary: summary,
-                     maneuvers: maneuvers, source: source + "+saved")
+                     maneuvers: maneuvers, source: source.hasSuffix("+saved") ? source : source + "+saved")
     }
 }
 
@@ -83,6 +100,11 @@ public struct OfflineJourney: Codable, Equatable, Sendable {
         self.avoidTolls = avoidTolls
         self.avoidHighways = avoidHighways
         self.route = OfflineRouteSnapshot(route)
+    }
+
+    public func matches(destinationID: String, stopIDs: [String], modeRaw: Int) -> Bool {
+        destination.id == destinationID && stops.map(\.id) == stopIDs &&
+            route.modeRaw == modeRaw
     }
 
     /** Older than this, the plan is stale and a fresh route is worth asking for. */

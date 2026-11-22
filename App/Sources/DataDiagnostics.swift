@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 import VelaCore
 
 /**
@@ -14,22 +15,25 @@ final class DataDiagnostics: ObservableObject {
     @Published var running = false
     @Published var status = "Ready"
     @Published var report: URL?
-    @Published var preview = ""
+    @Published private(set) var entries: [DiagnosticZip.Entry] = []
 
     private static let version: String = {
         let info = Bundle.main.infoDictionary
         return "\(info?["CFBundleShortVersionString"] as? String ?? "?") (\(info?["CFBundleVersion"] as? String ?? "?"))"
     }()
 
-    /// What the user would share, before anything is written or sent.
-    func refreshPreview(level: DiagnosticsLog.ReportLevel) {
-        let data = DiagnosticsLog.shared.report(appVersion: Self.version, level: level)
-        preview = String(decoding: data.prefix(8_000), as: UTF8.self)
+    func invalidateExport() {
+        if let report { try? FileManager.default.removeItem(at: report) }
+        report = nil
+        entries = []
     }
 
-    func run(model: AppModel, includeMap: Bool, level: DiagnosticsLog.ReportLevel) {
+    func run(model: AppModel, includeMap: Bool, level: DiagnosticsLog.ReportLevel,
+             incident: NavigationReplayIncident?) {
         guard !running else { return }
-        running = true; report = nil; status = "Testing…"
+        invalidateExport()
+        running = true
+        status = "Testing…"
         let mapImage: Data? = {
             guard includeMap, let map = model.map, map.bounds.width > 0, map.bounds.height > 0 else { return nil }
             return UIGraphicsImageRenderer(bounds: map.bounds).image { _ in
@@ -41,20 +45,18 @@ final class DataDiagnostics: ObservableObject {
             var entries: [DiagnosticZip.Entry] = []
             var lines = [
                 "Kite diagnostics",
-                "Created (UTC): \(ISO8601DateFormatter().string(from: Date()))",
                 "Kite: \(Self.version)",
                 "App ID: \(Bundle.main.bundleIdentifier ?? "?")",
                 "iOS: \(UIDevice.current.systemVersion), \(Self.deviceModel())",
                 "Location allowed: \(model.location.authorized), precise: \(!model.location.reducedAccuracy)",
-                "GPS accuracy now: \(model.location.last.map { "\(Int($0.horizontalAccuracy)) m" } ?? "no fix")",
                 "Road alerts: \(s.wazeOn), on map: \(s.wazeOnMap), heat map: \(s.wazeHeatmap), no Google: \(s.noGoogle)",
                 "Speed cameras: \(s.speedCameras), plate cameras: \(s.plateCameras), surveillance: \(s.surveillanceCameras)",
-                "Live cameras: \(s.liveCams) (road \(s.liveRoadCams), webcams \(s.liveWebcams), route \(s.liveCamsOnRoute)), list: \(LiveCamStore.shared.status ?? "not loaded")",
                 "Navigating: \(model.nav != nil)",
                 "Roundabout resolutions: \(model.nav?.roundaboutDiagnostics.count ?? 0)",
                 "Map picture included: \(mapImage != nil) (it can show exactly where you are).",
                 "Navigation report level: \(level.rawValue) — \(level.explanation)",
-                "No GPS position, searches, saved places or accounts are in this file.",
+                "Incident fixture included: \(incident != nil) (can identify your location).",
+                "Account and search data are excluded.",
                 "",
                 "Service tests (fixed box in central London):",
             ]
@@ -63,10 +65,12 @@ final class DataDiagnostics: ObservableObject {
                 entries.append(.init(name: "navigation-events.json",
                                      data: DiagnosticsLog.shared.report(appVersion: Self.version, level: level)))
             }
-            if let nav = model.nav, !nav.roundaboutDiagnostics.isEmpty {
-                lines.append("")
-                lines.append("Roundabout resolutions (route distances only, no coordinates):")
-                lines += nav.roundaboutDiagnostics
+            if let incident {
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                if let data = try? encoder.encode(incident) {
+                    entries.append(.init(name: "navigation-incident.json", data: data))
+                }
             }
 
             @MainActor func timed<T>(_ name: String, _ work: () async -> T?, describe: (T) -> String) async {
@@ -86,8 +90,10 @@ final class DataDiagnostics: ObservableObject {
             entries.insert(.init(name: "diagnostics.txt", data: Data(lines.joined(separator: "\n").utf8)), at: 0)
             do {
                 let zip = try DiagnosticZip.archive(entries)
-                let url = FileManager.default.temporaryDirectory.appendingPathComponent("Kite-diagnostics.zip")
+                let url = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("Kite-diagnostics-\(UUID().uuidString).zip")
                 try zip.write(to: url, options: .atomic)
+                self.entries = entries
                 report = url
                 status = "Ready to share."
             } catch {
@@ -112,6 +118,15 @@ struct DataDiagnosticsView: View {
     @State private var detailed = DiagnosticsLog.shared.isDetailed
     @State private var confirmReplay = false
     @State private var showPreview = false
+    @State private var confirmIncident = false
+    @State private var captured: NavigationReplayIncident?
+    @State private var includeIncident = false
+    @State private var openFixture = false
+    @State private var fixtureError = false
+    @State private var imported: NavigationReplayIncident?
+    @State private var replayed: NavigationReplayIncident.Observation?
+    @State private var expectedExit = ""
+    @State private var expectedSignals = ""
 
     var body: some View {
         Form {
@@ -125,16 +140,15 @@ struct DataDiagnosticsView: View {
                 }
                 Text(L10n.text(level.explanation)).font(.footnote).foregroundColor(.secondary)
                 Toggle("Include a picture of the map", isOn: $includeMap)
-                Button("Preview what will be shared") {
-                    diagnostics.refreshPreview(level: level)
-                    showPreview = true
-                }
                 Button(L10n.text(diagnostics.running ? "Testing…" : "Run tests")) {
-                    diagnostics.run(model: model, includeMap: includeMap, level: level)
+                    var incident = includeIncident ? captured : nil
+                    incident?.expectedRoundaboutExit = Int(expectedExit)
+                    incident?.expectedTrafficLights = Int(expectedSignals)
+                    diagnostics.run(model: model, includeMap: includeMap, level: level, incident: incident)
                 }
-                .disabled(diagnostics.running)
                 Text(L10n.text(diagnostics.status)).font(.footnote).foregroundColor(.secondary)
                 if let report = diagnostics.report {
+                    Button("Preview every archive file") { showPreview = true }
                     ShareLink(item: report) { Label("Share diagnostics", systemImage: "square.and.arrow.up") }
                 }
             } footer: {
@@ -145,11 +159,55 @@ struct DataDiagnosticsView: View {
                 Toggle("Detailed diagnostics", isOn: $detailed)
                     .onChange(of: detailed) { on in
                         DiagnosticsLog.shared.setDetailed(on)
-                        if !on, level != .technical { level = .technical }
+                        if !on {
+                            level = .technical
+                            clearIncident()
+                        }
                     }
-                Button("Delete recorded diagnostics", role: .destructive) { DiagnosticsLog.shared.clear() }
+                Button("Delete recorded diagnostics", role: .destructive) {
+                    DiagnosticsLog.shared.clear()
+                    model.nav?.clearIncidentFixes()
+                    clearIncident()
+                    diagnostics.invalidateExport()
+                }
             } header: { Text("Privacy") } footer: {
                 Text("Kite keeps technical events (distance along the route, GPS accuracy, speed) in memory for up to 3 hours. They are never written to disk and end when you close Kite. Detailed mode additionally remembers where they happened so a roundabout or GPS fault can be replayed; turning it off forgets those positions immediately.")
+            }
+
+            Section {
+                if detailed, let nav = model.nav {
+                    Button("Capture the last manoeuvre") {
+                        clearIncident()
+                        captured = nav.captureReplayIncident()
+                        if captured == nil { fixtureError = true }
+                    }
+                }
+                if let captured {
+                    Text(captured.observed.instruction)
+                    TextField("Expected roundabout exit (optional)", text: $expectedExit).keyboardType(.numberPad)
+                    TextField("Expected traffic-light count (optional)", text: $expectedSignals).keyboardType(.numberPad)
+                    Button(includeIncident ? "Remove incident from export" : "Include captured incident in export") {
+                        if includeIncident { includeIncident = false } else { confirmIncident = true }
+                    }
+                }
+                Button("Import navigation incident JSON") { openFixture = true }
+                if let imported, let replayed {
+                    LabeledContent("Recorded instruction", value: imported.observed.instruction)
+                    LabeledContent("Replayed instruction", value: replayed.instruction)
+                    LabeledContent("Replayed roundabout exit", value: replayed.roundaboutExit.map(String.init) ?? "—")
+                    if let exit = imported.expectedRoundaboutExit {
+                        LabeledContent("Expected exit", value: String(exit))
+                    }
+                    LabeledContent("Replayed traffic lights", value: String(replayed.trafficLights))
+                    if let count = imported.expectedTrafficLights {
+                        LabeledContent("Expected traffic lights", value: String(count))
+                    }
+                    LabeledContent("Replayed off-route state", value: replayed.offRoute ? "Off route" : "On route")
+                }
+            } header: {
+                Text("Navigation incident")
+            } footer: {
+                Text("After stopping safely, capture up to 45 seconds of recent fixes and nearby route geometry. Import the extracted JSON here to run it through an isolated tracker.")
             }
 
             if model.nav != nil {
@@ -161,7 +219,27 @@ struct DataDiagnosticsView: View {
                             Button("Replay: \(fault.title)") { model.startReplay(fault) }
                         }
                     } header: { Text("Developer: GPS replay") } footer: {
-                        Text("Drives the current route with a simulated GPS. Your real position is ignored meanwhile, nothing is saved, and an orange banner stays on screen until you stop it.")
+                        Text("Uses a separate GPS tracker and shows its instructions here. Your actual journey continues independently.")
+                    }
+                }
+            }
+            if let nav = model.nav {
+                Section("Current instruction evidence") {
+                    if let maneuver = nav.nextManeuver {
+                        Text(maneuver.instruction)
+                        LabeledContent("Routing source", value: nav.route.source)
+                        if maneuver.type == .roundabout {
+                            LabeledContent("Exit source", value: maneuver.exitSource?.rawValue ?? "Unavailable")
+                            if let confidence = maneuver.exitConfidence {
+                                LabeledContent("Exit confidence", value: confidence.formatted(.percent.precision(.fractionLength(0))))
+                            }
+                            if maneuver.exitAmbiguous { Text("Available sources disagree about the exit.") }
+                        }
+                    }
+                    if let signal = nav.upcomingControls.first(where: { $0.control.kind == .light })?.control {
+                        LabeledContent("Traffic light source", value: signal.source)
+                        LabeledContent("Traffic light confidence", value: signal.confidence.formatted(.percent.precision(.fractionLength(0))))
+                        Text(signal.directionCertain ? "Matched to the current approach." : "Approach direction is uncertain.")
                     }
                 }
             }
@@ -173,13 +251,49 @@ struct DataDiagnosticsView: View {
                 }
             }
         }
+        .disabled(diagnostics.running)
+        .onChange(of: includeMap) { _ in diagnostics.invalidateExport() }
+        .onChange(of: level) { _ in diagnostics.invalidateExport() }
+        .onChange(of: detailed) { _ in diagnostics.invalidateExport() }
+        .onChange(of: includeIncident) { _ in diagnostics.invalidateExport() }
+        .onChange(of: expectedExit) { _ in diagnostics.invalidateExport() }
+        .onChange(of: expectedSignals) { _ in diagnostics.invalidateExport() }
+        .fileImporter(isPresented: $openFixture, allowedContentTypes: [.json]) { result in
+            imported = nil
+            replayed = nil
+            do {
+                let url = try result.get()
+                let access = url.startAccessingSecurityScopedResource()
+                defer { if access { url.stopAccessingSecurityScopedResource() } }
+                guard let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+                      size <= 2_000_000, let incident = NavigationReplayIncident.decode(try Data(contentsOf: url)),
+                      let replay = incident.replay() else { fixtureError = true; return }
+                imported = incident
+                replayed = replay
+            } catch { fixtureError = true }
+        }
+        .alert("No usable navigation incident", isPresented: $fixtureError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Capture needs recent GPS fixes on the current route. Import needs a valid navigation-incident.json file.")
+        }
         .kiteList()
         .navigationTitle("Diagnostics")
         .sheet(isPresented: $showPreview) {
             NavigationView {
-                ScrollView {
-                    Text(diagnostics.preview).font(.caption.monospaced()).textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading).padding()
+                List(diagnostics.entries, id: \.name) { entry in
+                    NavigationLink(entry.name) {
+                        ScrollView([.vertical, .horizontal]) {
+                            if entry.name == "map.png", let map = UIImage(data: entry.data) {
+                                Image(uiImage: map).resizable().scaledToFit()
+                                    .frame(width: 320).padding()
+                            } else {
+                                Text(String(decoding: entry.data, as: UTF8.self))
+                                    .font(.caption.monospaced()).textSelection(.enabled).padding()
+                            }
+                        }
+                        .navigationTitle(entry.name)
+                    }
                 }
                 .navigationTitle("Export preview")
                 .toolbar {
@@ -190,13 +304,28 @@ struct DataDiagnosticsView: View {
             }
             .navigationViewStyle(.stack)
         }
+        .confirmationDialog("Include the exact incident locations?", isPresented: $confirmIncident, titleVisibility: .visible) {
+            Button("I consent to including the incident") { includeIncident = true }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This file includes real GPS coordinates, nearby route geometry and instruction text. It can reveal your identity or where you travelled. Share it only with someone you trust.")
+        }
         .confirmationDialog("Share a detailed movement trace?", isPresented: $confirmReplay, titleVisibility: .visible) {
             Button("I consent to including it") { level = .replay }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("The export holds the shape of your recent movement as metres from an unknown start. It has no coordinates, but someone who knows your home, work or usual route could still recognise it. Share it only with someone you trust with that.")
+            Text("The export can include your recent movement shape and roundabout road names. Those details can identify you or where you travelled even without coordinates. Share it only with someone you trust.")
         }
     }
+
+    private func clearIncident() {
+        captured = nil
+        includeIncident = false
+        expectedExit = ""
+        expectedSignals = ""
+        if !detailed { model.nav?.clearIncidentFixes() }
+    }
+
 }
 
 
@@ -212,6 +341,7 @@ struct ReplayControlsView: View {
                 Spacer()
                 Text(session.fault.title).foregroundColor(.secondary)
             }
+            if !session.instruction.isEmpty { Text(session.instruction).font(.subheadline) }
             if !session.note.isEmpty { Text(session.note).font(.caption).foregroundColor(.secondary) }
             Button(session.paused ? "Resume" : "Pause") {
                 session.paused ? model.resumeReplay() : model.pauseReplay()
@@ -231,7 +361,7 @@ struct ReplayControlsView: View {
             Button("Stop replay", role: .destructive) { model.stopReplay() }
                 .accessibilityIdentifier("replay-stop-detail")
         } header: { Text("Developer: GPS replay running") } footer: {
-            Text("Simulated fixes only. Real GPS is ignored and nothing is saved while this is on.")
+            Text("Replay has a separate tracker. Live guidance, history and Live Activity continue to use real GPS.")
         }
     }
 }

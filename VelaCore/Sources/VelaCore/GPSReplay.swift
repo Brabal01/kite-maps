@@ -168,3 +168,114 @@ struct SplitMix {
         return sqrt(-2 * log(u1)) * cos(2 * .pi * u2)
     }
 }
+
+/// One explicitly selected incident. It contains real locations, so it requires separate consent.
+public struct NavigationReplayIncident: Codable, Sendable {
+    public struct Observation: Codable, Sendable, Equatable {
+        public let instruction: String
+        public let roundaboutExit: Int?
+        public let trafficLights: Int
+        public let offRoute: Bool
+
+        public init(instruction: String, roundaboutExit: Int?, trafficLights: Int, offRoute: Bool) {
+            self.instruction = instruction
+            self.roundaboutExit = roundaboutExit
+            self.trafficLights = trafficLights
+            self.offRoute = offRoute
+        }
+    }
+
+    public struct Signal: Codable, Sendable {
+        public let location: LatLng
+        public let alongMeters: Double
+        public let directionCertain: Bool
+        public let ambiguous: Bool
+
+        public init(location: LatLng, alongMeters: Double, directionCertain: Bool, ambiguous: Bool) {
+            self.location = location
+            self.alongMeters = alongMeters
+            self.directionCertain = directionCertain
+            self.ambiguous = ambiguous
+        }
+    }
+
+    public static let currentSchema = "kite-navigation-incident-v1"
+    public let schema: String
+    public var route: OfflineRouteSnapshot
+    public var gps: GPSReplayFixture
+    public var signalCandidates: [Signal]
+    public var observed: Observation
+    public var expectedRoundaboutExit: Int?
+    public var expectedTrafficLights: Int?
+
+    private enum CodingKeys: String, CodingKey {
+        case schema, route, gps, signalCandidates, observed, expectedRoundaboutExit, expectedTrafficLights
+    }
+
+    public init(route: OfflineRouteSnapshot, gps: GPSReplayFixture, signalCandidates: [Signal], observed: Observation,
+                expectedRoundaboutExit: Int? = nil, expectedTrafficLights: Int? = nil) {
+        self.schema = Self.currentSchema
+        self.route = route
+        self.gps = gps
+        self.signalCandidates = signalCandidates
+        self.observed = observed
+        self.expectedRoundaboutExit = expectedRoundaboutExit
+        self.expectedTrafficLights = expectedTrafficLights
+    }
+
+    public static func decode(_ data: Data) -> Self? {
+        guard data.count <= 2_000_000,
+              let value = try? JSONDecoder().decode(Self.self, from: data),
+              value.schema == Self.currentSchema,
+              value.route.coordinates.count <= 20_000,
+              value.signalCandidates.count <= 100,
+              value.signalCandidates.allSatisfy({
+                  (0...10_000).contains($0.alongMeters) &&
+                  (-90...90).contains($0.location.lat) && (-180...180).contains($0.location.lng)
+              }),
+              value.gps.schema == GPSReplayFixture.schema,
+              (2...180).contains(value.gps.fixes.count),
+              (0...90).contains(value.gps.duration), value.gps.routePolyline == nil,
+              value.gps.fixes.allSatisfy({
+                  (0...90).contains($0.t) && (0...1_000).contains($0.accuracy) &&
+                  (-1...150).contains($0.speed) && (-1...360).contains($0.course) &&
+                  abs($0.east) <= 20_000 && abs($0.north) <= 20_000
+              }),
+              zip(value.gps.fixes, value.gps.fixes.dropFirst()).allSatisfy({ $0.t < $1.t }),
+              (-85...85).contains(value.gps.origin.lat), (-180...180).contains(value.gps.origin.lng),
+              value.gps.fixes.allSatisfy({
+                  let point = value.gps.coordinate(of: $0)
+                  return (-85...85).contains(point.lat) && (-180...180).contains(point.lng)
+              }),
+              value.route.route() != nil else { return nil }
+        return value
+    }
+
+    public func replay() -> Observation? {
+        guard let route = route.route() else { return nil }
+        let tracker = RouteTracker(route: route)
+        var progress: RouteTracker.Progress?
+        for step in GPSReplayPlan.schedule(gps) {
+            // Match the app's navigation fix gate. The captured outlier remains in the fixture.
+            guard step.fix.accuracy <= (route.mode == .drive ? 60 : 40) else { continue }
+            progress = tracker.update(step.coordinate, accuracy: max(5, step.fix.accuracy),
+                                      heading: step.fix.course >= 0 && step.fix.speed >= 4 ? step.fix.course : nil,
+                                      speed: max(0, step.fix.speed), now: Date(timeIntervalSince1970: step.fix.t))
+        }
+        guard let progress else { return nil }
+        let maneuver = progress.nextIndex.flatMap {
+            route.maneuvers.indices.contains($0) ? route.maneuvers[$0] : nil
+        } ?? route.maneuvers.first
+        let signals = signalCandidates.filter {
+            Self.isUpcomingSignal(along: $0.alongMeters, traveled: progress.alongMeters, mode: route.mode,
+                                  certain: $0.directionCertain, ambiguous: $0.ambiguous)
+        }.prefix(6).count
+        return Observation(instruction: maneuver?.instruction ?? "", roundaboutExit: maneuver?.exit,
+                           trafficLights: signals, offRoute: progress.offRoute)
+    }
+
+    public static func isUpcomingSignal(along: Double, traveled: Double, mode: TravelMode,
+                                        certain: Bool, ambiguous: Bool) -> Bool {
+        along >= traveled && (mode != .drive || (certain && !ambiguous))
+    }
+}

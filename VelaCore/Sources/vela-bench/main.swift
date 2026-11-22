@@ -84,6 +84,23 @@ results.append(measure("RouteControlCache store + load", iterations: 10_000) {
     _ = controlCache.controls(for: key)
 })
 
+let jurisdictionPoint = LatLng(49.5938, 17.2509)
+let jurisdictionTime = Date(timeIntervalSince1970: 1_000)
+let countryBoundaries = CountryBoundaries.bundled
+var noCache = JurisdictionCoordinator(boundaries: countryBoundaries)
+results.append(measure("Jurisdiction polygon lookup without cache", iterations: 2_000) {
+    noCache.reset()
+    _ = noCache.update(position: jurisdictionPoint, accuracy: 5,
+                       timestamp: jurisdictionTime, now: jurisdictionTime)
+})
+var cached = JurisdictionCoordinator(boundaries: countryBoundaries)
+_ = cached.update(position: jurisdictionPoint, accuracy: 5,
+                  timestamp: jurisdictionTime, now: jurisdictionTime)
+let nextFix = jurisdictionTime.addingTimeInterval(1)
+results.append(measure("Jurisdiction within cached clearance", iterations: 2_000) {
+    _ = cached.update(position: jurisdictionPoint, accuracy: 5, timestamp: nextFix, now: nextFix)
+})
+
 var memory: [String: Any] = ["source": "unavailable"]
 #if os(Linux)
 if let status = try? String(contentsOfFile: "/proc/self/status", encoding: .utf8),
@@ -93,8 +110,8 @@ if let status = try? String(contentsOfFile: "/proc/self/status", encoding: .utf8
 #endif
 
 let document: [String: Any] = [
-    "schema": "kite-v33-benchmarks-v1",
-    "conditions": "VelaCore pure Swift algorithms, release-independent local run, no network, no UI, single process, wall clock.",
+    "schema": "kite-v34-benchmarks-v1",
+    "conditions": "VelaCore pure Swift algorithms, release configuration when run with swift run -c release, no network, no UI, single process, wall clock.",
     "swiftVersion": "\(SystemInfo.swiftVersion)",
     "results": results,
     "memory": memory,

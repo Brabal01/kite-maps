@@ -11,6 +11,14 @@ enum UITestSupport {
         ProcessInfo.processInfo.arguments.contains("-uitest-planning")
     }
 
+    static var offline: Bool {
+        #if targetEnvironment(simulator)
+        planning && ProcessInfo.processInfo.environment["KITE_UITEST_OFFLINE"] == "1"
+        #else
+        false
+        #endif
+    }
+
     static var mockRoutes: Bool {
         ProcessInfo.processInfo.environment["KITE_UITEST_ROUTES"] == "1"
     }
