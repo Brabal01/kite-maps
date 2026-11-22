@@ -227,6 +227,10 @@ struct RoutesPage: View {
                 Label("Carry on", systemImage: "location.north.fill")
             }
             .buttonStyle(KitePrimaryButtonStyle(height: 52))
+            .accessibilityIdentifier("resume-interrupted-journey")
+            Button("Discard interrupted journey", role: .destructive) { model.dismissResume() }
+                .font(.subheadline)
+                .accessibilityIdentifier("discard-interrupted-journey")
         }
         .kiteCard()
     }

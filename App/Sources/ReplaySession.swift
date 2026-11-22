@@ -29,22 +29,22 @@ final class ReplaySession: ObservableObject {
     @Published var progress = 0.0
     @Published var note = ""
     @Published var simulateOffline = false
+    @Published private(set) var instruction = ""
+    private var tracker: RouteTracker
 
     let fault: Fault
     let route: Route
     let fixture: GPSReplayFixture
     private let plan: [ScheduledReplayFix]
-    private let onFix: (ScheduledReplayFix) -> Void
     private let onFinish: () -> Void
     private var task: Task<Void, Never>?
     private var index = 0
     private var deliveredTime = 0.0
 
-    init(route: Route, fault: Fault, onFix: @escaping (ScheduledReplayFix) -> Void,
-         onFinish: @escaping () -> Void) {
+    init(route: Route, fault: Fault, onFinish: @escaping () -> Void) {
         self.route = route
         self.fault = fault
-        self.onFix = onFix
+        tracker = RouteTracker(route: route)
         self.onFinish = onFinish
         let drive = GPSReplayFixture.drive(along: route.polyline,
                                            speed: route.mode == .drive ? 13 : route.mode == .bike ? 4.5 : 1.4,
@@ -83,11 +83,18 @@ final class ReplaySession: ObservableObject {
                 let step = plan[index]
                 let wait = max(0, step.deliverAt - deliveredTime) / max(0.25, speed)
                 if wait > 0 { try? await Task.sleep(nanoseconds: UInt64(min(wait, 30) * 1_000_000_000)) }
-                guard !Task.isCancelled, !paused else { continue }
+                guard !Task.isCancelled, !paused, step == plan[index] else { continue }
                 deliveredTime = step.deliverAt
                 index += 1
                 progress = min(1, deliveredTime / max(1, totalDuration))
-                onFix(step)
+                let progress = tracker.update(step.coordinate, accuracy: max(5, step.fix.accuracy),
+                                              heading: step.fix.course >= 0 ? step.fix.course : nil,
+                                              speed: max(0, step.fix.speed), measured: !step.isLate)
+                let maneuver = progress.nextIndex.flatMap { route.maneuvers.indices.contains($0) ? route.maneuvers[$0] : nil }
+                instruction = maneuver?.spokenWords ?? ""
+                if progress.offRoute {
+                    note = simulateOffline ? "Off route. Simulated network is offline." : "Off route. Replay runs without a routing service."
+                }
             }
             if let self, !Task.isCancelled { onFinish() }
         }
@@ -103,6 +110,7 @@ final class ReplaySession: ObservableObject {
         let cumulative = Geo.cumulative(route.polyline)
         let wanted = max(0, meters)
         guard let target = plan.firstIndex(where: { Geo.project($0.coordinate, on: route.polyline, cumulative: cumulative).along >= wanted }) else { return false }
+        tracker = RouteTracker(route: route)
         index = target
         deliveredTime = plan[target].deliverAt
         progress = min(1, deliveredTime / max(1, totalDuration))

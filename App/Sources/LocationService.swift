@@ -426,6 +426,17 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
             navigationMode = chosen
             apply(chosen)
         }
+        if on, UITestSupport.offline {
+            simulatedTask?.cancel()
+            simulatedTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 350_000_000)
+                guard !Task.isCancelled, let self, self.navigating,
+                      let loc = UITestSupport.simulatedLocation() else { return }
+                self.fix = loc
+                self.onUpdate?(loc)
+            }
+            return
+        }
         start()
         if on { requestPreciseLocation() }
     }
