@@ -648,3 +648,8 @@
 "No route to show" = "Není co zobrazit";
 
 "Change the start, the destination or the travel mode, then try again." = "Změňte start, cíl nebo způsob dopravy a zkuste to znovu.";
+
+"Discard interrupted journey" = "Zahodit přerušenou cestu";
+"Continue on foot" = "Pokračovat pěšky";
+"Camera alerts available" = "Upozornění na kamery jsou dostupná";
+"Camera alerts suppressed" = "Upozornění na kamery jsou vypnutá";
