@@ -132,6 +132,8 @@ final class AppModel: ObservableObject {
         focusSearchRequest += 1
     }
     @Published var notice: String?
+    /** The manoeuvre the route preview last moved the camera to; nothing in navigation reads this. */
+    @Published var previewManeuver: Maneuver?
     @Published var detent: SheetDetent = .half
     @Published var openNowOnly = false
     @Published var rating4Only = false
@@ -147,6 +149,7 @@ final class AppModel: ObservableObject {
     }
     @Published var nav: Navigator?
     @Published var showLayers = false
+    @Published var showDiagnostics = false
     /** Which page of the dock is open. */
     @Published var tab: AppTab = .map
     /** Live Waze reports in view, for the "Live from Waze" chip; nil until Waze answers. */
@@ -354,7 +357,7 @@ final class AppModel: ObservableObject {
     private var navSub: AnyCancellable?
     /** A simulated GPS drive is running (developer tool). It is the only source of position while it does. */
     @Published var replayName: String?
-    var replayTask: Task<Void, Never>?
+    @Published var replaySession: ReplaySession?
     var isReplaying: Bool { replayName != nil }
 
     init() {
@@ -1641,6 +1644,13 @@ final class AppModel: ObservableObject {
         return nil
     }
 
+    func focusManeuver(_ step: Maneuver) {
+        previewManeuver = step
+        map?.setCenter(CLLocationCoordinate2D(latitude: step.location.lat, longitude: step.location.lng),
+                       zoomLevel: 16.5, animated: true)
+        mapTick += 1
+    }
+
     func frameRoute() {
         if let t = directions?.pickedTrip {
             if t.path.count >= 2 { frame(t.path, bottomFraction: detent == .collapsed ? 0.12 : 0.42) }
@@ -1703,6 +1713,7 @@ final class AppModel: ObservableObject {
         selected = nil
         let n = Navigator(route: route, destination: destination, stops: stops, settings: settings, coverage: previewCoverage)
         n.compassHeading = location.deviceHeading
+        resolveJurisdiction(for: route)
         n.exclusion = exclusion
         nav = n
         defer { refreshActivity() }
@@ -1758,6 +1769,13 @@ final class AppModel: ObservableObject {
         if ProcessInfo.processInfo.environment["KITE_UITEST_REPLAY"] == "1" {
             let factor = Double(ProcessInfo.processInfo.environment["KITE_UITEST_REPLAY_SPEED"] ?? "") ?? 1
             startReplay(.clean, speedFactor: factor)
+        }
+    }
+
+    private func resolveJurisdiction(for route: Route) {
+        guard let origin = route.polyline.first else { return }
+        Task { @MainActor in
+            _ = await JurisdictionService.shared.resolve(origin)
         }
     }
 

@@ -205,13 +205,9 @@ public enum Overpass {
             for (i, ep) in usable.enumerated() {
                 group.addTask {
                     if i > 0 { try? await Task.sleep(nanoseconds: UInt64(Double(i) * stagger * 1e9)) }
-                    guard !Task.isCancelled, let (data, status) = await fetch(ep, query: q, requestTimeout: requestTimeout), status == 200 else { return nil }
-                    if timedOut(data) {
-                        health.recordFailure(ep, .timeout)
-                        return nil
-                    }
-                    guard valid(data) else { return nil }
-                    return data
+                    guard !Task.isCancelled, let (data, status) = await fetch(ep, query: q, requestTimeout: requestTimeout) else { return nil }
+                    // The HTTP layer does not clear the circuit: only a body the caller accepts does.
+                    return accept(data, status: status, endpoint: ep, health: health, valid: valid)
                 }
             }
             for await answer in group {
@@ -409,13 +405,31 @@ public enum Overpass {
         }
         let http = resp as? HTTPURLResponse
         let status = http?.statusCode ?? 0
-        if status == 200 {
-            health.recordSuccess(endpoint)
-        } else if let failure = EndpointHealth.failure(
+        if status != 200, let failure = EndpointHealth.failure(
             forStatus: status, retryAfter: EndpointHealth.retryAfter(http?.value(forHTTPHeaderField: "Retry-After"))) {
             health.recordFailure(endpoint, failure)
         }
         return (data, status)
+    }
+
+    /**
+     * The single acceptance point for an Overpass answer. A HTTP 200 with a `remark`, truncated JSON
+     * or an answer the caller cannot parse is a server failure and counts towards the circuit;
+     * only a validated answer clears it. Pure apart from the health object, so it is unit-testable.
+     */
+    static func accept(_ data: Data, status: Int, endpoint: String, health: EndpointHealth,
+                       valid: (Data) -> Bool, now: Date = Date()) -> Data? {
+        guard status == 200 else { return nil }
+        if timedOut(data) {
+            health.recordFailure(endpoint, .timeout, now: now)
+            return nil
+        }
+        guard valid(data) else {
+            health.recordFailure(endpoint, .invalidResponse, now: now)
+            return nil
+        }
+        health.recordSuccess(endpoint)
+        return data
     }
 
     /// Shared so that every Overpass caller (road events, lanes, cameras, arrival data) honours one back-off.

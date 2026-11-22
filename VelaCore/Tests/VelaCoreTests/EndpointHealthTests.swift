@@ -81,3 +81,58 @@ final class EndpointHealthTests: XCTestCase {
         XCTAssertNil(EndpointHealth.failure(forStatus: 200, retryAfter: nil))
     }
 }
+
+final class OverpassAcceptanceTests: XCTestCase {
+    private let endpoint = "https://overpass.example/api"
+    private let t0 = Date(timeIntervalSince1970: 20_000)
+
+    private func validJSON(_ data: Data) -> Bool { (try? JSONSerialization.jsonObject(with: data)) != nil }
+
+    func testHTTP200WithBadBodyCountsAsAFailureNotASuccess() {
+        let health = EndpointHealth()
+        health.recordFailure(endpoint, .timeout, now: t0)
+        let remark = Data(#"{"version":0.6,"remark":"runtime error: query timed out"}"#.utf8)
+        XCTAssertNil(Overpass.accept(remark, status: 200, endpoint: endpoint, health: health, valid: validJSON, now: t0))
+        guard case .resting = health.status(of: endpoint, now: t0) else { return XCTFail("a bad 200 must count against the mirror") }
+        XCTAssertNil(Overpass.accept(Data("{broken".utf8), status: 200, endpoint: endpoint, health: health, valid: validJSON, now: t0))
+        XCTAssertNil(Overpass.accept(Data("{}".utf8), status: 200, endpoint: endpoint, health: health,
+                                      valid: { ($0 as NSData).length > 4 }, now: t0))
+    }
+
+    func testAValidatedAnswerClearsTheCircuit() {
+        let health = EndpointHealth()
+        health.recordFailure(endpoint, .rateLimited(retryAfter: 120), now: t0)
+        XCTAssertFalse(health.isAvailable(endpoint, now: t0))
+        let answer = Data(#"{"elements":[]}"#.utf8)
+        let accepted = Overpass.accept(answer, status: 200, endpoint: endpoint, health: health, valid: validJSON, now: t0.addingTimeInterval(121))
+        XCTAssertEqual(accepted, answer)
+        XCTAssertEqual(health.status(of: endpoint, now: t0.addingTimeInterval(121)), .available(failures: 0))
+    }
+
+    func testNon200IsNeverAcceptedAndDoesNotResetAFailure() {
+        let health = EndpointHealth()
+        health.recordFailure(endpoint, .serverError, now: t0)
+        XCTAssertNil(Overpass.accept(Data(#"{"elements":[]}"#.utf8), status: 429, endpoint: endpoint,
+                                     health: health, valid: validJSON, now: t0))
+        if case .available(let failures) = health.status(of: endpoint, now: t0) { XCTAssertEqual(failures, 1) }
+        else { XCTFail("one 502 is forgiven, and a 429 is handled in fetch, not here") }
+    }
+
+    func testTimeoutRemarkIsClassifiedAsATimeout() {
+        let health = EndpointHealth()
+        let body = Data(#"{"remark":"out of memory"}"#.utf8)
+        XCTAssertNil(Overpass.accept(body, status: 200, endpoint: endpoint, health: health, valid: { _ in true }, now: t0))
+        if case .available(let failures) = health.status(of: endpoint, now: t0) { XCTAssertEqual(failures, 1) }
+        else { XCTFail("a single timeout is recorded but does not block yet") }
+    }
+
+    func testStatusIsReadableForDiagnostics() {
+        let health = EndpointHealth()
+        XCTAssertEqual(health.status(of: "never-used"), .available(failures: 0))
+        health.recordFailure(endpoint, .rateLimited(retryAfter: 60), now: t0)
+        XCTAssertEqual(health.status(of: endpoint, now: t0),
+                       .resting(until: t0.addingTimeInterval(60), failures: 1))
+        health.reset()
+        XCTAssertEqual(health.status(of: endpoint, now: t0), .available(failures: 0))
+    }
+}

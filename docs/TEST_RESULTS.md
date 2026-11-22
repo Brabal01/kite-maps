@@ -1,5 +1,17 @@
 # Test results
 
+## v33 (branch `iphone-custom-v33-reliability-ux`)
+
+* VelaCore: **420 tests, 0 failures** (6 skips without live checks, 3 Darwin-only skips with
+  `KITE_VERIFY_TRANSITOUS=1`; all three live Transitous tests passed).
+* New suites cover HTTP 200 with a bad Overpass body, retry/backoff, GPS jump guard, camera
+  jurisdiction, golden roundabout/tunnel/wrong-turn fixtures, three-level diagnostics, replay
+  and voice (from v32).
+* Reproducible microbenchmarks: `VelaCore/Sources/vela-bench`, numbers and conditions in
+  `docs/V33_TEST_RESULTS.md` and in the `Kite-v33-Performance-Results` artifact.
+* iOS IPA, simulator and UI results are in `docs/V33_TEST_RESULTS.md` and on PR #11.
+* Physical-device items are explicitly unverified — see `docs/V33_DEVICE_TEST_CHECKLIST.md`.
+
 ## v32 (branch `iphone-custom-v32-refinement`)
 
 ### VelaCore (Linux Swift 6.0.3, local)

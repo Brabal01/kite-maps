@@ -22,6 +22,10 @@ public struct RouteSectionScheduler: Sendable {
         public var maxBackoff: TimeInterval = 240
         public var breakerThreshold = 3
         public var breakerCooldown: TimeInterval = 90
+        /** A jump larger than this needs a confident map-match before the window may move. */
+        public var maximumUnverifiedJump = 300.0
+        /** Below this match confidence a long jump is treated as a bad fix. */
+        public var minimumJumpConfidence = 0.6
 
         public init() {}
     }
@@ -39,6 +43,8 @@ public struct RouteSectionScheduler: Sendable {
     public let totalMeters: Double
     public private(set) var statuses: [Status]
     public private(set) var progressMeters = 0.0
+    /** How many long, low-confidence jumps were rejected (for diagnostics). */
+    public private(set) var rejectedJumps = 0
     private var consecutiveFailures = 0
     private var breakerOpenUntil: Date?
     private var attemptsMade: [Int: Int] = [:]
@@ -57,8 +63,20 @@ public struct RouteSectionScheduler: Sendable {
         return start...min(totalMeters, start + config.sectionMeters)
     }
 
-    public mutating func updateProgress(_ meters: Double) {
-        if meters.isFinite { progressMeters = max(progressMeters, max(0, meters)) }
+    /**
+     * Monotonic progress, guarded against one wild GPS jump. A correction backwards is harmless,
+     * but a single 90 km "teleport" with a poor map match must not permanently skip the real sections.
+     */
+    public mutating func updateProgress(_ meters: Double, confidence: Double = 1, now: Date = Date()) {
+        guard meters.isFinite else { return }
+        let candidate = max(0, meters)
+        // The first fix has no earlier position to contradict, so it is accepted whatever its confidence.
+        if progressMeters > 0, candidate > progressMeters + config.maximumUnverifiedJump,
+           !(confidence.isFinite && confidence >= config.minimumJumpConfidence) {
+            rejectedJumps += 1
+            return
+        }
+        progressMeters = max(progressMeters, candidate)
     }
 
     /** The sections that matter now: the one the vehicle is on and those inside the look-ahead. */

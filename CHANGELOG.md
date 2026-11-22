@@ -3,6 +3,19 @@
 Every version of Kite Maps, newest first. The small number goes up for fixes and polish, and
 the middle number for big milestones.
 
+## v33 reliability and UX (branch `iphone-custom-v33-reliability-ux`)
+
+Built on v32 `c812777`; PR #11 targets the v32 branch. Details in `docs/V33_ARCHITECTURE.md`.
+
+- **Overpass:** a HTTP 200 with an error remark or unparsable body now counts against the mirror; only a validated answer clears the circuit. 429/503/Retry-After, timeouts and 5xx are classified centrally; cancellation is not a server failure.
+- **Route events:** unverified GPS jumps >300 m no longer skip sections, the worker wakes on a real window change, old events are evicted, partial provider answers are not cached.
+- **Privacy:** diagnostics exports are technical / coarse / replay, with a preview before sharing and explicit consent for the detailed trace; relative movement is described as potentially identifying.
+- **Camera law:** jurisdiction is resolved by reverse geocoding the route origin (not the device language); unknown locations suppress warnings; a device-region hint needs explicit acknowledgement.
+- **Replay:** pause, speed, skip to manoeuvre, fault profiles (noise, tunnel, late fix, wrong turn) and simulated offline, all isolated from real GPS and saved data, with a visible simulated banner.
+- **Golden fixtures** for a four-exit roundabout, a tunnel gap and a wrong turn; interactive Route Preview; settings search; reorderable quick actions.
+- **Warnings fixed:** Swift 6 actor-isolation warning in HighwayHeat, deprecated `Locale.regionCode` and clipboard pattern detection.
+- **Benchmarks:** a deterministic `vela-bench` executable and `Kite-v33-Performance-Results` artifact; no estimated speedups are claimed.
+
 ## v32 refinement (branch `iphone-custom-v32-refinement`)
 
 Built on v31 `00c3065`. App version stays 0.8.0; build numbers continue from v31.

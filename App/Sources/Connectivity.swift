@@ -6,14 +6,25 @@ import Network
 final class Connectivity: ObservableObject {
     static let shared = Connectivity()
     @Published private(set) var online = true
+    private var simulatedOffline = false
+    private var actualOnline = true
     private let monitor = NWPathMonitor()
 
     private init() {
         monitor.pathUpdateHandler = { path in
             let ok = path.status == .satisfied
-            Task { @MainActor in Connectivity.shared.online = ok }
+            Task { @MainActor in
+                Connectivity.shared.actualOnline = ok
+                Connectivity.shared.online = ok && !Connectivity.shared.simulatedOffline
+            }
         }
         monitor.start(queue: DispatchQueue(label: "kite.connectivity"))
+    }
+
+    /** Developer replay only: make the app see an outage without touching the network. */
+    func setSimulatedOffline(_ on: Bool) {
+        simulatedOffline = on
+        online = actualOnline && !on
     }
 
     /** "No internet connection." when offline, else [fallback]. */

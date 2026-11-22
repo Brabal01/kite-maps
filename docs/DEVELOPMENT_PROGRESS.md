@@ -1,6 +1,16 @@
 # Kite Maps iPhone custom build — development progress
 
-Updated: 2026-11-21 (v32 added)
+Updated: 2026-11-21 (v33 added)
+
+## v33 reliability and UX (branch `iphone-custom-v33-reliability-ux`)
+
+Base: v32 `c812777`. PR #11 → v32. Architecture: `docs/V33_ARCHITECTURE.md`.
+
+* **P0 done + unit-tested**: Overpass body validation before health reset (5 tests), GPS-jump guard (6), three-level diagnostics with preview (6 additional), camera jurisdiction (4), plus prior v32 suites — 420 VelaCore tests locally, 0 failures, 6 skips.
+* **P1 done**: replay controls, golden fixtures (4 tests), route preview, settings search, quick-action reorder, deterministic benchmark executable.
+* **CI**: IPA + simulator + live Transitous workflows run on the v33 branch; final results in `docs/V33_TEST_RESULTS.md`.
+* **Not verified**: physical iPhone, SideStore install, Live Activity, battery, map FPS — see `docs/V33_DEVICE_TEST_CHECKLIST.md`.
+* **Not done by choice**: wholesale AppModel/MapView split, offline routing, CarPlay, simulated reroute button, exhaustive legal database.
 
 ## v32 refinement (branch `iphone-custom-v32-refinement`)
 

@@ -64,6 +64,11 @@ struct ContentView: View {
         .sheet(item: $model.picking) { kind in
             PlacePicker(model: model, kind: kind).kiteType()
         }
+        .overlay(alignment: .bottom) {
+            if model.isReplaying, let session = model.replaySession {
+                ReplayControlsStrip(session: session, model: model)
+            }
+        }
         .onChange(of: settings.welcomed && !settings.needsWazeChoice) { ready in
             if ready { model.location.start() }
         }
@@ -139,7 +144,8 @@ struct ContentView: View {
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: model.liveCam?.id)
         .overlay(alignment: .top) {
             if let name = model.replayName {
-                SimulatedGPSBanner(name: name) { model.stopReplay() }
+                SimulatedGPSBanner(name: name, stop: { model.stopReplay() },
+                                   openControls: { model.openReplayControls() })
             }
         }
         .alert(item: $model.surveillanceInfo) { camera in
@@ -199,6 +205,10 @@ struct ContentView: View {
         }
         .sheet(isPresented: $model.showLayers) {
             LayersSheet(settings: settings, liveCount: model.wazeLiveCount).kiteType()
+        }
+        .sheet(isPresented: $model.showDiagnostics) {
+            NavigationView { DataDiagnosticsView(model: model).kiteType() }
+                .navigationViewStyle(.stack)
         }
         .fullScreenCover(isPresented: .constant(DemoScript.step?.hasPrefix("svtest") == true)) {
             demoStreetView
@@ -707,12 +717,8 @@ struct SuggestionsPanel: View {
         .padding(.horizontal, 12)
         .frame(maxHeight: 460)
         .task {
-            // Only checks whether the clipboard looks like a link; it doesn't read it.
-            guard UIPasteboard.general.hasStrings || UIPasteboard.general.hasURLs else { return }
-            UIPasteboard.general.detectPatterns(for: [.probableWebURL]) { result in
-                let found = (try? result.get())?.contains(.probableWebURL) ?? false
-                Task { @MainActor in copiedLink = found }
-            }
+            // A non-deprecated check that does not read the clipboard's contents.
+            copiedLink = UIPasteboard.general.hasURLs
         }
     }
 
@@ -958,7 +964,12 @@ enum DemoScript {
             }
             return
         }
-        if step == "settings" { model.tab = .settings; return }
+        if step == "settings" {
+            model.settings.welcomed = true
+            model.settings.wazeAsked = true
+            model.tab = .settings
+            return
+        }
         if step == "saved" {
             // A few saved places, one with a long name, in the bookmarks list.
             var pub = Place(id: "demo-pub", name: "The Old Bell Traditional Pub, Restaurant and Rooms by the River", location: LatLng(38.5460, -121.7420), source: "demo")
@@ -1383,6 +1394,7 @@ struct StatusCards: View {
 struct SimulatedGPSBanner: View {
     let name: String
     let stop: () -> Void
+    let openControls: () -> Void
 
     var body: some View {
         HStack(spacing: 10) {
@@ -1392,17 +1404,69 @@ struct SimulatedGPSBanner: View {
                 Text(name).font(.caption)
             }
             Spacer(minLength: 8)
+            Button(action: openControls) {
+                Text("Controls").font(.subheadline.weight(.bold))
+                    .padding(.horizontal, 10).frame(minHeight: 44)
+                    .background(Capsule().fill(Color.white.opacity(0.25)))
+            }
+            .accessibilityIdentifier("replay-controls")
             Button(action: stop) {
                 Text("Stop").font(.subheadline.weight(.bold))
                     .padding(.horizontal, 14).frame(minHeight: 44)
                     .background(Capsule().fill(Color.white.opacity(0.25)))
             }
-            .accessibilityIdentifier("replay-stop")
+            .accessibilityIdentifier("replay-stop-banner")
         }
         .foregroundColor(.white)
         .padding(.horizontal, 14).padding(.vertical, 6)
         .background(Color.orange.ignoresSafeArea(edges: .top))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("simulated-gps-banner")
+    }
+}
+
+
+/// Developer replay controls. Presented above every map overlay so they stay reachable while driving.
+struct ReplayControlsStrip: View {
+    @ObservedObject var session: ReplaySession
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 8) {
+                Button(session.paused ? "Resume" : "Pause") {
+                    session.paused ? model.resumeReplay() : model.pauseReplay()
+                }
+                .accessibilityIdentifier("replay-pause")
+                Button("Next turn") { model.skipToNextManeuver() }
+                    .accessibilityIdentifier("replay-skip")
+                Button("Details") { model.openReplayControls() }
+                    .accessibilityIdentifier("replay-details")
+                Button("Stop", role: .destructive) { model.stopReplay() }
+                    .accessibilityIdentifier("replay-stop")
+            }
+            .font(.subheadline.weight(.semibold))
+            HStack {
+                Text("Simulated GPS · \(session.fault.title) · \(Int(session.progress * 100))%")
+                Spacer()
+                Menu {
+                    ForEach([0.5, 1.0, 2.0, 4.0], id: \.self) { speed in
+                        Button("\(speed, specifier: "%.1f")×") { session.speed = speed }
+                    }
+                    Toggle("No internet", isOn: Binding(
+                        get: { session.simulateOffline },
+                        set: { model.setReplayOffline($0) }))
+                } label: {
+                    Text("\(session.speed, specifier: "%.1f")×").font(.caption.monospacedDigit())
+                }
+            }
+            .font(.caption)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 8)
+        .background(Color.orange.opacity(0.94), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .foregroundColor(.white)
+        .padding(.horizontal, 12).padding(.bottom, 22)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("replay-controls-strip")
     }
 }

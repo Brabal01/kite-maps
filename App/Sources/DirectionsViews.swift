@@ -351,6 +351,7 @@ struct TripHeader: View {
         }
         .buttonStyle(KitePrimaryButtonStyle(height: 62))
         .accessibilityLabel("Start navigation")
+        .accessibilityIdentifier("start-navigation")
     }
 
     @ViewBuilder private func closingLine(_ d: DirectionsState) -> some View {
@@ -544,6 +545,7 @@ struct ModeTabs: View {
 struct TripBody: View {
     @ObservedObject var model: AppModel
     @Environment(\.colorScheme) private var scheme
+    @State private var showRoutePreview = false
 
     var body: some View {
         if model.detent != .collapsed, let d = model.directions {
@@ -556,6 +558,16 @@ struct TripBody: View {
                     } else if let r = d.route {
                         if r.mode == .drive { RouteCharges(route: r) }
                         summary(r, d)
+                        Button {
+                            showRoutePreview = true
+                        } label: {
+                            Label(L10n.text("Preview this route"), systemImage: "map")
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .accessibilityIdentifier("route-preview-open")
+                        .sheet(isPresented: $showRoutePreview) {
+                            RoutePreviewSheet(model: model, route: r)
+                        }
                         // More than three routes is rare; the ones past the cards stay reachable here.
                         if d.current.count > 3 { alternates(d, picked: r) }
                         Divider()

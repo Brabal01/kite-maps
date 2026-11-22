@@ -139,6 +139,7 @@ struct LayersSheet: View {
 struct SettingsView: View {
     @AppStorage("walkingSpeed") private var walkingSpeed = 5.0
     @AppStorage("safeMode") private var safeModeNext = false
+    @State private var settingsSearch = ""
     @ObservedObject var settings: AppSettings
     /** For "Share diagnostics" in About. */
     var model: AppModel? = nil
@@ -166,32 +167,26 @@ struct SettingsView: View {
             // A short menu like Waze's: a few big rows, each opening a page with its switches.
             Form {
                 Section {
+                    HStack(spacing: 8) {
+                        Image(systemName: "magnifyingglass").foregroundColor(.secondary)
+                        TextField(L10n.text("Search settings"), text: $settingsSearch)
+                            .textInputAutocapitalization(.never).autocorrectionDisabled()
+                            .accessibilityIdentifier("settings-search")
+                    }
                     Picker("Language", selection: $settings.language) {
                         Text("System language").tag(KiteLanguage.system)
                         Text(verbatim: "Čeština").tag(KiteLanguage.czech)
                         Text(verbatim: "English").tag(KiteLanguage.english)
                     }
-                    menuRow("Voice & driving", detail: L10n.format("Voice, travel mode, avoid tolls and %@", String(describing: Fmt.yards ? "motorways" : "highways")),
-                            icon: "speaker.wave.2.fill", color: 0x0F766E) { drivingPage }
-                    menuRow("Cameras & speed", detail: "Camera warnings, speeding alert", icon: "camera.fill", color: 0xDC2626) { camerasPage }
-                    menuRow("Road alerts", detail: Waze.shares.contains(.police) ? "Police, crashes, closures" : "Closures, police aircraft",
-                            value: settings.wazeOn ? "On" : "Off", icon: "exclamationmark.triangle.fill", color: 0x7C3AED) {
-                        WazeSettingsView(settings: settings)
+                    // The same rows as the menu, filtered. Keeping one Section means the search
+                    // field itself is never rebuilt or removed while the query changes.
+                    ForEach(matchingPages, id: \.title) { entry in
+                        menuRow(entry.title, detail: entry.detail, value: entry.value,
+                                icon: entry.icon, color: entry.color) { entry.page() }
                     }
-                    menuRow("Live cameras", detail: "Road camera photos and scenic webcams", value: settings.liveCams ? "On" : "Off",
-                            icon: "web.camera.fill", color: 0x0284C7) { liveCamsPage }
-                    menuRow("Map & display", detail: "Map presets, HUD, theme, units and zoom", icon: "circle.lefthalf.filled", color: 0x334155) { mapPage }
-                    menuRow("Public transport", detail: "Live feeds, discovery and timetable fallback", value: settings.autoTransitFeeds ? "Auto" : nil,
-                            icon: "tram.fill", color: 0x7C3AED) { transitPage }
-                    menuRow("My places", detail: "Home and work", icon: "house.fill", color: 0x16A34A) { placesPage }
-                    menuRow("Privacy", detail: "Use Kite without Google", value: settings.noGoogle ? "On" : nil,
-                            icon: "lock.fill", color: 0x475569) { privacyPage }
-                    if let model {
-                        menuRow("Diagnostics", detail: "Provider checks and a shareable report", icon: "stethoscope", color: 0x0F766E) {
-                            DataDiagnosticsView(model: model)
-                        }
+                    if matchingPages.isEmpty {
+                        Text(L10n.text("No settings match that search.")).foregroundColor(.secondary)
                     }
-                    menuRow("About", detail: "Version " + version, icon: "info.circle.fill", color: 0x64748B) { aboutPage }
                 }
             }
             .kiteList()
@@ -209,6 +204,55 @@ struct SettingsView: View {
             }
         }
         .navigationViewStyle(.stack)
+    }
+
+    private struct SettingsSearchEntry {
+        let title: String
+        let detail: String
+        let keywords: String
+        let icon: String
+        let color: UInt32
+        var value: String? = nil
+        let page: () -> AnyView
+    }
+
+    /// One index for the existing pages: search opens the same page, never a second settings system.
+    private var allPages: [SettingsSearchEntry] {
+        var pages: [SettingsSearchEntry] = [
+            .init(title: "Voice & driving", detail: "Voice, travel mode, avoid tolls and highways",
+                  keywords: "hlas voice mode tolls motorway highway walking speed", icon: "speaker.wave.2.fill", color: 0x0F766E) { AnyView(drivingPage) },
+            .init(title: "Cameras & speed", detail: "Camera warnings, speeding alert, jurisdiction",
+                  keywords: "radar camera speed limit law country France Germany", icon: "camera.fill", color: 0xDC2626) { AnyView(camerasPage) },
+            .init(title: "Road alerts", detail: "Police, crashes, closures",
+                  keywords: "waze police incident closure alert", icon: "exclamationmark.triangle.fill", color: 0x7C3AED) { AnyView(WazeSettingsView(settings: settings)) },
+            .init(title: "Live cameras", detail: "Road camera photos and scenic webcams",
+                  keywords: "webcam traffic camera live", icon: "web.camera.fill", color: 0x0284C7) { AnyView(liveCamsPage) },
+            .init(title: "Map & display", detail: "Map presets, HUD, theme, units and zoom",
+                  keywords: "dark mode theme preset hud zoom map style units", icon: "circle.lefthalf.filled", color: 0x334155) { AnyView(mapPage) },
+            .init(title: "Public transport", detail: "Live feeds, discovery and timetable fallback",
+                  keywords: "mhd transit tram bus gtfs realtime departure", icon: "tram.fill", color: 0x7C3AED, value: settings.autoTransitFeeds ? "Auto" : nil) { AnyView(transitPage) },
+            .init(title: "My places", detail: "Home and work",
+                  keywords: "home work address favourite shortcut", icon: "house.fill", color: 0x16A34A) { AnyView(placesPage) },
+            .init(title: "Privacy", detail: "Use Kite without Google",
+                  keywords: "google open data privacy search", icon: "lock.fill", color: 0x475569, value: settings.noGoogle ? "On" : nil) { AnyView(privacyPage) },
+            .init(title: "About", detail: "Version, safe mode and credits",
+                  keywords: "version crash safe mode license about", icon: "info.circle.fill", color: 0x64748B) { AnyView(aboutPage) },
+        ]
+        if let model {
+            pages.append(.init(title: "Diagnostics", detail: "Provider checks, a shareable report and GPS replay",
+                               keywords: "debug log replay gps privacy export trace", icon: "stethoscope", color: 0x0F766E) {
+                AnyView(DataDiagnosticsView(model: model))
+            })
+        }
+        return pages
+    }
+
+    private var matchingPages: [SettingsSearchEntry] {
+        let q = settingsSearch.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return allPages }
+        return allPages.filter { entry in
+            "\(entry.title) \(entry.detail) \(entry.keywords)".lowercased().contains(q)
+        }
     }
 
     private var version: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "" }
@@ -233,6 +277,14 @@ struct SettingsView: View {
                 if let value { Text(L10n.text(value)).foregroundColor(.secondary) }
             }
             .padding(.vertical, 6)
+        }
+    }
+
+    private var jurisdictionText: String {
+        switch settings.cameraJurisdiction {
+        case .allowed: return "Checked where you are — warnings allowed"
+        case .restricted: return "Checked where you are — warnings suppressed"
+        case .unknown: return "Not known — warnings suppressed"
         }
     }
 
@@ -310,6 +362,11 @@ struct SettingsView: View {
         Form {
             Section("Warnings") {
                 Toggle(isOn: $settings.cameraWarnings) { SettingLabel("Say when a speed camera is ahead", icon: "speaker.wave.3.fill", color: 0xDC2626) }
+                Toggle(isOn: $settings.cameraJurisdictionResponsible) {
+                    SettingLabel("I check local camera-warning law myself", icon: "hand.raised.fill", color: 0xB45309)
+                }
+                LabeledContent("Current jurisdiction", value: L10n.text(jurisdictionText))
+                    .font(.subheadline)
                 Toggle(isOn: $settings.speedingAlert) { SettingLabel("Say when I'm over the speed limit", icon: "gauge.with.dots.needle.67percent", color: 0xEA580C) }
             }
             Section {
@@ -414,19 +471,29 @@ struct SettingsView: View {
                 } label: { SettingLabel("Distance units", icon: "ruler.fill", color: 0x0891B2) }
             }
             Section {
-                ForEach(QuickActionKind.allCases) { kind in
-                    Toggle(isOn: Binding(
-                        get: { settings.quickActions.contains(kind) },
-                        set: { on in setQuickAction(kind, on) }
-                    )) {
+                ForEach(settings.quickActions) { kind in
+                    HStack(spacing: 10) {
+                        Image(systemName: "line.3.horizontal").foregroundColor(.secondary)
                         SettingLabel(L10n.text(kind.title), icon: kind.icon, color: 0x0F766E)
+                        Spacer()
+                        Button(role: .destructive) { setQuickAction(kind, false) } label: {
+                            Image(systemName: "minus.circle").accessibilityLabel("Remove \(kind.title)")
+                        }
                     }
-                    .disabled(settings.quickActions.count == 1 && settings.quickActions.contains(kind))
                 }
+                .onMove { source, destination in settings.moveQuickAction(from: source, to: destination) }
+                Menu {
+                    ForEach(QuickActionKind.allCases.filter { !settings.quickActions.contains($0) }) { kind in
+                        Button(kind.title) { setQuickAction(kind, true) }
+                    }
+                } label: {
+                    Label(L10n.text("Add a shortcut"), systemImage: "plus.circle.fill")
+                }
+                Button(L10n.text("Restore default shortcuts")) { settings.resetQuickActions() }
             } header: {
                 Text("Shortcuts on the map")
             } footer: {
-                Text("Shown under the search field. Tap a shortcut's own checkbox to add it back. The order follows the order you add them in; hiding a shortcut keeps its place in your saved data.")
+                Text("Shown under the search field. Drag to change the order, use + to add and − to remove. Changes appear on the map immediately.")
             }
             Section {
                 Picker(selection: $settings.hudMode) {

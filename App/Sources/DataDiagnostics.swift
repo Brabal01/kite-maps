@@ -14,8 +14,20 @@ final class DataDiagnostics: ObservableObject {
     @Published var running = false
     @Published var status = "Ready"
     @Published var report: URL?
+    @Published var preview = ""
 
-    func run(model: AppModel, includeMap: Bool, includeTrack: Bool = false) {
+    private static let version: String = {
+        let info = Bundle.main.infoDictionary
+        return "\(info?["CFBundleShortVersionString"] as? String ?? "?") (\(info?["CFBundleVersion"] as? String ?? "?"))"
+    }()
+
+    /// What the user would share, before anything is written or sent.
+    func refreshPreview(level: DiagnosticsLog.ReportLevel) {
+        let data = DiagnosticsLog.shared.report(appVersion: Self.version, level: level)
+        preview = String(decoding: data.prefix(8_000), as: UTF8.self)
+    }
+
+    func run(model: AppModel, includeMap: Bool, level: DiagnosticsLog.ReportLevel) {
         guard !running else { return }
         running = true; report = nil; status = "Testing…"
         let mapImage: Data? = {
@@ -25,13 +37,12 @@ final class DataDiagnostics: ObservableObject {
             }.pngData()
         }()
         let s = model.settings
-        let info = Bundle.main.infoDictionary
         Task {
             var entries: [DiagnosticZip.Entry] = []
             var lines = [
                 "Kite diagnostics",
                 "Created (UTC): \(ISO8601DateFormatter().string(from: Date()))",
-                "Kite: \(info?["CFBundleShortVersionString"] as? String ?? "?") (\(info?["CFBundleVersion"] as? String ?? "?"))",
+                "Kite: \(Self.version)",
                 "App ID: \(Bundle.main.bundleIdentifier ?? "?")",
                 "iOS: \(UIDevice.current.systemVersion), \(Self.deviceModel())",
                 "Location allowed: \(model.location.authorized), precise: \(!model.location.reducedAccuracy)",
@@ -41,19 +52,16 @@ final class DataDiagnostics: ObservableObject {
                 "Live cameras: \(s.liveCams) (road \(s.liveRoadCams), webcams \(s.liveWebcams), route \(s.liveCamsOnRoute)), list: \(LiveCamStore.shared.status ?? "not loaded")",
                 "Navigating: \(model.nav != nil)",
                 "Roundabout resolutions: \(model.nav?.roundaboutDiagnostics.count ?? 0)",
-                "Map picture included: \(mapImage != nil) (it can show where you are).",
-                "Navigation trace included: \(includeTrack) (only as metres relative to an unknown start, never coordinates).",
+                "Map picture included: \(mapImage != nil) (it can show exactly where you are).",
+                "Navigation report level: \(level.rawValue) — \(level.explanation)",
                 "No GPS position, searches, saved places or accounts are in this file.",
                 "",
                 "Service tests (fixed box in central London):",
             ]
             if let mapImage { entries.append(.init(name: "map.png", data: mapImage)) }
-            // Technical events from the last few hours (distance along the route, accuracy, speed). The
-            // trace is added only when the user chose it for this report.
-            let version = "\(info?["CFBundleShortVersionString"] as? String ?? "?") (\(info?["CFBundleVersion"] as? String ?? "?"))"
             if DiagnosticsLog.shared.count > 0 {
                 entries.append(.init(name: "navigation-events.json",
-                                     data: DiagnosticsLog.shared.report(appVersion: version, includeTrack: includeTrack)))
+                                     data: DiagnosticsLog.shared.report(appVersion: Self.version, level: level)))
             }
             if let nav = model.nav, !nav.roundaboutDiagnostics.isEmpty {
                 lines.append("")
@@ -100,16 +108,29 @@ struct DataDiagnosticsView: View {
     @ObservedObject var model: AppModel
     @StateObject private var diagnostics = DataDiagnostics()
     @State private var includeMap = false
-    @State private var includeTrack = false
+    @State private var level: DiagnosticsLog.ReportLevel = .technical
     @State private var detailed = DiagnosticsLog.shared.isDetailed
-    @State private var confirmTrack = false
+    @State private var confirmReplay = false
+    @State private var showPreview = false
 
     var body: some View {
         Form {
             Section {
+                Picker("What to include", selection: Binding(
+                    get: { level },
+                    set: { new in
+                        if new == .replay { confirmReplay = true } else { level = new }
+                    })) {
+                    ForEach(DiagnosticsLog.ReportLevel.allCases, id: \.self) { Text(L10n.text($0.title)).tag($0) }
+                }
+                Text(L10n.text(level.explanation)).font(.footnote).foregroundColor(.secondary)
                 Toggle("Include a picture of the map", isOn: $includeMap)
+                Button("Preview what will be shared") {
+                    diagnostics.refreshPreview(level: level)
+                    showPreview = true
+                }
                 Button(L10n.text(diagnostics.running ? "Testing…" : "Run tests")) {
-                    diagnostics.run(model: model, includeMap: includeMap, includeTrack: includeTrack)
+                    diagnostics.run(model: model, includeMap: includeMap, level: level)
                 }
                 .disabled(diagnostics.running)
                 Text(L10n.text(diagnostics.status)).font(.footnote).foregroundColor(.secondary)
@@ -117,42 +138,31 @@ struct DataDiagnosticsView: View {
                     ShareLink(item: report) { Label("Share diagnostics", systemImage: "square.and.arrow.up") }
                 }
             } footer: {
-                Text("Checks that Waze and OpenStreetMap answer, and puts that with your Kite version, iPhone model and settings into a small file to send with a bug report. Nothing is sent until you share it. The map picture can show where you are, so leave it off unless it helps.")
+                Text("Checks that Waze and OpenStreetMap answer, then makes a file for a bug report. Nothing is sent until you share it. A map picture can show exactly where you are; a movement trace can still identify you if someone knows where you started.")
             }
+
             Section {
                 Toggle("Detailed diagnostics", isOn: $detailed)
                     .onChange(of: detailed) { on in
                         DiagnosticsLog.shared.setDetailed(on)
-                        if !on { includeTrack = false }
+                        if !on, level != .technical { level = .technical }
                     }
-                if detailed {
-                    Toggle("Include my movement trace in the report", isOn: Binding(
-                        get: { includeTrack },
-                        set: { on in if on { confirmTrack = true } else { includeTrack = false } }))
-                }
-                Button("Delete recorded diagnostics", role: .destructive) {
-                    DiagnosticsLog.shared.clear()
-                    includeTrack = false
-                }
+                Button("Delete recorded diagnostics", role: .destructive) { DiagnosticsLog.shared.clear() }
             } header: { Text("Privacy") } footer: {
-                Text("Kite keeps a short list of technical events (distance along the route, GPS accuracy, speed) in memory for up to 3 hours. It is never written to disk and ends when you close Kite. Detailed diagnostics also remembers where those events happened, so a roundabout or GPS fault can be replayed. A report then holds only metres relative to an unknown start, never coordinates, and only if you switch the trace on for it.")
+                Text("Kite keeps technical events (distance along the route, GPS accuracy, speed) in memory for up to 3 hours. They are never written to disk and end when you close Kite. Detailed mode additionally remembers where they happened so a roundabout or GPS fault can be replayed; turning it off forgets those positions immediately.")
             }
-            .confirmationDialog("Share your movement trace?", isPresented: $confirmTrack, titleVisibility: .visible) {
-                Button("Include trace in this report") { includeTrack = true }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("The report will show the shape of your recent movement, without where in the world it was. Anyone who also knows your route could still recognise it.")
-            }
+
             if model.nav != nil {
-                Section {
-                    if model.isReplaying {
-                        Button("Stop the simulated drive", role: .destructive) { model.stopReplay() }
-                    } else {
-                        Button("Replay this route (clean GPS)") { model.startReplay(.clean) }
-                        Button("Replay with noisy GPS and a tunnel") { model.startReplay(.rough) }
+                if let session = model.replaySession {
+                    ReplayControlsView(session: session, model: model)
+                } else {
+                    Section {
+                        ForEach(ReplaySession.Fault.allCases) { fault in
+                            Button("Replay: \(fault.title)") { model.startReplay(fault) }
+                        }
+                    } header: { Text("Developer: GPS replay") } footer: {
+                        Text("Drives the current route with a simulated GPS. Your real position is ignored meanwhile, nothing is saved, and an orange banner stays on screen until you stop it.")
                     }
-                } header: { Text("Developer: GPS replay") } footer: {
-                    Text("Drives the current route with a simulated GPS. Your real position is ignored meanwhile, nothing is saved, and an orange banner stays on screen until you stop it.")
                 }
             }
             if let nav = model.nav, !nav.roundaboutDiagnostics.isEmpty {
@@ -165,5 +175,63 @@ struct DataDiagnosticsView: View {
         }
         .kiteList()
         .navigationTitle("Diagnostics")
+        .sheet(isPresented: $showPreview) {
+            NavigationView {
+                ScrollView {
+                    Text(diagnostics.preview).font(.caption.monospaced()).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding()
+                }
+                .navigationTitle("Export preview")
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { showPreview = false }
+                    }
+                }
+            }
+            .navigationViewStyle(.stack)
+        }
+        .confirmationDialog("Share a detailed movement trace?", isPresented: $confirmReplay, titleVisibility: .visible) {
+            Button("I consent to including it") { level = .replay }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The export holds the shape of your recent movement as metres from an unknown start. It has no coordinates, but someone who knows your home, work or usual route could still recognise it. Share it only with someone you trust with that.")
+        }
+    }
+}
+
+
+/// Controls for a running replay: pause, speed, jump to a turn, and fault injection.
+struct ReplayControlsView: View {
+    @ObservedObject var session: ReplaySession
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        Section {
+            HStack {
+                Text("\(Int(session.progress * 100))%").monospacedDigit()
+                Spacer()
+                Text(session.fault.title).foregroundColor(.secondary)
+            }
+            if !session.note.isEmpty { Text(session.note).font(.caption).foregroundColor(.secondary) }
+            Button(session.paused ? "Resume" : "Pause") {
+                session.paused ? model.resumeReplay() : model.pauseReplay()
+            }
+            .accessibilityIdentifier("replay-pause")
+            Picker("Speed", selection: Binding(
+                get: { session.speed },
+                set: { session.speed = $0 })) {
+                ForEach([0.5, 1.0, 2.0, 4.0], id: \.self) { Text("\($0, specifier: "%.1f")×").tag($0) }
+            }
+            .pickerStyle(.segmented)
+            Button("Skip to next manoeuvre") { model.skipToNextManeuver() }
+                .accessibilityIdentifier("replay-skip")
+            Toggle("Simulate no internet", isOn: Binding(
+                get: { session.simulateOffline },
+                set: { model.setReplayOffline($0) }))
+            Button("Stop replay", role: .destructive) { model.stopReplay() }
+                .accessibilityIdentifier("replay-stop-detail")
+        } header: { Text("Developer: GPS replay running") } footer: {
+            Text("Simulated fixes only. Real GPS is ignored and nothing is saved while this is on.")
+        }
     }
 }
