@@ -53,10 +53,12 @@ class KiteMapSurface(
             }
         }
         val showStandard = ready && standard != null
-        if (useStandard != showStandard) classic.setMaximumFps(if (showStandard) 12 else 60)
+        val rendererChanged = useStandard != showStandard
+        if (rendererChanged) classic.setMaximumFps(if (showStandard) 12 else 60)
         useStandard = showStandard
-        standard?.alpha = if (useStandard) 1f else 0f
-        classic.alpha = if (useStandard) 0f else 1f
+        standard?.alpha = if (showStandard) 1f else 0f
+        classic.alpha = if (showStandard) 0f else 1f
+        if (rendererChanged) model.glide.restoreFollowingCamera()
     }
 
     private data class Hold(val id1: Int, val id2: Int, val p1: PointF, val p2: PointF, val downAt: Long)
@@ -126,6 +128,7 @@ class KiteMapSurface(
         destroyed = true
         cancelHold()
         lifecycle.removeObserver(observer)
+        kite.detach(classic)
         removeStandard()
         classic.onDestroy()
     }

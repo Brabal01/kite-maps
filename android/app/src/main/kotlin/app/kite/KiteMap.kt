@@ -67,16 +67,16 @@ class KiteMap(private val model: AppModel, private val context: Context) {
     private var syncingClassic = false
     private var lastClassicCamera = 0L
 
-    private fun driveCamera(camera: CameraPosition) {
+    private fun driveCamera(camera: CameraPosition, synchronize: Boolean) {
         val m = map ?: return
         val native = scenery?.takeIf { it.ready }
         if (native == null) {
             m.moveCamera(org.maplibre.android.camera.CameraUpdateFactory.newCameraPosition(camera))
             return
         }
-        native.syncFromKite(camera)
+        native.syncFromKite(camera, synchronize)
         val time = android.os.SystemClock.elapsedRealtime()
-        if (time - lastClassicCamera >= 950L) {
+        if (synchronize || time - lastClassicCamera >= 950L) {
             lastClassicCamera = time
             syncFromScenery(camera)
             native.refreshLamps()
@@ -229,6 +229,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             false
         }
         v.getMapAsync { m ->
+            if (view !== v) return@getMapAsync
             map = m
             model.map = m
             m.uiSettings.isCompassEnabled = false
@@ -248,13 +249,13 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             m.addOnMapClickListener { tapped(m, it) }
             m.addOnMapLongClickListener { pressed(m, it); true }
             fun stopFollowing() {
+                if (!model.glide.mapTouched || syncingClassic) return
                 model.mapNavigator?.following = false
                 model.transitGuidance?.following = false
                 model.stopTransitOverview()
             }
             m.addOnCameraMoveStartedListener { reason ->
-                if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE &&
-                    model.glide.mapTouched && !syncingClassic) stopFollowing()
+                if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) stopFollowing()
             }
             // Off a route in 3D or 2D, dragging or turning the map stops following; zooming doesn't.
             m.addOnMoveListener(object : MapLibreMap.OnMoveListener {
@@ -306,6 +307,14 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             LiveCamStore.onChange = { render() }
             LocationService.last?.let { moveToUserOnce(it) }
         }
+    }
+
+    fun detach(v: MapView) {
+        if (view !== v) return
+        if (model.map === map) model.map = null
+        map = null
+        view = null
+        styleReady = false
     }
 
     fun refreshWaze() {
@@ -375,6 +384,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         policeHeatKey = null
         lastResultsKey = ""; lastRouteKey = ""; lastMineKey = ""; lastPuckKey = ""; lastHeadKey = ""; lastNextRoadKey = ""; lastCameraKey = ""; lastSignalsKey = ""; lastWazeKey = ""; lastLiveKey = ""
         enableLocation(style)
+        model.glide.restoreFollowingCamera()
         shownStopPins = null
         shownMeasurement = null
         shownGooglePlaces = null

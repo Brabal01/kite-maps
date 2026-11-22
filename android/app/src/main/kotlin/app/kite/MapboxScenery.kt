@@ -33,6 +33,7 @@ import com.mapbox.maps.extension.style.sources.getSourceAs
 import com.mapbox.maps.extension.style.terrain.generated.Terrain
 import com.mapbox.maps.extension.style.terrain.generated.removeTerrain
 import com.mapbox.maps.extension.style.terrain.generated.setTerrain
+import com.mapbox.maps.plugin.animation.camera
 import com.mapbox.maps.plugin.attribution.AttributionDialogManagerImpl
 import com.mapbox.maps.plugin.attribution.attribution
 import com.mapbox.maps.plugin.gestures.addOnMapClickListener
@@ -246,14 +247,16 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
         else style?.let { applyLook(it, previous) }
     }
 
-    fun syncFromKite(camera: CameraPosition) {
-        val map = view?.mapboxMap ?: return
+    fun syncFromKite(camera: CameraPosition, synchronize: Boolean = false) {
+        val mapView = view ?: return
         if (movingFromTouch && model.glide.mapTouched) return
+        if (synchronize) mapView.camera.cancelAllAnimators()
+        val map = mapView.mapboxMap
         val at = camera.target ?: return
         val pitch = camera.tilt.coerceIn(0.0, 60.0)
         val insets = camera.padding ?: DoubleArray(4)
         val previous = submittedCamera
-        if (previous != null) {
+        if (previous != null && !synchronize) {
             val p = previous.padding ?: DoubleArray(4)
             if (abs(previous.zoom - camera.zoom) < 0.0007 && abs(previous.tilt - camera.tilt) < 0.05 &&
                 abs((previous.bearing - camera.bearing + 540) % 360 - 180) < 0.06 &&
@@ -355,9 +358,10 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
                 applyLook(loaded)
                 applyPinSizes(loaded)
                 style = loaded
-                val latestCamera = submittedCamera ?: model.map?.cameraPosition
+                val guidanceCamera = model.glide.followingCamera
+                val latestCamera = guidanceCamera ?: submittedCamera ?: model.map?.cameraPosition
                 submittedCamera = null
-                latestCamera?.let(::syncFromKite)
+                latestCamera?.let { syncFromKite(it, synchronize = guidanceCamera != null) }
                 LocationService.last?.let(::updatePosition)
                 ready = true
                 kite.refreshScenery()

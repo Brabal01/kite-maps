@@ -1380,12 +1380,11 @@ class AppModel {
         }
         resumeOffer = null
         rememberTrip(n)
-        location.setNavigating(true)
-        DriveService.start(KiteApp.app)
-        map?.cancelTransitions()
         glide.mapTouched = false
         n.handle(fix)
         followCamera(n, fix)
+        location.setNavigating(true)
+        DriveService.start(KiteApp.app)
         driveNote(n)
         mapTick++
     }

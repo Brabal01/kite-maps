@@ -21,9 +21,15 @@ import kotlin.math.*
  */
 class NavGlide : Choreographer.FrameCallback {
     var map: MapLibreMap? = null
+        set(value) {
+            if (field === value) return
+            field = value
+            lastCamera = null
+            if (value == null) pauseFrames() else if (nav != null) start()
+        }
     var mapTouched = false
     var onMapPuck: ((Feature?) -> Unit)? = null
-    var cameraOutput: ((CameraPosition) -> Unit)? = null
+    var cameraOutput: ((CameraPosition, Boolean) -> Unit)? = null
         set(value) {
             field = value
             lastCamera = null
@@ -31,6 +37,14 @@ class NavGlide : Choreographer.FrameCallback {
     private var cameraEntry: CameraPosition? = null
     private var cameraEntryAt = 0L
     private var lastCamera: CameraPosition? = null
+    val followingCamera: CameraPosition?
+        get() = lastCamera.takeIf { nav?.following == true && !mapTouched }
+
+    fun restoreFollowingCamera() {
+        val camera = followingCamera ?: return
+        val activeMap = map ?: return
+        outputCamera(activeMap, camera, synchronize = true)
+    }
 
     fun easeFromCurrentCamera() {
         cameraEntry = map?.cameraPosition
@@ -55,11 +69,14 @@ class NavGlide : Choreographer.FrameCallback {
     companion object {
         /** Where the car sits on screen while following: 70% of the way down. */
         const val TOP_FRACTION = 0.7f
-        const val BOTTOM_INSET = 170f
-        fun topInset(height: Float): Float =
-            if (height < 500) max(0f, min(height * TOP_FRACTION, height - BOTTOM_INSET - 100)) else height * TOP_FRACTION
-        /** The car's height on a screen [height] dp tall, for things drawn next to it. */
-        fun carY(height: Float, north: Float = 0f): Float = (topInset(height) * (1 - north) + height - BOTTOM_INSET) / 2
+        fun bottomInset(height: Float): Float = min(170f, height * 0.34f)
+        fun topInset(height: Float): Float {
+            val viewport = min(height, max(48f, height * 0.10f))
+            return min(height * TOP_FRACTION, max(0f, height - bottomInset(height) - viewport))
+        }
+        /** The car's height on a screen [height] dp tall, matching the camera's padded center. */
+        fun carY(height: Float, north: Float = 0f): Float =
+            (topInset(height) * (1 - north) + height - bottomInset(height)) / 2
         const val PUCK = "vela-puck"
     }
 
@@ -100,7 +117,14 @@ class NavGlide : Choreographer.FrameCallback {
 
     /** Called on every GPS fix while navigating. */
     fun fix(n: Navigator, loc: Fix, across: Double, pitch: Double) {
-        if (nav !== n) easeFromCurrentCamera()
+        val starting = nav !== n
+        if (starting) {
+            cameraEntry = null
+            lastCamera = null
+            shownCoord = null
+            shownAlong = null
+            map?.cancelTransitions()
+        }
         nav = n
         val p = n.progress
         val poly = n.route.polyline
@@ -126,18 +150,24 @@ class NavGlide : Choreographer.FrameCallback {
             shownPitch = pitch
             northBlend = if (look == MapLook.NORTH) 1.0 else 0.0
         }
-        start()
+        // Deliver the driving view on the first fix, even if the car is stationary.
+        if (starting && map != null) step(0.0)
+        if (map != null) start()
+    }
+
+    private fun pauseFrames() {
+        if (running) Choreographer.getInstance().removeFrameCallback(this)
+        running = false
+        lastFrame = 0
     }
 
     fun stop() {
-        if (running) Choreographer.getInstance().removeFrameCallback(this)
-        running = false
+        pauseFrames()
         nav = null
         shownAlong = null
         shownCoord = null
         cameraEntry = null
         lastCamera = null
-        lastFrame = 0
         carOnScreen = false
         clearPuck()
         puckOnMap = false
@@ -166,7 +196,7 @@ class NavGlide : Choreographer.FrameCallback {
 
     private fun step(dt: Double) {
         val n = nav; val m = map
-        if (n == null || m == null) { stop(); return }
+        if (n == null || m == null) { pauseFrames(); return }
         val ahead = fixSpeed * min(2.0, max(0.0, (System.nanoTime() - fixAt) / 1e9))
         val k = if (dt == 0.0) 1.0 else 1 - exp(-dt / 0.35)
 
@@ -241,14 +271,19 @@ class NavGlide : Choreographer.FrameCallback {
             // A pitched camera sees farther than the same zoom flat: zoom in a little to match the iPhone's distance.
             val zoom = MapCam.zoomFor(shownAcross, coordNow.lat, widthDp) + 0.35
             val camera = CameraPosition.Builder().target(coordNow.ml()).zoom(zoom).tilt(shownPitch).bearing(heading)
-                .padding(0.0, topInset(heightDp) * (1 - northBlend) * d, 0.0, BOTTOM_INSET * d).build()
+                .padding(0.0, topInset(heightDp) * (1 - northBlend) * d, 0.0, bottomInset(heightDp) * d).build()
             val visible = enter(camera)
             val last = lastCamera
-            if (last == null || !nearCamera(last, visible)) {
+            val entryComplete = entering && cameraEntry == null
+            if (last == null || entryComplete || !nearCamera(last, visible)) {
                 lastCamera = visible
-                cameraOutput?.invoke(visible) ?: m.moveCamera(CameraUpdateFactory.newCameraPosition(visible))
+                outputCamera(m, visible, synchronize = last == null || entryComplete)
             }
         }
+    }
+
+    private fun outputCamera(m: MapLibreMap, camera: CameraPosition, synchronize: Boolean) {
+        cameraOutput?.invoke(camera, synchronize) ?: m.moveCamera(CameraUpdateFactory.newCameraPosition(camera))
     }
 
     private fun enter(target: CameraPosition): CameraPosition {
