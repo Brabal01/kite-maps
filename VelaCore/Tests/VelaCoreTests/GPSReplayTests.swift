@@ -169,4 +169,35 @@ final class GoldenNavigationFixtureTests: XCTestCase {
         var broken = f; broken.schema = "different"
         XCTAssertNil(GPSReplayFixture.decode(broken.encoded()))
     }
+    func testIncidentReplaysExitSignalDirectionAndAnInaccurateJump() throws {
+        let origin = LatLng(50, 14)
+        let turn = LatLng(50.002, 14)
+        let end = LatLng(50.004, 14)
+        let length = Geo.length([origin, turn, end])
+        let route = Route(mode: .drive, polyline: [origin, turn, end], distanceMeters: length,
+                          typicalSeconds: 30, maneuvers: [
+            Maneuver(type: .roundabout, instruction: "Take the wrong third exit", location: turn,
+                     alongMeters: origin.distance(to: turn), distanceMeters: 150, exit: 3)
+        ], source: "test")
+        let fixture = GPSReplayFixture(name: "Roundabout and signal", origin: origin, fixes: [
+            .init(t: 0, east: 0, north: 0, speed: 10, course: 0),
+            .init(t: 1, east: 0, north: 10, speed: 10, course: 0),
+            .init(t: 2, east: 200, north: 300, accuracy: 80, speed: 10, course: 0)
+        ])
+        let incident = NavigationReplayIncident(route: OfflineRouteSnapshot(route), gps: fixture,
+            signalCandidates: [
+                .init(location: turn, alongMeters: 220, directionCertain: true, ambiguous: false),
+                .init(location: turn, alongMeters: 225, directionCertain: false, ambiguous: true)
+            ], observed: .init(instruction: "Wrong", roundaboutExit: 3, trafficLights: 2, offRoute: false),
+            expectedRoundaboutExit: 2, expectedTrafficLights: 1)
+        let encoded = try JSONEncoder().encode(incident)
+        let imported = try XCTUnwrap(NavigationReplayIncident.decode(encoded))
+        let replayed = try XCTUnwrap(imported.replay())
+        XCTAssertEqual(replayed.roundaboutExit, 3, "The wrong exit can be reproduced for a regression fixture")
+        XCTAssertNotEqual(replayed.roundaboutExit, imported.expectedRoundaboutExit)
+        XCTAssertEqual(replayed.trafficLights, imported.expectedTrafficLights)
+        XCTAssertFalse(replayed.offRoute, "A poor-accuracy GPS jump must not replace the current instruction")
+        XCTAssertNil(NavigationReplayIncident.decode(Data("{\"schema\":\"unknown\"}".utf8)))
+    }
+
 }

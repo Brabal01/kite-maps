@@ -69,4 +69,37 @@ final class OfflineJourneyTests: XCTestCase {
         snapshot.coordinates = [50, 14, 50, .nan]
         XCTAssertNil(snapshot.route())
     }
+    func testSnapshotCannotResumeADifferentModeOrStopSequence() {
+        let stop = Place(id: "stop", name: "Stop", location: LatLng(50.005, 14), source: "test")
+        let journey = OfflineJourney(destination: destination, stops: [stop], avoidTolls: false,
+                                     avoidHighways: false, route: route())
+        XCTAssertTrue(journey.matches(destinationID: "d", stopIDs: ["stop"], modeRaw: TravelMode.bike.rawValue))
+        XCTAssertFalse(journey.matches(destinationID: "d", stopIDs: [], modeRaw: TravelMode.bike.rawValue))
+        XCTAssertFalse(journey.matches(destinationID: "d", stopIDs: ["stop"], modeRaw: TravelMode.drive.rawValue))
+    }
+
+    func testLegacyStepFlagsAndDifferentPositionAfterRestoring() throws {
+        var snapshot = OfflineRouteSnapshot(route())
+        snapshot.steps[0].silent = nil
+        snapshot.steps[1].leavesRoundabout = nil
+        snapshot.steps[1].exitAmbiguous = nil
+        let restored = try XCTUnwrap(try JSONDecoder().decode(
+            OfflineRouteSnapshot.self, from: JSONEncoder().encode(snapshot)
+        ).route())
+        let tracker = RouteTracker(route: restored)
+        let progress = tracker.update(LatLng(50.004, 14.0), accuracy: 8, heading: 0, speed: 5)
+        XCTAssertGreaterThan(progress.alongMeters, 350)
+        XCTAssertEqual(progress.nextIndex, 1)
+        XCTAssertEqual(restored.maneuvers[1].exit, 2)
+    }
+
+    func testInvalidManeuverDataIsRejected() {
+        var snapshot = OfflineRouteSnapshot(route())
+        snapshot.steps[1].along = -1
+        XCTAssertNil(snapshot.route())
+        snapshot = OfflineRouteSnapshot(route())
+        snapshot.steps[1].lat = 91
+        XCTAssertNil(snapshot.route())
+    }
+
 }

@@ -80,4 +80,15 @@ final class DiagnosticsTests: XCTestCase {
         XCTAssertEqual(DiagnosticRedactor.sanitize(String(repeating: "x", count: 500)).count, 120)
         XCTAssertEqual(DiagnosticRedactor.coarse(LatLng(50.08804, 14.42076)), "50.09,14.42")
     }
+    func testExportDiscardsFreeTextEvenInKnownFields() throws {
+        let log = DiagnosticsLog()
+        log.record("fix", ["along": "300", "speed": "Private home address", "road": "Private road"], at: t0)
+        log.record("Private event name", ["acc": "5"], at: t0)
+        let data = log.report(appVersion: "1", level: .technical, now: t0)
+        let report = try json(data)
+        let events = try XCTUnwrap(report["events"] as? [[String: Any]])
+        XCTAssertEqual(events.count, 1)
+        XCTAssertEqual(events[0]["fields"] as? [String: String], ["along": "300"])
+    }
+
 }
