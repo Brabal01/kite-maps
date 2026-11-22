@@ -167,6 +167,12 @@ struct SettingsView: View {
             // A short menu like Waze's: a few big rows, each opening a page with its switches.
             Form {
                 Section {
+                    HStack(spacing: 8) {
+                        Image(systemName: "magnifyingglass").foregroundColor(.secondary)
+                        TextField(L10n.text("Search settings"), text: $settingsSearch)
+                            .textInputAutocapitalization(.never).autocorrectionDisabled()
+                            .accessibilityIdentifier("settings-search")
+                    }
                     Picker("Language", selection: $settings.language) {
                         Text("System language").tag(KiteLanguage.system)
                         Text(verbatim: "Čeština").tag(KiteLanguage.czech)
@@ -183,7 +189,6 @@ struct SettingsView: View {
                     }
                 }
             }
-            .searchable(text: $settingsSearch, prompt: L10n.text("Search settings"))
             .kiteList()
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(inTab ? .large : .inline)

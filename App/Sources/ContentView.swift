@@ -64,6 +64,11 @@ struct ContentView: View {
         .sheet(item: $model.picking) { kind in
             PlacePicker(model: model, kind: kind).kiteType()
         }
+        .overlay(alignment: .bottom) {
+            if model.isReplaying, let session = model.replaySession {
+                ReplayControlsStrip(session: session, model: model)
+            }
+        }
         .onChange(of: settings.welcomed && !settings.needsWazeChoice) { ready in
             if ready { model.location.start() }
         }
@@ -1410,12 +1415,58 @@ struct SimulatedGPSBanner: View {
                     .padding(.horizontal, 14).frame(minHeight: 44)
                     .background(Capsule().fill(Color.white.opacity(0.25)))
             }
-            .accessibilityIdentifier("replay-stop")
+            .accessibilityIdentifier("replay-stop-banner")
         }
         .foregroundColor(.white)
         .padding(.horizontal, 14).padding(.vertical, 6)
         .background(Color.orange.ignoresSafeArea(edges: .top))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("simulated-gps-banner")
+    }
+}
+
+
+/// Developer replay controls. Presented above every map overlay so they stay reachable while driving.
+struct ReplayControlsStrip: View {
+    @ObservedObject var session: ReplaySession
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 8) {
+                Button(session.paused ? "Resume" : "Pause") {
+                    session.paused ? model.resumeReplay() : model.pauseReplay()
+                }
+                .accessibilityIdentifier("replay-pause")
+                Button("Next turn") { model.skipToNextManeuver() }
+                    .accessibilityIdentifier("replay-skip")
+                Button("Details") { model.openReplayControls() }
+                    .accessibilityIdentifier("replay-details")
+                Button("Stop", role: .destructive) { model.stopReplay() }
+                    .accessibilityIdentifier("replay-stop")
+            }
+            .font(.subheadline.weight(.semibold))
+            HStack {
+                Text("Simulated GPS · \(session.fault.title) · \(Int(session.progress * 100))%")
+                Spacer()
+                Menu {
+                    ForEach([0.5, 1.0, 2.0, 4.0], id: \.self) { speed in
+                        Button("\(speed, specifier: "%.1f")×") { session.speed = speed }
+                    }
+                    Toggle("No internet", isOn: Binding(
+                        get: { session.simulateOffline },
+                        set: { model.setReplayOffline($0) }))
+                } label: {
+                    Text("\(session.speed, specifier: "%.1f")×").font(.caption.monospacedDigit())
+                }
+            }
+            .font(.caption)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 8)
+        .background(Color.orange.opacity(0.94), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .foregroundColor(.white)
+        .padding(.horizontal, 12).padding(.bottom, 22)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("replay-controls-strip")
     }
 }

@@ -13,7 +13,7 @@ final class V33UITests: XCTestCase {
 
     func testSettingsSearchOpensTheMatchingPage() {
         let app = openSettings()
-        let search = app.searchFields["Search settings"]
+        let search = app.textFields["settings-search"]
         XCTAssertTrue(search.waitForExistence(timeout: 30), "Settings search must be visible.\n\(app.debugDescription)")
         search.tap()
         search.typeText("camera")
@@ -27,7 +27,7 @@ final class V33UITests: XCTestCase {
 
     func testSettingsSearchReportsNoMatch() {
         let app = openSettings()
-        let search = app.searchFields["Search settings"]
+        let search = app.textFields["settings-search"]
         XCTAssertTrue(search.waitForExistence(timeout: 30))
         search.tap()
         search.typeText("zzzznotasetting")
@@ -65,10 +65,14 @@ final class V33UITests: XCTestCase {
 
         let banner = app.descendants(matching: .any)["simulated-gps-banner"]
         XCTAssertTrue(banner.waitForExistence(timeout: 40), "the simulated drive must be clearly marked.\n\(app.debugDescription)")
+        XCTAssertTrue(app.descendants(matching: .any)["replay-controls-strip"].waitForExistence(timeout: 10),
+                      "developer replay controls must be reachable.
+\(app.debugDescription)")
         let pause = app.buttons["replay-pause"]
         XCTAssertTrue(pause.waitForExistence(timeout: 10))
         pause.tap()
-        XCTAssertTrue(app.buttons["Resume"].waitForExistence(timeout: 5), "pause must really pause")
+        let pausedButton = app.buttons["replay-pause"]
+        XCTAssertEqual(pausedButton.label, "Resume", "pause must really pause")
         let skip = app.buttons["replay-skip"]
         XCTAssertTrue(skip.exists, "a replay can jump to a manoeuvre")
         skip.tap()
