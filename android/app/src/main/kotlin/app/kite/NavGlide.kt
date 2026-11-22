@@ -50,6 +50,7 @@ class NavGlide : Choreographer.FrameCallback {
     private var puckPushedAt = 0L
     private var puckPushed: LatLng? = null
     private var puckPushedBearing = 0.0
+    private var puckPushedMarker = DriveMarker.ARROW
 
     companion object {
         /** Where the car sits on screen while following: 70% of the way down. */
@@ -208,11 +209,17 @@ class NavGlide : Choreographer.FrameCallback {
             val now = System.nanoTime()
             val last = puckPushed
             val turned = abs(((shownBearing - puckPushedBearing + 540) % 360) - 180)
-            if (last == null || now - puckPushedAt > 1_000_000_000L || last.distanceTo(coordNow) > 25 || turned > 20) {
+            val markerStyle = if (n.route.mode == TravelMode.DRIVE) AppSettings.driveMarker else DriveMarker.ARROW
+            if (last == null || now - puckPushedAt > 1_000_000_000L ||
+                last.distanceTo(coordNow) > 25 || turned > 20 || puckPushedMarker != markerStyle) {
                 val marker = Feature.fromGeometry(Point.fromLngLat(coordNow.lng, coordNow.lat))
-                    .apply { addNumberProperty("bearing", shownBearing) }
+                    .apply {
+                        addNumberProperty("bearing", shownBearing)
+                        addStringProperty("icon", markerStyle.sprite)
+                    }
                 (m.style?.getSource(PUCK) as? GeoJsonSource)?.setGeoJson(marker)
                 onMapPuck?.invoke(marker)
+                puckPushedMarker = markerStyle
                 puckPushed = coordNow; puckPushedAt = now; puckPushedBearing = shownBearing; puckOnMap = true
             }
         }

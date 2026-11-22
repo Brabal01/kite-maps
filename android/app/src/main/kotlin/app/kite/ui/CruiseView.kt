@@ -30,10 +30,11 @@ private fun hex(v: Long) = Color(0xFF000000 or v)
  * speed sign bottom left, and one slim bar with ✕. The road's name is written on the road itself.
  */
 @Composable
-fun CruiseOverlay(model: AppModel, cruise: Cruise) {
+fun CruiseOverlay(model: AppModel, cruise: Cruise, showMapbox: Boolean) {
     val dark = LocalDark.current
     Column(Modifier.fillMaxSize().systemBarsPadding(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Column(Modifier.padding(horizontal = 12.dp).padding(top = 4.dp).animateContentSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (showMapbox) MapboxAttribution()
             val cam = cruise.cameraAhead
             val w = cruise.wazeAhead
             // One warning at a time, nearest first, like on a route; a camera you're speeding at always wins.

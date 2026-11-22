@@ -12,6 +12,12 @@ import kotlin.reflect.KProperty
 enum class MapStyleMode(val label: String) { SYSTEM("App"), LIGHT("Light"), DARK("Dark"), SUN("Sunrise & sunset") }
 enum class RoadStripPosition(val label: String) { BOTTOM("Bottom"), TOP("Top"), LEFT("Left"), RIGHT("Right") }
 
+enum class DriveMarker(val label: String, val sprite: String, val top: Int? = null, val tilted: Int? = null) {
+    ARROW("Arrow", "puck"),
+    ALFA_147("Alfa 147", "puck-alfa", R.drawable.drive_alfa_147, R.drawable.drive_alfa_147_tilt),
+    VAN("Van", "puck-van", R.drawable.drive_van, R.drawable.drive_van_tilt),
+}
+
 enum class ThemeMode(val label: String) { SYSTEM("System"), LIGHT("Light"), DARK("Dark") }
 
 enum class UnitsMode(val label: String) {
@@ -56,6 +62,9 @@ object AppSettings {
     var roadStripPosition by Pref("roadStripPosition", { p ->
         RoadStripPosition.entries.firstOrNull { it.name == p.getString("roadStripPosition", null) } ?: RoadStripPosition.BOTTOM
     }, { e, v -> e.putString("roadStripPosition", v.name) })
+    var driveMarker by Pref("driveMarker", { p ->
+        DriveMarker.entries.firstOrNull { it.name == p.getString("driveMarker", null) } ?: DriveMarker.ARROW
+    }, { e, v -> e.putString("driveMarker", v.name) })
     var swapNavigationSides by bool("swapMapSides")
     var solidMapSearch by bool("solidMapSearch", true)
     var osmOnlySearch by bool("osmOnlySearch")

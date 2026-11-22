@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -19,7 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -27,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.kite.*
 import app.kite.core.*
+import coil.compose.AsyncImage
 
 @Composable
 fun ResultsHeader(model: AppModel) {
@@ -37,10 +39,12 @@ fun ResultsHeader(model: AppModel) {
                     color = primaryText, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text("${model.visibleResults.size} results", fontSize = KType.subheadline, color = secondaryText)
             }
-            CircleIconButton(if (model.detent == SheetDetent.FULL) Icons.Filled.KeyboardArrowDown else Icons.Filled.KeyboardArrowUp) {
-                model.detent = if (model.detent == SheetDetent.FULL) SheetDetent.HALF else SheetDetent.FULL
+            val expanded = model.detent == SheetDetent.FULL
+            CircleIconButton(if (expanded) Icons.Filled.KeyboardArrowDown else Icons.Filled.KeyboardArrowUp,
+                description = if (expanded) "Show more map" else "Expand results") {
+                model.detent = if (expanded) SheetDetent.HALF else SheetDetent.FULL
             }
-            CircleIconButton(Icons.Filled.Close) { model.clearSearch() }
+            CircleIconButton(Icons.Filled.Close, description = "Close results") { model.clearSearch() }
         }
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChipLabel("Open now", model.openNowOnly, menu = false) { model.openNowOnly = !model.openNowOnly; model.mapTick++ }
@@ -61,13 +65,12 @@ fun ResultsHeader(model: AppModel) {
 
 @Composable
 fun FilterChipLabel(title: String, on: Boolean, menu: Boolean, onClick: () -> Unit) {
-    val dark = LocalDark.current
     Row(Modifier.height(44.dp).clip(CircleShape)
-        .background(if (on) Vela.tonal(dark) else Color.Transparent)
-        .border(BorderStroke(1.dp, if (on) Color.Transparent else secondaryText.copy(alpha = 0.5f)), CircleShape)
-        .tap(onClick).padding(horizontal = 16.dp),
+        .background(if (on) interfaceAccent else interfaceGround)
+        .border(BorderStroke(1.dp, if (on) Color.Transparent else secondaryText.copy(alpha = 0.28f)), CircleShape)
+        .tap(onClick).padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        val fg = if (on) Vela.onTonal(dark) else primaryText
+        val fg = if (on) interfaceOnAccent else primaryText
         if (on && !menu) Icon(Icons.Filled.Check, null, Modifier.size(14.dp), tint = fg)
         Text(title, fontSize = KType.body, fontWeight = FontWeight.SemiBold, color = fg)
         if (menu) Icon(Icons.Filled.KeyboardArrowDown, null, Modifier.size(16.dp), tint = fg)
@@ -78,8 +81,9 @@ fun FilterChipLabel(title: String, on: Boolean, menu: Boolean, onClick: () -> Un
 fun ResultsList(model: AppModel, modifier: Modifier = Modifier,
                 list: androidx.compose.foundation.lazy.LazyListState = androidx.compose.foundation.lazy.rememberLazyListState()) {
     Box(modifier.fillMaxSize()) {
-        LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(bottom = 60.dp)) {
-            item { HorizontalDivider() }
+        LazyColumn(Modifier.fillMaxSize(), state = list,
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 60.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (model.visibleResults.isEmpty() && model.results.isNotEmpty()) {
                 item {
                     Text("Nothing here matches these filters. Turn one off to see more.", fontSize = KType.body, color = secondaryText,
@@ -88,7 +92,6 @@ fun ResultsList(model: AppModel, modifier: Modifier = Modifier,
             }
             items(model.visibleResults, key = { it.id }) { p ->
                 ResultRow(model, p)
-                HorizontalDivider()
             }
         }
         // Screenshot run only: the list scrolled with the sheet full height, and a label saying which.
@@ -103,25 +106,27 @@ fun ResultsList(model: AppModel, modifier: Modifier = Modifier,
 
 @Composable
 fun ResultRow(model: AppModel, place: Place) {
-    val ctx = LocalContext.current
-    Column(Modifier.fillMaxWidth().tap { model.select(place) }.padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(place.name, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = primaryText)
-        PlaceMetaLine(place, here = model.userLatLng)
-        StatusText(place)
-        if (place.rating == null) place.address?.let {
-            Text(it, fontSize = KType.subheadline, color = secondaryText, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    val photo = place.photoUrls.firstOrNull { !AppSettings.noGoogle || !isGooglePhoto(it) }
+    val shape = RoundedCornerShape(18.dp)
+    Row(Modifier.fillMaxWidth().clip(shape).background(interfaceGround).tap { model.select(place) }
+        .padding(12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (photo != null) {
+            AsyncImage(photo, null, contentScale = ContentScale.Crop,
+                modifier = Modifier.size(56.dp).clip(RoundedCornerShape(12.dp)).background(interfaceSurface))
         }
-        if (place.photoUrls.isNotEmpty()) Box(Modifier.padding(top = 6.dp)) { PhotoStrip(place.photoUrls, height = 110.dp) }
-        Row(Modifier.padding(top = 6.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically) {
-            PillButton("Directions", Icons.Filled.Directions, filled = true) { model.selected = place; model.openDirections(place) }
-            telUrl(place.phone)?.let { t -> PillButton("Call", Icons.Filled.Phone) { ctx.open(t) } }
-            webUrl(place.website)?.let { w -> PillButton("Website", Icons.Filled.Language) { ctx.open(w) } }
-            Box(Modifier.size(40.dp).clip(CircleShape).background(secondaryText.copy(alpha = 0.18f)).tap { ctx.share(place.shareUrl) },
-                contentAlignment = Alignment.Center) {
-                Icon(Icons.Filled.Share, "Share", Modifier.size(18.dp), tint = primaryText)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(place.name, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = primaryText,
+                maxLines = 2, overflow = TextOverflow.Ellipsis)
+            PlaceMetaLine(place, showStars = false, here = model.userLatLng)
+            place.address?.let {
+                Text(it, fontSize = KType.footnote, color = secondaryText, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
+            StatusText(place, fontSize = KType.footnote)
         }
+        FilledIconButton(
+            onClick = { model.selected = place; model.openDirections(place) },
+            colors = IconButtonDefaults.filledIconButtonColors(containerColor = interfaceAccent, contentColor = interfaceOnAccent),
+            modifier = Modifier.size(48.dp),
+        ) { Icon(Icons.Filled.Directions, "Directions to ${place.name}") }
     }
 }

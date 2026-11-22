@@ -120,6 +120,7 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
     var aircraftNear by mutableStateOf<AircraftNear?>(null); private set
     var averageCheck by mutableStateOf<AverageCheck?>(null); private set
     var roadControls by mutableStateOf<List<Overpass.RoadControl>>(emptyList()); private set
+    private var cachedRoadControls = emptyList<Overpass.RoadControl>()
     private var nearRoadControls = emptyList<Overpass.RoadControl>()
     private var allRoadControls = emptyList<Overpass.RoadControl>()
     private var roadControlsJob: Job? = null
@@ -127,9 +128,33 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
     private var roadControlsAlong = -10_000.0
 
     private fun publishRoadControls() {
-        roadControls = (nearRoadControls + allRoadControls.filter { remote ->
+        val roadData = nearRoadControls + allRoadControls.filter { remote ->
             nearRoadControls.none { it.kind == remote.kind && abs(it.along - remote.along) < 35 }
+        }
+        roadControls = (roadData + cachedRoadControls.filter { cached ->
+            roadData.none { it.kind == cached.kind && abs(it.along - cached.along) < 35 }
         }).sortedBy { it.along }
+    }
+
+    fun seedRoadAhead(nodes: List<Overpass.RoadsideNode>, reports: List<WazeAlert>) {
+        if (route.mode != TravelMode.DRIVE || (nodes.isEmpty() && reports.isEmpty())) return
+        val current = route
+        val along = progress?.alongMeters ?: 0.0
+        val from = (along - 100).coerceAtLeast(0.0)
+        scope.launch {
+            val (controls, alerts) = withContext(Dispatchers.Default) {
+                val line = Geo.slice(current.polyline, from, along + 4_200)
+                Overpass.projectControls(nodes, line) to
+                    if (reports.isEmpty()) emptyList() else Waze.project(reports, current.polyline)
+            }
+            if (stopped || route.id != current.id) return@launch
+            cachedRoadControls = controls.map { it.copy(along = it.along + from) }
+            publishRoadControls()
+            if (AppSettings.wazeOn && routeWaze.isEmpty() && !wazeUpdated && alerts.isNotEmpty()) {
+                routeWaze = alerts
+                wazeSeedExpires = now() + 180_000
+            }
+        }
     }
 
     private fun refreshRoadControls(along: Double) {
@@ -150,6 +175,8 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
         }
     }
     var routeWaze by mutableStateOf<List<PlacedAlert>>(emptyList()); private set
+    private var wazeUpdated = false
+    private var wazeSeedExpires = 0L
     /** Stops still ahead, in trip order; each is dropped once reached. */
     var stops by mutableStateOf(stops0); private set
     /** Drivers' reports from Waze's app servers, asked every 90 seconds. */
@@ -184,7 +211,7 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
     var avoid: List<LatLng> = emptyList()
     private val avoidHighways = AppSettings.avoidHighways
     private val avoidTolls = AppSettings.avoidTolls
-    var routeCameras: List<PlacedCamera> = emptyList(); private set
+    var routeCameras by mutableStateOf<List<PlacedCamera>>(emptyList()); private set
     private val spokenCameras = mutableSetOf<Long>()
     private var zones: List<AverageSpeedZone> = emptyList()
     /** The average speed check being driven through: its stretch of the route, and when and where it began. */
@@ -514,6 +541,7 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
         roadControlsAlong = -10_000.0
         nearRoadControls = emptyList()
         allRoadControls = emptyList()
+        cachedRoadControls = emptyList()
         roadControls = emptyList()
         camerasTick++
         val s = AppSettings
@@ -666,7 +694,10 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
             val merged = linkedMapOf<String, WazeAlert>()
             for (a in closureAlerts + liveAlerts) merged[a.id] = a
             val projected = withContext(Dispatchers.Default) { Waze.project(merged.values.toList(), line) }
-            if (route.id == id && !stopped) routeWaze = projected
+            if (route.id == id && !stopped && (found != null || live != null || now() >= wazeSeedExpires)) {
+                if (found != null || live != null) wazeUpdated = true
+                routeWaze = projected
+            }
         }
     }
 
@@ -1117,6 +1148,8 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
         loadRoundabouts()
         wazeAt = 0
         routeWaze = emptyList()
+        wazeUpdated = false
+        wazeSeedExpires = 0L
         wazeAhead = null
         loadWaze()
         lastFix?.let { handle(it, estimating) }

@@ -7,10 +7,13 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -35,6 +38,8 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -538,6 +543,26 @@ private fun MapSettings() {
         Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             SettingLabel("Map zoom while driving", Icons.Filled.ZoomIn, 0x0F766E)
             Segmented(MapZoom.entries.toList(), s.mapZoom, { it.title }) { s.mapZoom = it }
+        }
+        RowDivider()
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SettingLabel("Vehicle marker", Icons.Filled.DirectionsCar, 0x0F766E)
+            val dark = LocalDark.current
+            Row(Modifier.fillMaxWidth().selectableGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (marker in DriveMarker.entries) {
+                    val active = s.driveMarker == marker
+                    val art = remember(marker, dark) { MapIcons.drivePuck(marker, dark, tilted = true).asImageBitmap() }
+                    val shape = RoundedCornerShape(14.dp)
+                    Column(Modifier.weight(1f).clip(shape).background(interfaceGround)
+                        .border(1.dp, if (active) interfaceAccent else Color.Transparent, shape)
+                        .selectable(active, role = Role.RadioButton) { s.driveMarker = marker }
+                        .padding(vertical = 5.dp, horizontal = 2.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Image(art, null, Modifier.size(46.dp))
+                        Text(marker.label, fontSize = KType.footnote, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            fontWeight = FontWeight.SemiBold, color = if (active) interfaceAccentText else primaryText)
+                    }
+                }
+            }
         }
         RowDivider()
         ToggleRow("Parking near destination", Icons.Filled.LocalParking, 0x2563EB, s.arrivalParking) { s.arrivalParking = it }

@@ -45,7 +45,6 @@ import java.util.Locale
 
 @Composable
 fun PlaceHeader(model: AppModel, place: Place) {
-    val dark = LocalDark.current
     val ctx = LocalContext.current
     var share by remember(place.id) { mutableStateOf(false) }
     var chooseLists by remember(place.id) { mutableStateOf(false) }
@@ -57,13 +56,21 @@ fun PlaceHeader(model: AppModel, place: Place) {
                         overflow = TextOverflow.Ellipsis, lineHeight = 30.sp)
                 }
             }
+            CircleIconButton(Icons.Filled.Close, description = "Close place") { model.closePlace() }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Box(Modifier.clickable(enabled = place.rating != null) {
+                    model.showReviews = place.id
+                    model.detent = SheetDetent.FULL
+                }) { PlaceMetaLine(place, showStars = false, here = model.userLatLng) }
+                StatusText(place)
+            }
             val saved = AppSettings.isSaved(place)
             CircleIconButton(if (saved) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
-                modifier = Modifier.semantics { contentDescription = if (saved) "Manage saved place" else "Save place" }) {
-                chooseLists = true
-            }
+                description = if (saved) "Manage saved place" else "Save place") { chooseLists = true }
             Box {
-                CircleIconButton(Icons.Filled.Share) { share = true }
+                CircleIconButton(Icons.Filled.Share, description = "Share place") { share = true }
                 DropdownMenu(share, { share = false }) {
                     listOf("Open in Google Maps" to { ctx.open(place.shareUrl) },
                         "Share Google Maps link" to { ctx.share(place.shareUrl) },
@@ -74,25 +81,19 @@ fun PlaceHeader(model: AppModel, place: Place) {
                     }
                 }
             }
-            CircleIconButton(Icons.Filled.Close) { model.closePlace() }
         }
-        // Tapping the stars opens the reviews (GitHub #70).
-        Box(Modifier.clickable(enabled = place.rating != null) { model.showReviews = place.id; model.detent = SheetDetent.FULL }) {
-            PlaceMetaLine(place, here = model.userLatLng)
-        }
-        StatusText(place)
         Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(Modifier.weight(1f).heightIn(min = 56.dp).clip(CircleShape).background(Vela.accent(dark))
+            Row(Modifier.weight(1f).heightIn(min = 56.dp).clip(CircleShape).background(interfaceAccent)
                 .clickable { model.openDirections(place) }, horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
                 verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.Directions, null, tint = Vela.onAccent(dark), modifier = Modifier.size(24.dp))
-                Text("Directions", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = Vela.onAccent(dark))
+                Icon(Icons.Filled.Directions, null, tint = interfaceOnAccent, modifier = Modifier.size(24.dp))
+                Text("Directions", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = interfaceOnAccent)
             }
-            Row(Modifier.heightIn(min = 56.dp).clip(CircleShape).background(Vela.tonal(dark))
+            Row(Modifier.heightIn(min = 56.dp).clip(CircleShape).background(interfaceGround)
                 .clickable { model.openDirections(place, TravelMode.DRIVE, startNow = true) }.padding(horizontal = 24.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.Navigation, null, tint = Vela.onTonal(dark), modifier = Modifier.size(22.dp))
-                Text("Go", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = Vela.onTonal(dark))
+                Icon(Icons.Filled.Navigation, null, tint = interfaceAccentText, modifier = Modifier.size(22.dp))
+                Text("Go", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = interfaceAccentText)
             }
         }
     }
@@ -327,7 +328,6 @@ private fun PlacePhotos(place: Place, photos: List<String>, loading: Boolean) {
 @Composable
 private fun PlaceActions(model: AppModel, place: Place, driveSeconds: Double?) {
     val ctx = LocalContext.current
-    val dark = LocalDark.current
     var more by remember { mutableStateOf(false) }
     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
         driveSeconds?.let {
@@ -341,10 +341,10 @@ private fun PlaceActions(model: AppModel, place: Place, driveSeconds: Double?) {
         webUrl(place.website)?.let { PillButton("Website", Icons.Filled.Language) { ctx.open(it) } }
         if (place.id == model.settings.parking?.id) PillButton("Clear spot", Icons.Outlined.Cancel) { model.clearParking() }
         Box {
-            Row(Modifier.height(40.dp).clip(CircleShape).background(Vela.tonal(dark)).clickable { more = true }.padding(horizontal = 16.dp),
+            Row(Modifier.height(40.dp).clip(CircleShape).background(interfaceGround).clickable { more = true }.padding(horizontal = 16.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Icon(Icons.Filled.MoreHoriz, null, tint = Vela.onTonal(dark), modifier = Modifier.size(18.dp))
-                Text("More", fontSize = KType.subheadline, fontWeight = FontWeight.SemiBold, color = Vela.onTonal(dark))
+                Icon(Icons.Filled.MoreHoriz, null, tint = interfaceAccentText, modifier = Modifier.size(18.dp))
+                Text("More", fontSize = KType.subheadline, fontWeight = FontWeight.SemiBold, color = interfaceAccentText)
             }
             DropdownMenu(more, { more = false }) {
                 fun item(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, f: () -> Unit) = @Composable {

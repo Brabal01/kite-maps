@@ -113,7 +113,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         layerOptions = null
         policeHeatKey = null
         lastResultsKey = ""; lastRouteKey = ""; lastMineKey = ""; lastCameraKey = ""
-        lastWazeKey = ""; lastLiveKey = ""; lastSignalsKey = ""; lastHeadKey = ""; lastNextRoadKey = ""
+        lastWazeKey = ""; lastLiveKey = ""; lastSignalsKey = ""; lastHeadKey = ""; lastNextRoadKey = ""; lastPuckKey = ""
         shownStopPins = null
         shownMeasurement = null
         shownGooglePlaces = null
@@ -147,7 +147,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         private set
     private val overlayFont get() = arrayOf(if (showingMapbox) "Open Sans Bold" else "Noto Sans Bold")
 
-    private data class Basemap(val url: String, val token: String? = null)
+    private data class Basemap(val url: String, val token: String? = null, val json: String? = null)
     private var movedToUser = false
     private var pinDroppedAt = 0L
     private val originalLabels = mutableMapOf<String, Triple<PropertyValue<*>, PropertyValue<*>, PropertyValue<*>>>()
@@ -321,13 +321,16 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         val darkChanged = this.dark != dark
         this.dark = dark
         val id = when {
-            satellite -> "satellite-streets-v12"
             driving && dark -> "navigation-night-v1"
             driving -> "navigation-day-v1"
             dark -> "dark-v11"
             else -> "streets-v12"
         }
-        val wanted = if (token == null) Basemap(STYLE_URL) else Basemap("mapbox://styles/mapbox/$id", token)
+        val wanted = when {
+            satellite -> Basemap("satellite", json = SatelliteStyle.json(mapbox = false))
+            token == null -> Basemap(STYLE_URL)
+            else -> Basemap("mapbox://styles/mapbox/$id", token)
+        }
         if (wanted != selectedStyle) {
             selectedStyle = wanted
             map?.let { loadBasemap(it, wanted) }
@@ -342,7 +345,10 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         loadingStyle = pending
         styleReady = false
         MapLibre.getInstance(context, basemap.token, WellKnownTileServer.Mapbox)
-        m.setStyle(Style.Builder().fromUri(basemap.url)) { style ->
+        val builder = Style.Builder().apply {
+            if (basemap.json == null) fromUri(basemap.url) else fromJson(basemap.json)
+        }
+        m.setStyle(builder) { style ->
             if (loadingStyle !== pending) return@setStyle
             loadingStyle = null
             showingMapbox = basemap.token != null
@@ -394,7 +400,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             lc.activateLocationComponent(LocationComponentActivationOptions.builder(context, style)
                 .locationComponentOptions(opts).useDefaultLocationEngine(false).build())
         }
-        lc.isLocationComponentEnabled = model.mapNavigator == null
+        lc.isLocationComponentEnabled = model.mapNavigator == null && model.cruise == null
         lc.cameraMode = CameraMode.NONE
         lc.renderMode = RenderMode.NORMAL
         locationOn = true
@@ -434,7 +440,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         if (!dark) {
             for (l in style.layers) if (l is SymbolLayer) originalLabels[l.id]?.let { l.setProperties(it.first, it.second, it.third) }
         }
-        if (!showingMapbox) MapStyler.apply(style, dark)
+        if (!showingMapbox && style.getSource("kite-imagery") == null) MapStyler.apply(style, dark)
         MapIcons.swapPuck(style, dark)
         (style.getLayer("vela-rail-case") as? LineLayer)?.setProperties(lineColor(if (dark) c(0x000000, 0.9f) else c(0xFFFFFF, 0.9f)))
         val text = if (dark) c(0xE8EAED) else c(0x202124)
@@ -520,7 +526,8 @@ class KiteMap(private val model: AppModel, private val context: Context) {
 
     private fun showGooglePlaces(style: Style) {
         val s = model.settings
-        val browsing = model.results.isEmpty() && !model.isGuiding && model.selected == null && model.directions == null
+        val browsing = model.results.isEmpty() && !model.isGuiding && model.selected == null &&
+            model.directions == null && model.tab == AppTab.MAP && (map?.cameraPosition?.zoom ?: 0.0) >= 14.5
         val google = if (browsing && googlePlacesEnabled()) googlePlaces else emptyList()
         val googleVisible = google
         val native = scenery?.ready == true
@@ -565,6 +572,11 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         (style.getLayer("vela-results") as? SymbolLayer)?.setProperties(iconSize((0.72 * sizes.search).toFloat()),
             textOffset(arrayOf((1.45 * sizes.search).toFloat(), 0f)))
         (style.getLayer("kite-search-hit") as? CircleLayer)?.setProperties(circleRadius((14 * sizes.search).toFloat()))
+    }
+
+    fun seedRoadAhead(nav: Navigator) {
+        val reports = wazeAlerts.takeIf { wazeAt > 0 && now() - wazeAt <= 180_000 && !fakeWaze }.orEmpty()
+        nav.seedRoadAhead(localJunctions, reports)
     }
 
     fun refreshGooglePlaces() {
@@ -621,18 +633,20 @@ class KiteMap(private val model: AppModel, private val context: Context) {
     }
 
     private fun loadGooglePlaces(m: MapLibreMap) {
-        if (!googlePlacesEnabled() || m.cameraPosition.zoom < 14.5 || model.nav != null ||
+        if (!googlePlacesEnabled() || m.cameraPosition.zoom < 14.5 || model.isGuiding ||
             model.results.isNotEmpty() || model.selected != null || model.directions != null || model.tab != AppTab.MAP) {
-            if (googlePlaces.isNotEmpty() || googlePlacesJob?.isActive == true) {
+            if (googlePlacesJob?.isActive == true) {
                 googlePlacesJob?.cancel()
                 googlePlacesCenter = null
-                googlePlaces = emptyList()
-                m.style?.let(::showGooglePlaces)
             }
+            m.style?.let(::showGooglePlaces)
             return
         }
         val center = m.cameraPosition.target?.kite() ?: return
-        if (googlePlacesCenter?.distanceTo(center)?.let { it < 650 } == true) return
+        if (googlePlacesCenter?.distanceTo(center)?.let { it < 650 } == true) {
+            m.style?.let(::showGooglePlaces)
+            return
+        }
         googlePlacesCenter = center
         googlePlacesJob?.cancel()
         val cached = googlePlacesCache.keys.firstOrNull { it.distanceTo(center) < 500 }?.let { googlePlacesCache[it] }
@@ -644,18 +658,15 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         googlePlaces = googlePlaces.filter { it.location.distanceTo(center) < 1_600 }
         m.style?.let(::showGooglePlaces)
         googlePlacesJob = scope.launch {
-            delay(350)
             val terms = listOf("places", "restaurants", "coffee", "shops", "gas stations")
             val found = mutableListOf<Place>()
             val batches = Channel<List<Place>>(terms.size)
-            for (queue in listOf(terms.filterIndexed { i, _ -> i % 2 == 0 }, terms.filterIndexed { i, _ -> i % 2 != 0 })) {
-                launch {
-                    for (term in queue) {
-                        val places = try { GoogleClient.shared.search(term, center, 4_000.0, pages = 1) }
-                        catch (e: CancellationException) { throw e }
-                        catch (_: Exception) { emptyList() }
-                        batches.send(places)
-                    }
+            for (term in terms) {
+                launch(Dispatchers.Default) {
+                    val places = try { GoogleClient.shared.search(term, center, 4_000.0, pages = 1) }
+                    catch (e: CancellationException) { throw e }
+                    catch (_: Exception) { emptyList() }
+                    batches.send(places)
                 }
             }
             repeat(terms.size) {
@@ -714,12 +725,6 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             val layer = RasterLayer(id, id).withProperties(rasterOpacity(0.9f), visibility(Property.NONE))
             firstSymbolLayer(style)?.let { style.addLayerBelow(layer, it) } ?: style.addLayer(layer)
         }
-        // Satellite (Esri World Imagery) under the roads, off unless picked in Layers.
-        style.addSource(RasterSource("vela-sat", TileSet("tiles", "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}")
-            .apply { maxZoom = 19f; attribution = "Imagery © Esri" }, 256))
-        val satLayer = RasterLayer("vela-sat", "vela-sat").withProperties(visibility(Property.NONE))
-        style.layers.firstOrNull { it.id.startsWith("tunnel_") }?.let { style.addLayerBelow(satLayer, it.id) } ?: style.addLayer(satLayer)
-
         style.addSource(RasterSource("vela-terrain", TileSet("tiles", "https://services.arcgisonline.com/ArcGIS/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}")
             .apply { maxZoom = 16f; attribution = "Hillshade © Esri" }, 256))
         val hill = RasterLayer("vela-terrain", "vela-terrain").withProperties(rasterOpacity(if (dark) 0.22f else 0.32f), visibility(Property.NONE))
@@ -909,7 +914,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
 
         src(NavGlide.PUCK)
         style.addLayer(SymbolLayer(NavGlide.PUCK, NavGlide.PUCK).withProperties(
-            iconImage("puck"), iconRotate(get("bearing")), iconRotationAlignment(Property.ICON_ROTATION_ALIGNMENT_MAP),
+            iconImage(coalesce(get("icon"), literal("puck"))), iconRotate(get("bearing")), iconRotationAlignment(Property.ICON_ROTATION_ALIGNMENT_MAP),
             iconPitchAlignment(Property.ICON_PITCH_ALIGNMENT_MAP), iconAllowOverlap(true), iconIgnorePlacement(false)))
     }
 
@@ -978,7 +983,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         }
         val s = model.settings
         val navigating = model.isGuiding
-        val showPosition = model.mapNavigator == null
+        val showPosition = model.mapNavigator == null && model.cruise == null
         val driving = model.nav?.route?.mode == TravelMode.DRIVE || model.cruise != null
         if (m.locationComponent.isLocationComponentActivated) {
             if (m.locationComponent.isLocationComponentEnabled != showPosition) m.locationComponent.isLocationComponentEnabled = showPosition
@@ -992,7 +997,6 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         // switch, so a failed fetch keeps its 30-second pause).
         if (s.surveillanceCameras && !surveillanceWasOn) loadSurveillance(m)
         surveillanceWasOn = s.surveillanceCameras
-        visible(style, "vela-sat", s.satellite && !showingMapbox)
         visible(style, "vela-terrain", s.terrain && !s.satellite)
         for (id in listOf("vela-rail", "vela-rail-case")) visible(style, id, s.transitLines && !navigating)
         if (styledDriving != driving) {
@@ -1480,10 +1484,18 @@ class KiteMap(private val model: AppModel, private val context: Context) {
     }
 
     private fun renderPuck(style: Style) {
-        if (model.mapNavigator != null) { lastPuckKey = "nav"; return }
-        if (lastPuckKey == "") return
-        setShape(style, NavGlide.PUCK, emptyList())
-        lastPuckKey = ""
+        if (model.mapNavigator != null) {
+            if (lastPuckKey.startsWith("cruise:")) setShape(style, NavGlide.PUCK, emptyList())
+            lastPuckKey = "nav"
+            return
+        }
+        val fix = LocationService.last.takeIf { model.cruise != null }
+        val marker = AppSettings.driveMarker.sprite
+        val key = fix?.let { "cruise:${it.timeMillis}:$marker" }.orEmpty()
+        if (key == lastPuckKey) return
+        val points = fix?.let { listOf(point(it.coord, mapOf("icon" to marker, "bearing" to it.course.coerceAtLeast(0.0)))) }
+        setShape(style, NavGlide.PUCK, points.orEmpty())
+        lastPuckKey = key
     }
 
     // Gestures

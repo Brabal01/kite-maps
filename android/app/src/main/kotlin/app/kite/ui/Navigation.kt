@@ -134,17 +134,23 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
             !nav.arrived && !confirmEnd && (h >= 480.dp || mainAlert == null)
         val roadPosition = AppSettings.roadStripPosition
         val bottomStrip = showRoadAhead && roadPosition == RoadStripPosition.BOTTOM
+        val leftStrip = showRoadAhead && roadPosition == RoadStripPosition.LEFT
+        val rightStrip = showRoadAhead && roadPosition == RoadStripPosition.RIGHT
+        val sideStrip = leftStrip || rightStrip
+        val compactSideStrip = sideStrip && (h < 620.dp || (mainAlert != null && h < 720.dp))
         // The car, while the camera follows it: always at the same spot, pointing up the screen and
         // lying flat on the tilted map.
         // In 2D it lies round, and north up it moves up to the middle and turns the way you're going.
         if (model.glide.carOnScreen) {
-            val puck = remember(dark) { MapIcons.puck(dark).asImageBitmap() }
+            val marker = if (nav.route.mode == TravelMode.DRIVE) AppSettings.driveMarker else DriveMarker.ARROW
+            val tilted = marker != DriveMarker.ARROW && AppSettings.driveLook == MapLook.TILTED
+            val puck = remember(dark, marker, tilted) { MapIcons.drivePuck(marker, dark, tilted).asImageBitmap() }
             val density = LocalDensity.current
             Box(Modifier.fillMaxWidth().offset {
                 IntOffset(0, with(density) { (NavGlide.carY(h.value, model.glide.carNorth).dp - 38.dp).roundToPx() })
             }, contentAlignment = Alignment.TopCenter) {
                 Image(puck, null, Modifier.size(76.dp).graphicsLayer {
-                    scaleY = model.glide.carSquash
+                    if (!tilted) scaleY = model.glide.carSquash
                     rotationZ = model.glide.carTurn
                 })
             }
@@ -225,7 +231,13 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
             }
             if (showRoadAhead && roadPosition == RoadStripPosition.TOP)
                 RoadAheadStrip(nav, Modifier.padding(horizontal = 12.dp), showLabels = h >= 550.dp) { model.wazeInfo = it }
-            Spacer(Modifier.weight(1f))
+            BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+                if (sideStrip && !compactSideStrip && maxHeight >= 54.dp) {
+                    val edge = if (leftStrip) Alignment.CenterStart else Alignment.CenterEnd
+                    RoadAheadStrip(nav, Modifier.align(edge).padding(horizontal = 10.dp), showLabels = false,
+                        verticalHeight = maxHeight.coerceAtMost(240.dp)) { model.wazeInfo = it }
+                }
+            }
             Row(Modifier.padding(horizontal = 16.dp).fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
                 val controls: @Composable () -> Unit = {
                     Column(horizontalAlignment = if (AppSettings.swapNavigationSides) Alignment.End else Alignment.Start,
@@ -278,9 +290,17 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
 
                     }
                 }
+                if (leftStrip && compactSideStrip) {
+                    RoadAheadStrip(nav, Modifier.align(Alignment.CenterVertically).padding(end = 8.dp),
+                        showLabels = false, verticalHeight = 128.dp) { model.wazeInfo = it }
+                }
                 if (AppSettings.swapNavigationSides) speed() else controls()
                 Spacer(Modifier.weight(1f))
                 if (AppSettings.swapNavigationSides) controls() else speed()
+                if (rightStrip && compactSideStrip) {
+                    RoadAheadStrip(nav, Modifier.align(Alignment.CenterVertically).padding(start = 8.dp),
+                        showLabels = false, verticalHeight = 128.dp) { model.wazeInfo = it }
+                }
             }
             if (!nav.following) {
                 Row(Modifier.align(Alignment.CenterHorizontally).height(52.dp).shadow(3.dp, CircleShape).clip(CircleShape).background(Vela.accent(dark))

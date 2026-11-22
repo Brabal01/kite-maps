@@ -393,26 +393,39 @@ fun MapFab(icon: ImageVector, tint: Color? = null, size: Dp = 48.dp, modifier: M
     }
 }
 
-/** Pill buttons in sheets: filled teal for the main one, tonal for the rest. */
+/** Pill buttons for primary and secondary actions in sheets. */
 @Composable
 fun PillButton(title: String, icon: ImageVector, filled: Boolean = false, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val dark = LocalDark.current
+    val chrome = LocalMapChrome.current
+    val customized = chrome?.accent != null || chrome?.panel != null
+    val fill = when {
+        filled -> interfaceAccent
+        customized -> interfaceGround
+        else -> Vela.tonal(dark)
+    }
     Row(
-        modifier.height(52.dp).clip(CircleShape)
-            .background(if (filled) Vela.accent(dark) else Vela.tonal(dark))
+        modifier.height(52.dp).clip(CircleShape).background(fill)
             .clickable(onClick = onClick).padding(horizontal = 20.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
     ) {
-        val c = if (filled) Vela.onAccent(dark) else Vela.onTonal(dark)
+        val c = when {
+            filled -> interfaceOnAccent
+            customized -> interfaceAccentText
+            else -> Vela.onTonal(dark)
+        }
         Icon(icon, null, tint = c, modifier = Modifier.size(20.dp))
         Text(title, color = c, fontWeight = FontWeight.Bold, fontSize = KType.body, maxLines = 1)
     }
 }
 
 @Composable
-fun CircleIconButton(icon: ImageVector, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Box(modifier.size(44.dp).clip(CircleShape).background(Vela.chip(LocalDark.current)).clickable(onClick = onClick),
+fun CircleIconButton(icon: ImageVector, modifier: Modifier = Modifier, description: String? = null, onClick: () -> Unit) {
+    val chrome = LocalMapChrome.current
+    val customized = chrome?.accent != null || chrome?.panel != null
+    Box(modifier.size(44.dp).clip(CircleShape)
+        .background(if (customized) interfaceGround else Vela.chip(LocalDark.current)).clickable(onClick = onClick),
         contentAlignment = Alignment.Center) {
-        Icon(icon, null, tint = primaryText, modifier = Modifier.size(20.dp))
+        Icon(icon, description, tint = if (customized) interfaceAccentText else primaryText, modifier = Modifier.size(20.dp))
     }
 }

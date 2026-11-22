@@ -147,11 +147,13 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
         kiteMap.refreshPinSizes()
         scenery.refreshPinSizes()
     }
-    LaunchedEffect(s.googleMapPlaces, s.openMapPlaces, s.openPlaceGroups, s.hikingTrails, s.bikeTrails, s.transitLines, s.noGoogle, model.tab, model.mapNavigator != null, model.transitGuidance != null, model.directions != null, model.selected != null, model.results.isEmpty()) {
+    LaunchedEffect(s.googleMapPlaces, s.openMapPlaces, s.openPlaceGroups, s.hikingTrails, s.bikeTrails, s.transitLines, s.noGoogle, model.tab, model.mapNavigator != null, model.transitGuidance != null, model.directions != null, model.selected != null, model.results.isEmpty(), model.cruise != null) {
         kiteMap.refreshGooglePlaces()
         scenery.showTransit(s.transitLines && model.nav == null && model.transitGuidance == null)
         LocationService.last?.let(scenery::updatePosition)
     }
+
+    LaunchedEffect(model.nav) { model.nav?.let(kiteMap::seedRoadAhead) }
 
     // Redraw the map's layers whenever anything they show changes.
     LaunchedEffect(Unit) {
@@ -160,7 +162,7 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
                 s.traffic, s.satellite, s.terrain, s.transitLines, s.speedCameras, s.plateCameras, s.wazeOnMap, s.wazeHeatmap,
                 s.home, s.work, s.parking, s.saved, LocationService.authorized, model.tab,
                 s.welcomed, s.noGoogle, s.surveillanceCameras, s.wazeOn, s.wazeKinds, s.wazeMaxAge,
-                s.liveCams, s.liveRoadCams, s.liveWebcams, LiveCamStore.version, model.cruise, model.routeReports,
+                s.liveCams, s.liveRoadCams, s.liveWebcams, LiveCamStore.version, model.cruise, s.driveMarker, model.routeReports,
                 s.aheadSignals, s.aheadStops, s.aheadRail, s.aheadWaze, s.aheadCameras, s.aheadTraffic, s.roadWazeKinds)
         }.collect { kiteMap.render() }
     }
@@ -210,7 +212,7 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
                 model.stopSearch != null -> StopMapOverlay(model, showingMapbox)
                 model.transitGuidance != null -> TransitNavigationOverlay(model, requireNotNull(model.transitGuidance), showingMapbox)
                 nav != null -> NavigationOverlay(model, nav, showingMapbox)
-                model.cruise != null -> model.cruise?.let { CruiseOverlay(model, it) }
+                model.cruise != null -> model.cruise?.let { CruiseOverlay(model, it, showingMapbox) }
                 model.directions != null -> DirectionsOverlay(model, showingMapbox)
                 else -> when (model.tab) {
                     AppTab.MAP -> BrowseOverlay(model, showingMapbox)

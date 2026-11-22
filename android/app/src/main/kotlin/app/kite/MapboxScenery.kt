@@ -66,7 +66,6 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
     private var lampJob: Job? = null
     private var watchdog: Job? = null
     private var styleRequest = 0
-    private var satelliteFallback = false
     private var submittedCamera: CameraPosition? = null
     private var lastLampCell: Pair<Int, Int>? = null
     private var errorSubscription: com.mapbox.common.Cancelable? = null
@@ -134,7 +133,6 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
 
     fun attach(context: Context, token: String): MapView {
         destroying = false
-        satelliteFallback = false
         submittedCamera = null
         MapboxOptions.accessToken = token
         val mapView = MapView(context, MapInitOptions(context, textureView = true, styleUri = null))
@@ -234,11 +232,6 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
     private fun failStyle() {
         if (destroying || failed || style != null) return
         watchdog?.cancel()
-        if (look.satellite && !satelliteFallback) {
-            satelliteFallback = true
-            load()
-            return
-        }
         ready = false
         failed = true
         view?.context?.let { Toast.makeText(it, "Mapbox style unavailable. Using the fallback map.", Toast.LENGTH_LONG).show() }
@@ -249,10 +242,8 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
         val previous = look
         if (previous == value) return
         look = value
-        if (previous.satellite != value.satellite) {
-            satelliteFallback = false
-            if (view != null) load()
-        } else style?.let { applyLook(it, previous) }
+        if (previous.satellite != value.satellite) load()
+        else style?.let { applyLook(it, previous) }
     }
 
     fun syncFromKite(camera: CameraPosition) {
@@ -302,7 +293,7 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
     }
 
     fun updatePosition(fix: Fix) {
-        val navigating = model.mapNavigator != null
+        val navigating = model.mapNavigator != null || model.cruise != null
         updateOverlay(LOCATION) {
             if (navigating) EMPTY else Feature.fromGeometry(Point.fromLngLat(fix.lng, fix.lat)).toJson()
         }
@@ -338,16 +329,11 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
         lastLampCell = null
         lastLampCenter = null
         lampRequestAt = 0L
-        val uri = when {
-            satelliteFallback -> Style.SATELLITE_STREETS
-            look.satellite -> Style.STANDARD_SATELLITE
-            else -> Style.STANDARD
-        }
-        val payload = if (satelliteFallback) uri else org.json.JSONObject()
+        val payload = if (look.satellite) SatelliteStyle.json(mapbox = true) else org.json.JSONObject()
             .put("version", 8).put("sources", org.json.JSONObject()).put("layers", org.json.JSONArray())
             .put("glyphs", "mapbox://fonts/mapbox/{fontstack}/{range}.pbf")
-            .put("imports", org.json.JSONArray().put(org.json.JSONObject().put("id", "basemap").put("url", uri)
-                .put("config", org.json.JSONObject().put("lightPreset", if (look.dark && !look.satellite) "night" else "day"))))
+            .put("imports", org.json.JSONArray().put(org.json.JSONObject().put("id", "basemap").put("url", Style.STANDARD)
+                .put("config", org.json.JSONObject().put("lightPreset", if (look.dark) "night" else "day"))))
             .toString()
         submittedCamera = null
         val request = ++styleRequest
@@ -410,7 +396,7 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
                 for (field in MapColor.entries) field.styleKey?.let { configs[it] = Value.valueOf(look.palette[field]) }
                 configs["colorTrunks"] = Value.valueOf(look.palette[MapColor.HIGHWAYS])
             }
-            if (!satelliteFallback) st.setStyleImportConfigProperties("basemap", configs)
+            if (!look.satellite) st.setStyleImportConfigProperties("basemap", configs)
             fun visible(id: String, on: Boolean) {
                 st.setStyleLayerProperty(id, "visibility", Value.valueOf(if (on) "visible" else "none"))
             }
@@ -436,16 +422,16 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
             val lights = """[{"id":"kite-ambient","type":"ambient","properties":{"color":"$ambientColor","intensity":$ambient}},{"id":"kite-sun","type":"directional","properties":{"color":"$lightColor","direction":[210,$pitch],"intensity":$sunlight,"cast-shadows":${look.shadows},"shadow-intensity":0.48}}]"""
             Value.fromJson(lights).value?.let(st::setStyleLights)
         }
-        if ((look.terrain || look.shade) && !st.styleSourceExists(DEM)) {
+        if (!look.satellite && (look.terrain || look.shade) && !st.styleSourceExists(DEM)) {
             st.addSource(RasterDemSource.Builder(DEM)
                 .tiles(listOf("https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"))
                 .encoding(Encoding.TERRARIUM).tileSize(256).maxzoom(13).attribution("Terrain Tiles: Mapzen, AWS Open Data").build())
         }
         if (previous?.terrain != look.terrain) {
-            if (look.terrain) st.setTerrain(Terrain(DEM).exaggeration(1.15)) else st.removeTerrain()
+            if (look.terrain && !look.satellite) st.setTerrain(Terrain(DEM).exaggeration(1.15)) else st.removeTerrain()
         }
         if (previous?.shade != look.shade) {
-            if (look.shade && !st.styleLayerExists(SHADE))
+            if (look.shade && !look.satellite && !st.styleLayerExists(SHADE))
                 st.addLayer(HillshadeLayer(SHADE, DEM).slot("bottom").hillshadeExaggeration(0.32))
             if (st.styleLayerExists(SHADE))
                 st.setStyleLayerProperty(SHADE, "visibility", Value.valueOf(if (look.shade) "visible" else "none"))
@@ -517,7 +503,7 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
         val iconSources = mapOf(
             "vela-mine" to null, "vela-results" to null, "vela-selected" to null, "vela-waze" to null,
             "vela-waze-group" to null, "vela-cameras" to null, "vela-livecams" to null,
-            "vela-signals" to null, "vela-turn-head" to "turn-head", NavGlide.PUCK to "puck",
+            "vela-signals" to null, "vela-turn-head" to "turn-head", NavGlide.PUCK to null,
         )
         for ((source, image) in iconSources) {
             val layer = SymbolLayer("kite-$source", source).slot("top").iconSize(when (source) {
@@ -526,7 +512,11 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
                 "vela-signals", "vela-waze", "vela-waze-group", "vela-cameras" -> 1.17
                 else -> 0.78
             }).iconAllowOverlap(source in setOf(NavGlide.PUCK, "vela-results", "vela-selected", "vela-waze", "vela-turn-head"))
-            if (image == null) layer.iconImage(Expression.get("icon")) else layer.iconImage(image)
+            when {
+                source == NavGlide.PUCK -> layer.iconImage(Expression.fromRaw("""["coalesce",["get","icon"],"puck"]"""))
+                image == null -> layer.iconImage(Expression.get("icon"))
+                else -> layer.iconImage(image)
+            }
             if (source == "vela-signals") layer.minZoom(13.3).iconAllowOverlap(true)
             if (source == "vela-waze-group") layer.iconAllowOverlap(true)
             if (source == NavGlide.PUCK || source == "vela-turn-head") layer

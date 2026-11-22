@@ -41,10 +41,10 @@ private data class AheadMarker(val distance: Double, val name: String, val icon:
 @Composable
 fun RoadAheadStrip(nav: Navigator, modifier: Modifier = Modifier, showLabels: Boolean = true,
                    verticalHeight: androidx.compose.ui.unit.Dp? = null, onAlert: (WazeAlert) -> Unit = {}) {
-    val progress = nav.progress ?: return
-    if (progress.offRoute || progress.remainingMeters <= 0) return
-    val start = progress.alongMeters
-    val range = progress.remainingMeters.coerceIn(1.0, 3_000.0)
+    val progress = nav.progress
+    if (progress?.offRoute == true || (progress?.remainingMeters ?: nav.route.distanceMeters) <= 0) return
+    val start = progress?.alongMeters ?: 0.0
+    val range = (progress?.remainingMeters ?: nav.route.distanceMeters).coerceIn(1.0, 3_000.0)
     val end = start + range
     val dark = LocalDark.current
     val traffic = nav.roadTraffic.filter { it.startMeters < end && it.startMeters + it.lengthMeters > start }

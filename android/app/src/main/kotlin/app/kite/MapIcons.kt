@@ -171,7 +171,7 @@ object MapIcons {
 
     fun registerImages(dark: Boolean, add: (String, Bitmap) -> Unit) {
         overlayImages.forEach { (id, asset) -> add(id, asset) }
-        add("puck", puck(dark))
+        for (marker in DriveMarker.entries) add(marker.sprite, drivePuck(marker, dark))
     }
 
     /** The head of the turn arrow drawn on the road: big and white with a teal edge, pointing up. */
@@ -298,6 +298,18 @@ object MapIcons {
     private fun originDot() = image(22f, 22f) { cv ->
         cv.drawOval(RectF(1f, 1f, 21f, 21f), paint(Color.WHITE))
         cv.drawOval(RectF(4f, 4f, 18f, 18f), paint(c(0x14B8A6), Paint.Style.STROKE, 4f))
+    }
+
+    private val vehicleArt = mutableMapOf<Int, Bitmap>()
+
+    fun drivePuck(marker: DriveMarker, dark: Boolean, tilted: Boolean = false): Bitmap {
+        val artwork = (if (tilted) marker.tilted else marker.top) ?: return puck(dark)
+        return vehicleArt.getOrPut(artwork) {
+            val sprite = BitmapFactory.decodeResource(KiteApp.app.resources, artwork)
+            image(76f, 76f) { canvas ->
+                canvas.drawBitmap(sprite, null, RectF(3f, 3f, 73f, 73f), Paint(Paint.FILTER_BITMAP_FLAG))
+            }.also { sprite.recycle() }
+        }
     }
 
     /** The car while navigating, in Kite's teal: just the arrow, with no disc or ring around it (the light look). */
