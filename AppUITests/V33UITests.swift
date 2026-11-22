@@ -66,8 +66,7 @@ final class V33UITests: XCTestCase {
         let banner = app.descendants(matching: .any)["simulated-gps-banner"]
         XCTAssertTrue(banner.waitForExistence(timeout: 40), "the simulated drive must be clearly marked.\n\(app.debugDescription)")
         XCTAssertTrue(app.descendants(matching: .any)["replay-controls-strip"].waitForExistence(timeout: 10),
-                      "developer replay controls must be reachable.
-\(app.debugDescription)")
+                      "developer replay controls must be reachable.\n\(app.debugDescription)")
         let pause = app.buttons["replay-pause"]
         XCTAssertTrue(pause.waitForExistence(timeout: 10))
         pause.tap()
