@@ -74,8 +74,7 @@ final class V33UITests: XCTestCase {
         let skip = app.buttons["replay-skip"]
         XCTAssertTrue(skip.exists, "a replay can jump to a manoeuvre")
         skip.tap()
-        app.buttons["replay-stop-detail"].tap()
-        app.buttons["Done"].tap()
-        XCTAssertFalse(banner.exists, "stopping the replay removes the banner")
+        app.buttons["replay-stop"].tap()
+        XCTAssertFalse(banner.waitForExistence(timeout: 5), "stopping the replay removes the banner")
     }
 }
