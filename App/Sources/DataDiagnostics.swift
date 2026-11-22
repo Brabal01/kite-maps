@@ -37,7 +37,6 @@ final class DataDiagnostics: ObservableObject {
             }.pngData()
         }()
         let s = model.settings
-        let info = Bundle.main.infoDictionary
         Task {
             var entries: [DiagnosticZip.Entry] = []
             var lines = [
