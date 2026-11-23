@@ -127,6 +127,11 @@ struct ContentView: View {
                 }
             }
         }
+        .overlay(alignment: .center) {
+            if model.layerInspectionEnabled && (model.tab == .map || model.hasActiveJourney) {
+                MapLayerInspectorPanel(model: model)
+            }
+        }
         .overlay(alignment: .leading) {
             if !settings.useAppleMaps && settings.useMapbox && !settings.satellite && model.tab == .map {
                 Image("MapboxAttribution").resizable().scaledToFit().frame(width: 88, height: 23)
@@ -773,6 +778,12 @@ enum DemoScript {
         guard let i = args.firstIndex(of: "-demo"), i + 1 < args.count else { return }
         let step = args[i + 1]
         func wait(_ s: Double) async { try? await Task.sleep(nanoseconds: UInt64(s * 1e9)) }
+        #if targetEnvironment(simulator)
+        if step == "maplayers", UITestSupport.mapLayers {
+            UITestSupport.installMapLayers(model)
+            return
+        }
+        #endif
         // The map button's choice and the zoom setting are kept between runs: start each shot from the usual view.
         model.settings.driveLook = .tilted
         model.settings.mapZoom = .normal

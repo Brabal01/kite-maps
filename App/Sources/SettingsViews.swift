@@ -336,6 +336,14 @@ struct SettingsView: View {
     private var transitPage: some View {
         Form {
             Section {
+                TextField("Alternate MOTIS server", text: $settings.transitFallbackServer)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.URL)
+            } footer: {
+                Text("Optional HTTPS server with a MOTIS v2 API and regional timetables. If Transitous cannot provide a trip, Kite sends both endpoints and the requested time to this server.")
+            }
+            Section {
                 TextField("GTFS-Realtime feed URL", text: $settings.gtfsRealtimeURL)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()

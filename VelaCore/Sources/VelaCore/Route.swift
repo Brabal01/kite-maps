@@ -471,6 +471,7 @@ public enum Geo {
 
     /** Decode an encoded polyline (precision 5 or 6). */
     public static func decodePolyline(_ s: String, precision: Double = 1e6) -> [LatLng] {
+        guard precision.isFinite, precision > 0 else { return [] }
         var out: [LatLng] = []
         let bytes = Array(s.utf8)
         var i = 0, lat = 0, lng = 0
@@ -479,6 +480,7 @@ public enum Geo {
             while i < bytes.count {
                 let b = Int(bytes[i]) - 63
                 i += 1
+                guard (0...63).contains(b), shift <= 30 else { return nil }
                 result |= (b & 0x1f) << shift
                 shift += 5
                 if b < 0x20 { return (result & 1) != 0 ? ~(result >> 1) : (result >> 1) }
@@ -486,10 +488,12 @@ public enum Geo {
             return nil
         }
         while i < bytes.count {
-            guard let dlat = next(), let dlng = next() else { break }
+            guard let dlat = next(), let dlng = next() else { return [] }
             lat += dlat
             lng += dlng
-            out.append(LatLng(Double(lat) / precision, Double(lng) / precision))
+            let point = LatLng(Double(lat) / precision, Double(lng) / precision)
+            guard MapLineGeometry.isValid(point) else { return [] }
+            out.append(point)
         }
         return out
     }

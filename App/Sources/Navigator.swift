@@ -204,6 +204,12 @@ final class Navigator: ObservableObject {
     /** Today's traffic against the route's estimate, from the latest look (1 = as planned). */
     private var trafficScale = 1.0
     private var trafficAt = Date()
+    @Published private(set) var routeTrafficUpdatedAt = Date()
+    private var refreshedTrafficSpans: [TrafficSpan]?
+    var visibleTrafficSpans: [TrafficSpan] {
+        guard Date().timeIntervalSince(routeTrafficUpdatedAt) < 300 else { return [] }
+        return refreshedTrafficSpans ?? route.trafficSpans
+    }
     private var trafficLoading = false
     private var trafficTask: Task<Void, Never>?
     private var trafficRequest = 0
@@ -1284,6 +1290,14 @@ final class Navigator: ObservableObject {
             let comparison = TrafficAlternatives.compare(allowed, on: original, previousETA: p.remainingSeconds)
             if let baseline = comparison.currentETA {
                 self.trafficScale = min(3, max(0.5, baseline / planned))
+                if let matched = allowed.first(where: {
+                    $0.trafficSeconds == baseline && Geo.isNearRoute($0.polyline, reference: original)
+                        && Geo.isNearRoute(original, reference: $0.polyline)
+                }) {
+                    self.refreshedTrafficSpans = TrafficAlternatives.reprojectSpans(
+                        from: matched, onto: original, startingAt: p.alongMeters)
+                    self.routeTrafficUpdatedAt = Date()
+                }
             }
             if let alternative = comparison.alternative, AppSettings.shared.suggestFasterRoutes {
                 let left = Geo.slice(line, from: now.alongMeters, to: length)
@@ -1526,6 +1540,8 @@ final class Navigator: ObservableObject {
         toldContinue = []
         trafficScale = 1
         trafficAt = Date()
+        refreshedTrafficSpans = nil
+        routeTrafficUpdatedAt = trafficAt
         trafficTask?.cancel()
         trafficTask = nil
         trafficRequest += 1

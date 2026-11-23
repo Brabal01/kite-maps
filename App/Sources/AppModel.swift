@@ -98,6 +98,7 @@ struct DirectionsState {
     var transit = false
     var trips: [TransitTrip]?
     var tripsError: String?
+    var transitProvider = "Transitous"
     /** Nil for "leave now". */
     var transitTime: Date?
     var arriveBy = false
@@ -240,6 +241,23 @@ final class AppModel: ObservableObject {
     private var tripSavedAt = Date.distantPast
     /** Bumped when the map should redraw overlays that don't come from a published value. */
     @Published var mapTick = 0
+    @Published private(set) var layerInspectionEnabled = false
+    let mapLayerInspection = MapLayerInspection()
+    private(set) var layerInspectionRevision = 0
+
+    func setLayerInspection(_ enabled: Bool) {
+        layerInspectionEnabled = enabled
+        mapLayerInspection.hidden.removeAll()
+        mapLayerInspection.layers.removeAll()
+        layerInspectionRevision += 1
+        mapTick += 1
+    }
+
+    func toggleInspectedLayer(_ id: String) {
+        if !mapLayerInspection.hidden.insert(id).inserted { mapLayerInspection.hidden.remove(id) }
+        layerInspectionRevision += 1
+        mapTick += 1
+    }
     /** Which way the map faces, for the compass button. */
     @Published var mapHeading: Double = 0
     /** The arrow's bearing, smoothed so compass noise cannot make it twitch. */
@@ -278,29 +296,24 @@ final class AppModel: ObservableObject {
     struct MapStart {
         var center: CLLocationCoordinate2D
         var zoom: Double
-        /// True when this is the area the user was looking at before the app closed.
-        var restored: Bool
+        var usesFreshFix: Bool
     }
 
     var mapStart: MapStart {
+        if let fix = location.last, (0...120).contains(fix.horizontalAccuracy),
+           abs(fix.timestamp.timeIntervalSinceNow) < 15, abs(fix.coordinate.latitude) <= 85 {
+            return MapStart(center: fix.coordinate, zoom: 15, usesFreshFix: true)
+        }
         if let saved = settings.lastMapCenter, settings.lastMapZoom >= 2.5,
            abs(saved.lat) <= 85, abs(saved.lng) <= 180 {
             return MapStart(center: CLLocationCoordinate2D(latitude: saved.lat, longitude: saved.lng),
-                            zoom: min(18, max(2.5, settings.lastMapZoom)), restored: true)
+                            zoom: min(15, settings.lastMapZoom), usesFreshFix: false)
         }
-        if let fix = location.last, fix.horizontalAccuracy >= 0, fix.horizontalAccuracy <= 500,
-           abs(fix.coordinate.latitude) <= 85 {
-            return MapStart(center: fix.coordinate, zoom: 14, restored: false)
-        }
-        // No saved area and no fix yet: a calm world view beats pretending to be in London.
-        return MapStart(center: CLLocationCoordinate2D(latitude: 20, longitude: 0), zoom: 1.6, restored: false)
+        return MapStart(center: CLLocationCoordinate2D(latitude: 20, longitude: 0), zoom: 1.6, usesFreshFix: false)
     }
 
-    /** A good first fix must not yank the map away from the area the user left it in. */
-    func keepsRestoredView(for fix: CLLocation) -> Bool {
-        guard let saved = settings.lastMapCenter else { return false }
-        let here = LatLng(fix.coordinate.latitude, fix.coordinate.longitude)
-        return saved.distance(to: here) < 60_000
+    func startCamera(at coordinate: CLLocationCoordinate2D) -> MLNMapCamera {
+        MLNMapCamera(lookingAtCenter: coordinate, acrossDistance: 1_100, pitch: 0, heading: 0)
     }
 
     private var lastCameraWrite = Date.distantPast
@@ -366,6 +379,17 @@ final class AppModel: ObservableObject {
         location.onUpdate = { [weak self] loc in
             if self?.userLatLng == nil { LaunchTrace.mark("first location") }
             self?.locationChanged(loc)
+        }
+        location.onHeadingChanged = { [weak self] in
+            guard let self, self.nav == nil, let fix = self.location.mapFix,
+                  UIApplication.shared.applicationState == .active else { return }
+            if self.justDrive {
+                guard fix.speed < 1.5 || abs(fix.timestamp.timeIntervalSinceNow) >= 5 else { return }
+                self.driveBearing = self.mapBearing(for: fix)
+            } else {
+                self.followBrowse(fix, entering: false)
+            }
+            self.mapTick += 1
         }
         location.onPlanningInterrupted = { [weak self] in self?.planningUpdatesPaused() }
         location.onAuthorizationChanged = { [weak self] granted, denied, servicesOff in
@@ -871,7 +895,7 @@ final class AppModel: ObservableObject {
      planning snapshot. A missing fix stays missing; it is never filled with
      the map centre or a default city.
      */
-    private func endpoints(_ d: DirectionsState) -> (LatLng, LatLng)? {
+    func endpoints(_ d: DirectionsState) -> (LatLng, LatLng)? {
         // The session's deviceOrigin is the snapshot all modes share. It only
         // moves after a significant move, never on every GPS wobble.
         let current = d.planning?.deviceOrigin?.point
@@ -1578,6 +1602,7 @@ final class AppModel: ObservableObject {
         let destId = d.destination.id
         let sessionID = d.planning?.requestID ?? 0
         let time = d.transitTime, arriveBy = d.arriveBy
+        let fallbackServer = settings.transitFallbackServer
         let liveURL = settings.gtfsRealtimeURL
         let discover = settings.autoTransitFeeds
         let req = transitRequest
@@ -1589,35 +1614,40 @@ final class AppModel: ObservableObject {
         transitTask = Task {
             do {
                 let trips: [TransitTrip]
+                let provider: String
                 if UITestSupport.mockRoutes {
                     try? await Task.sleep(nanoseconds: 200_000_000)
                     trips = UITestSupport.transitTrips(from: from, to: to)
+                    provider = "Transitous"
                 } else {
-                    trips = try await Transitous.plan(from: from, to: to, time: time, arriveBy: arriveBy)
+                    let result = try await Transitous.planWithFallback(from: from, to: to, time: time,
+                                                                      arriveBy: arriveBy, fallbackServer: fallbackServer)
+                    trips = result.trips
+                    provider = result.provider
                 }
-                async let live = Self.liveFeed(from: from, to: to, manual: liveURL, discover: discover)
-                guard directions?.destination.id == destId, transitRequest == req else { return }
-                // Show the timetable immediately; a slow live feed is applied when it arrives.
+                guard !Task.isCancelled, directions?.destination.id == destId, transitRequest == req else { return }
+                directions?.transitProvider = provider
                 directions?.trips = trips.sorted { $0.durationSeconds < $1.durationSeconds }
                 if trips.isEmpty { directions?.tripsError = "No transit trips found here." }
                 updatePlanningTransit(count: trips.count, requestID: sessionID,
                                       failure: trips.isEmpty ? .noRoute : nil)
+                if directions?.transit == true { frameRoute() }
                 // Transitous already carries live times from its own GTFS-Realtime sources. An
                 // optional extra feed can add another region's delays, alerts and vehicle positions.
-                if let feed = await live, !trips.isEmpty {
-                    guard directions?.destination.id == destId, transitRequest == req else { return }
+                if !trips.isEmpty, provider == "Transitous",
+                   let feed = await Self.liveFeed(from: from, to: to, manual: liveURL, discover: discover) {
+                    guard !Task.isCancelled, directions?.destination.id == destId, transitRequest == req else { return }
                     directions?.trips = TransitRealtime.apply(feed, to: trips)
                         .sorted { $0.durationSeconds < $1.durationSeconds }
                     if directions?.transit == true { frameRoute() }
                 }
             } catch {
-                guard directions?.destination.id == destId, transitRequest == req else { return }
+                guard !Task.isCancelled, directions?.destination.id == destId, transitRequest == req else { return }
                 directions?.trips = []
                 directions?.tripsError = Connectivity.explain("Couldn't reach the transit planner.")
                 updatePlanningTransit(count: 0, requestID: sessionID,
                                       failure: Connectivity.shared.online ? .routerUnavailable : .offline)
             }
-            if directions?.transit == true { frameRoute() }
         }
     }
 
@@ -1984,8 +2014,9 @@ final class AppModel: ObservableObject {
                 var start = from
                 var departure = max(Date(), retained?.arrive ?? Date())
                 for target in stops + [journey.destination] {
-                    let trips = try await Transitous.plan(from: start, to: target.location, time: departure)
-                    guard let trip = trips.first(where: { !$0.legs.isEmpty }) else { break }
+                    let result = try await Transitous.planWithFallback(from: start, to: target.location,
+                                                                       time: departure, fallbackServer: settings.transitFallbackServer)
+                    guard let trip = result.trips.first(where: { !$0.legs.isEmpty }) else { break }
                     legs.append(contentsOf: trip.legs)
                     stopLegs.append(legs.count - 1)
                     departure = (trip.arrive ?? departure.addingTimeInterval(trip.durationSeconds)).addingTimeInterval(120)
@@ -2219,6 +2250,7 @@ final class AppModel: ObservableObject {
     func mapBearing(for loc: CLLocation) -> Double {
         let courseUsable = loc.course >= 0 && loc.courseAccuracy >= 0 && loc.courseAccuracy < 60
         let moving = loc.speed >= 1.5 && loc.courseAccuracy < 45
+            && abs(loc.timestamp.timeIntervalSinceNow) < 5
         let raw: Double?
         if moving, courseUsable {
             raw = loc.course

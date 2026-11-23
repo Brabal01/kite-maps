@@ -853,7 +853,7 @@ struct TransitBody: View {
             if let t = state.pickedTrip {
                 TransitStartButton { model.startTransit(t) }
             }
-            Text("Timetables from Transitous").font(.caption).foregroundColor(.secondary).padding(.top, 4)
+            Text("Timetables from \(state.transitProvider)").font(.caption).foregroundColor(.secondary).padding(.top, 4)
         } else if state.trips == nil {
             HStack { ProgressView(); Text("Finding transit…").foregroundColor(.secondary) }
                 .padding(.vertical, 20)
@@ -869,8 +869,7 @@ private struct TransitFallbackLinks: View {
     @State private var showGoogleTransit = false
 
     var body: some View {
-        if let from = state.fromPlace?.location ?? model.userLatLng,
-           let to = state.toPlace?.location ?? model.userLatLng {
+        if let (from, to) = model.endpoints(state) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Try another transit planner").font(.caption.weight(.semibold))
                 HStack(spacing: 8) {
@@ -894,6 +893,16 @@ private struct TransitFallbackLinks: View {
                 }
                 .font(.subheadline.weight(.semibold))
                 .buttonStyle(.bordered)
+                if [from, to].allSatisfy({ (35.75...36.12).contains($0.lat) && (14.12...14.64).contains($0.lng) }),
+                   let url = URL(string: "https://www.publictransport.com.mt/visiting-malta/") {
+                    Link(destination: url) { Label("Tallinja journey planner", systemImage: "arrow.up.right.square") }
+                        .font(.subheadline)
+                }
+                if [from, to].allSatisfy({ (40.80...41.27).contains($0.lat) && (28.53...29.45).contains($0.lng) }),
+                   let url = URL(string: "https://metro.istanbul/en/") {
+                    Link(destination: url) { Label("Metro İstanbul journey planner", systemImage: "arrow.up.right.square") }
+                        .font(.subheadline)
+                }
                 if state.transitTime != nil {
                     Text("Set the departure or arrival time in the other planner.")
                         .font(.caption2).foregroundStyle(.secondary)

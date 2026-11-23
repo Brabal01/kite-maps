@@ -16,6 +16,7 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     @Published private(set) var reducedAccuracy = false
     /** The phone's compass, true north when iOS has it, magnetic otherwise. Nil while the compass is off or unreliable. */
     @Published private(set) var deviceHeading: Double?
+    var onHeadingChanged: (() -> Void)?
     var onUpdate: (@MainActor (CLLocation) -> Void)?
 
     /**
@@ -140,6 +141,12 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     var last: CLLocation? {
         guard let fix, Date().timeIntervalSince(fix.timestamp) <= 60,
               fix.horizontalAccuracy >= 0, fix.horizontalAccuracy <= 500 else { return nil }
+        return fix
+    }
+
+    /** Display-only position when the browse distance filter hasn't emitted a new fix. */
+    var mapFix: CLLocation? {
+        guard authorized, !denied, let fix = lastKnown, fix.horizontalAccuracy <= 500 else { return nil }
         return fix
     }
 
@@ -450,6 +457,7 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
         guard (0..<360).contains(value) else { return }
         Task { @MainActor in
             self.deviceHeading = value
+            self.onHeadingChanged?()
         }
     }
 

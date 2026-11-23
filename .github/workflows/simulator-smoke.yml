@@ -97,6 +97,30 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" | tee v34-ui-test.log | tail -n 120
+      - name: v35 map layer isolation on both renderers
+        env:
+          SIMULATOR_UDID: ${{ steps.simulator.outputs.udid }}
+        run: |
+          set -o pipefail
+          xcrun simctl privacy "$SIMULATOR_UDID" grant location app.vela.ios || true
+          xcrun simctl location "$SIMULATOR_UDID" set 49.590,17.265
+          xcodebuild test \
+            -project Kite.xcodeproj \
+            -scheme Kite \
+            -configuration Debug \
+            -destination "id=$SIMULATOR_UDID" \
+            -derivedDataPath build \
+            -resultBundlePath v35-map-layers.xcresult \
+            -only-testing:KiteUITests/V35UITests \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" | tee v35-ui-test.log | tail -n 150
+      - name: Export renderer screenshots
+        if: always()
+        run: |
+          if [[ -d v35-map-layers.xcresult ]]; then
+            xcrun xcresulttool export attachments --path v35-map-layers.xcresult --output-path v35-renderers
+          fi
       - name: Install and launch repeatedly
         run: |
           set -euo pipefail
@@ -256,16 +280,17 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Kite-v34-Simulator-Screenshots
+          name: Kite-v35-Simulator-Screenshots
           path: |
             demo-*.png
             screenshots-check.txt
+            v35-renderers/
           if-no-files-found: warn
       - name: Upload smoke logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: simulator-smoke-logs-v34
+          name: simulator-smoke-logs-v35
           path: |
             simulator-boot.log
             simulator-build.log
@@ -273,6 +298,7 @@ jobs:
             v31-ui-test.log
             v33-ui-test.log
             v34-ui-test.log
+            v35-ui-test.log
             launch-*.txt
             kite-*.log
             demo-*.txt
