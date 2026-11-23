@@ -1,6 +1,29 @@
 # Kite Maps iPhone custom build — development progress
 
-Updated: 2026-11-21 (v33 added)
+Updated: 2026-11-23 (v36 added)
+
+## v36 roundabout accuracy, live traffic and simulator fix (branch `iphone-custom-v36-traffic-roundabout-accuracy`)
+
+Base: v35 `a616f490`. PR #14 → v35. Details: `docs/V36_ROUNDABOUT_ACCURACY.md`,
+`docs/V36_LIVE_TRAFFIC.md`, results in `docs/V36_TEST_RESULTS.md`.
+
+* **P0 roundabout (Olomouc, Vejdovského)**: real OSM golden fixture — the through
+  drive resolves to the 2nd exit and overrides the router's wrong "1st"; the first
+  (service) arm still resolves to 1. Fix is display/timing: an exit is shown only
+  when confirmed (§3.7), and a late OSM answer is frozen only at the turn actually
+  being said (§3.8). Verified locally: 5 new golden tests plus the 16-resolver and
+  10-roundabout suites, 0 failures.
+* **P0 live traffic without a route**: `TrafficOverlayState` (8 tests) separates
+  map overlay, route congestion and incidents with an honest status; the layer
+  inspector reports a live "PROVIDER: STATUS" line while browsing.
+* **Simulator fix**: v35 rail-demo fixture no longer gated on zoom (fixes
+  `V35UITests` line 39).
+* **CI**: v36 added to simulator PR + custom-IPA push lists; Core/iOS/simulator/IPA
+  mandatory checks run on PR #14.
+* **Verified locally**: 440 VelaCore tests, 0 failures, 6 skips.
+* **Not verified (device-only)**: physical roundabout drive, real Apple/Google tiles
+  live on a phone, battery, map FPS, Live Activity — see
+  `docs/V36_DEVICE_TEST_CHECKLIST.md`.
 
 ## v33 reliability and UX (branch `iphone-custom-v33-reliability-ux`)
 
