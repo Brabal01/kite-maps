@@ -14,6 +14,8 @@ final class MapLayerInspection {
     var hidden: Set<String> = []
     var renderer = ""
     var layers: [String: Layer] = [:]
+    /// The live-traffic overlay for the visible map (browse and route), from TrafficOverlayState.
+    var trafficStatus: String?
 
     var orderedLayers: [Layer] { layers.values.sorted { $0.id < $1.id } }
 
@@ -64,6 +66,12 @@ struct MapLayerInspectorPanel: View {
                     .font(.caption).buttonStyle(.bordered)
                 }
                 #endif
+                if let traffic = inspection.trafficStatus {
+                    Text(traffic)
+                        .font(.caption).foregroundColor(.secondary)
+                        .lineLimit(2)
+                        .accessibilityIdentifier("layer-inspector-traffic")
+                }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach(inspection.orderedLayers) { layer in

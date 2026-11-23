@@ -665,6 +665,21 @@ struct VelaMapView: UIViewRepresentable {
                 publishedRailFilter = nil
             }
             let showHeat = s.wazeOn && s.wazeHeatmap && s.wazePolice
+            // Live traffic must work while browsing a route-free map, not only on a planned route.
+            let browseTraffic = model.nav == nil && !model.justDrive
+            let requested = trafficOverlaysAllowed
+            let provider: TrafficOverlayState.Provider = map is MLNMapView
+                ? (s.noGoogle ? .none : .google) : .apple
+            let state = TrafficOverlayState(
+                kind: .map, provider: provider, renderer: map is MLNMapView ? "MapLibre" : "MapKit",
+                requested: requested, rendererReady: browseTraffic || model.nav?.route.mode == .drive,
+                dataLoaded: requested && provider != .none, receivedAt: nil,
+                dataAge: nil, legend: nil,
+                reason: s.noGoogle && map is MLNMapView
+                    ? "MapLibre's overlay is Google tiles; no-Google mode has no traffic source."
+                    : (browseTraffic ? nil : "shown on the active route"),
+                lastError: nil)
+            model.mapLayerInspection.trafficStatus = "\(provider.rawValue): \(state.status.rawValue)"
             if model.layerInspectionEnabled {
                 let renderer = map is MLNMapView ? "MapLibre" : "MapKit"
                 if model.mapLayerInspection.renderer != renderer {
@@ -1031,13 +1046,16 @@ struct VelaMapView: UIViewRepresentable {
 
         /** Transit lines for the view and a margin around it, when the layer is on. */
         func loadRail(_ map: any KiteMapSurface) {
-            guard model.map === map, showsTransitNetwork, map.zoomLevel >= 10, railFetch == nil else { return }
+            guard model.map === map, showsTransitNetwork, railFetch == nil else { return }
             #if targetEnvironment(simulator)
+            // Deterministic fixture: not gated on zoom, so it reloads after navigation ends even when
+            // the camera reset drops the zoom below the real-network threshold (V35 simulator test).
             if UITestSupport.mapLayers {
                 railLines = UITestSupport.mapLayerLines
                 return
             }
             #endif
+            guard map.zoomLevel >= 10 else { return }
             let b = map.visibleCoordinateBounds
             let z = Int(map.zoomLevel)
             if let r = railBox, b.sw.latitude >= r.s, b.sw.longitude >= r.w, b.ne.latitude <= r.n, b.ne.longitude <= r.e,
