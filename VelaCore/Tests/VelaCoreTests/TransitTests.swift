@@ -116,8 +116,8 @@ final class TransitTests: XCTestCase {
     func testLines() {
         let json = """
         {"routes":[{"mode":"BUS","transitRoutes":[{"color":"FF0000"}]},{"mode":"SUBWAY","transitRoutes":[{"color":"FCCC0A","shortName":"N"}]}],
-         "polylines":[{"polyline":{"points":"_p~iF~ps|U_ulLnnqC_mqNvxq`@","precision":5},"routeIndexes":[0]},
-                      {"polyline":{"points":"_p~iF~ps|U_ulLnnqC_mqNvxq`@","precision":5},"routeIndexes":[0,1]}]}
+         "polylines":[{"polyline":{"points":"optmHonjhBgEgE_DkH","precision":5},"routeIndexes":[0]},
+                      {"polyline":{"points":"optmHonjhBgEgE_DkH","precision":5},"routeIndexes":[0,1]}]}
         """
         let lines = Transitous.parseLines(Data(json.utf8))
         XCTAssertEqual(lines.count, 1, "bus-only stretches are left out")

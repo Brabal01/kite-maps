@@ -131,7 +131,7 @@ final class TransitLineIdentityTests: XCTestCase {
           {"mode":"SUBWAY","transitRoutes":[{"color":"0039A6","shortName":"Q","routeId":"Q"}]},
           {"mode":"BUS","transitRoutes":[{"color":"FF0000","shortName":"M1"}]}
         ],
-         "polylines":[{"polyline":{"points":"_p~iF~ps|U_ulLnnqC_mqNvxq`@","precision":5},"routeIndexes":[0,1,2]}]}
+         "polylines":[{"polyline":{"points":"optmHonjhBgEgE_DkH","precision":5},"routeIndexes":[0,1,2]}]}
         """
         let lines = Transitous.parseLines(Data(json.utf8))
         XCTAssertEqual(lines.count, 2, "the bus is left out below close zoom")
@@ -144,7 +144,7 @@ final class TransitLineIdentityTests: XCTestCase {
     func testBusesAppearOnlyWhenTheZoomAsksForThem() {
         let json = """
         {"routes":[{"mode":"BUS","transitRoutes":[{"color":"FF0000","shortName":"M1"}]}],
-         "polylines":[{"polyline":{"points":"_p~iF~ps|U_ulLnnqC_mqNvxq`@","precision":5},"routeIndexes":[0]}]}
+         "polylines":[{"polyline":{"points":"optmHonjhBgEgE_DkH","precision":5},"routeIndexes":[0]}]}
         """
         XCTAssertTrue(Transitous.parseLines(Data(json.utf8)).isEmpty)
         let buses = Transitous.parseLines(Data(json.utf8), includeBuses: true)
