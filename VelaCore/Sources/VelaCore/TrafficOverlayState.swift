@@ -63,6 +63,23 @@ public struct TrafficOverlayState: Hashable, Sendable {
     public var reason: String?
     public var lastError: String?
 
+    public init(kind: Kind, provider: Provider, renderer: String, requested: Bool,
+                rendererReady: Bool, dataLoaded: Bool, receivedAt: Date? = nil,
+                dataAge: TimeInterval? = nil, legend: [TrafficLevel]? = nil,
+                reason: String? = nil, lastError: String? = nil) {
+        self.kind = kind
+        self.provider = provider
+        self.renderer = renderer
+        self.requested = requested
+        self.rendererReady = rendererReady
+        self.dataLoaded = dataLoaded
+        self.receivedAt = receivedAt
+        self.dataAge = dataAge
+        self.legend = legend
+        self.reason = reason
+        self.lastError = lastError
+    }
+
     public var status: Status {
         if !requested { return .off }
         if let lastError, lastError != "" { return .unavailable }
