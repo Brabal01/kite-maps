@@ -46,6 +46,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -928,16 +929,19 @@ fun PickerPage(title: String, close: () -> Unit, content: @Composable ColumnScop
 
 /** The search box at the top of a picker. */
 @Composable
-fun PickerSearchField(query: String, onQuery: (String) -> Unit, prompt: String, onSearch: () -> Unit) {
+fun PickerSearchField(
+    query: String, onQuery: (String) -> Unit, prompt: String, autoFocus: Boolean = true,
+    onFocused: () -> Unit = {}, onSearch: () -> Unit,
+) {
     val dark = LocalDark.current
     val requester = remember { androidx.compose.ui.focus.FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { requester.requestFocus() } }
+    LaunchedEffect(autoFocus) { if (autoFocus) runCatching { requester.requestFocus() } }
     Row(Modifier.padding(horizontal = 16.dp, vertical = 6.dp).fillMaxWidth().height(48.dp).clip(RoundedCornerShape(14.dp))
         .background(Vela.chip(dark)).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Icon(Icons.Filled.Search, null, tint = secondaryText, modifier = Modifier.size(22.dp))
         Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
             if (query.isEmpty()) Text(prompt, fontSize = KType.body, color = secondaryText)
-            BasicTextField(query, onQuery, Modifier.fillMaxWidth().focusRequester(requester), singleLine = true,
+            BasicTextField(query, onQuery, Modifier.fillMaxWidth().focusRequester(requester).onFocusChanged { if (it.isFocused) onFocused() }, singleLine = true,
                 textStyle = TextStyle(fontSize = KType.body, color = primaryText, fontFamily = Rounded), cursorBrush = SolidColor(Vela.accent(dark)),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search), keyboardActions = KeyboardActions(onSearch = { onSearch() }))
         }
@@ -1026,38 +1030,104 @@ fun ArrivalRows(model: AppModel, state: DirectionsState) {
     }
 }
 
-/** Search for a place to stop at on the way. Home, work and saved places are one tap. */
+/** Search for a new route endpoint without clearing the current itinerary. */
 @Composable
 fun EndpointPicker(model: AppModel, destination: Boolean = false) {
-    var query by remember { mutableStateOf("") }
-    var results by remember { mutableStateOf<List<Place>>(emptyList()) }
+    var query by rememberSaveable(destination) { mutableStateOf("") }
+    var submitted by rememberSaveable(destination) { mutableStateOf<String?>(null) }
+    var withinOsm by rememberSaveable(destination) { mutableStateOf(AppSettings.osmOnlySearch) }
+    val osm = AppSettings.noGoogle || withinOsm
+    var suggestions by remember { mutableStateOf(SuggestParser.Result()) }
     var searching by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
-    var job by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    val title = if (destination) "Change destination" else "Change start"
+    val (center, span) = model.directions?.takeIf { it.missingOrigin }?.destination?.location?.let { it to 50_000.0 } ?: model.viewport
     fun close() {
-        job?.cancel()
         if (destination) model.pickingDestination = false else model.pickingOrigin = false
     }
-    fun search() {
+    fun pick(place: Place) {
+        close()
+        if (destination) model.setDestination(place) else model.setOrigin(place)
+    }
+    fun search(text: String = query) {
+        val trimmed = text.trim()
+        if (trimmed.isNotBlank()) { query = text; submitted = trimmed }
+    }
+    LaunchedEffect(query, submitted, osm) {
         val text = query.trim()
-        if (text.isEmpty()) return
-        job?.cancel()
+        suggestions = SuggestParser.Result()
+        searching = false
+        if (text.length < 2) return@LaunchedEffect
+        val full = submitted == text
+        if (!full) delay(250)
         searching = true
-        val (center, span) = model.directions?.takeIf { it.missingOrigin }?.destination?.location?.let { it to 50_000.0 } ?: model.viewport
-        job = scope.launch {
-            results = PlaceSearch.search(text, center, span, !AppSettings.noGoogle).places.take(25)
+        try {
+            val linked = if (full && MapLinks.looksLikeLink(text)) MapLinks.resolve(text) else null
+            suggestions = when {
+                linked is MapLinks.Target.Spot -> SuggestParser.Result(places = listOf(
+                    Place("pin:${linked.at.lat},${linked.at.lng}", linked.name ?: "Dropped pin", linked.at, "pin")))
+                full && osm -> SuggestParser.Result(places = OpenPlaceSearch.search(text, center, span))
+                full -> SuggestParser.Result(places = PlaceSearch.search(text, center, span, true).places)
+                osm -> OpenPlaceSearch.suggestions(text, center)
+                else -> {
+                    val google = runCatching { GoogleClient.shared.suggest(text, center, span ?: 20_000.0) }
+                        .getOrElse { if (it is kotlinx.coroutines.CancellationException) throw it else SuggestParser.Result() }
+                    val near = PlaceSearch.nearFirst(google.places, center)
+                    val matches = if (PlaceSearch.needsNearbyFallback(near, center)) {
+                        val open = runCatching { Photon.search(text, center, 8) }
+                            .getOrElse { if (it is kotlinx.coroutines.CancellationException) throw it else emptyList() }
+                        PlaceSearch.withNearbyFallback(near, open, center)
+                    } else near
+                    google.copy(places = matches)
+                }
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            suggestions = SuggestParser.Result()
+        } finally {
             searching = false
         }
     }
-    PickerPage(if (destination) "Change destination" else "Start from", ::close) {
-        PickerSearchField(query, { query = it }, if (destination) "Search for a destination" else "Search for a starting point", ::search)
-        LazyColumn {
+
+    PickerPage(title, ::close) {
+        PickerSearchField(query, { query = it; submitted = null }, "Search places or addresses", autoFocus = false, onSearch = { search() })
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            item {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (!AppSettings.noGoogle) FilterChipLabel(if (osm) "OpenStreetMap" else "All sources", osm, menu = false) { withinOsm = !withinOsm }
+                    FilterChipLabel("Pick on map", false, menu = false) { model.beginEndpointPin(destination) }
+                }
+            }
+            if (!destination || model.userLatLng != null) item {
+                IconRow(Icons.Filled.MyLocation, "Your location") {
+                    if (destination) {
+                        model.userLatLng?.let { pick(Place("here", "Your location", it, "pin")) }
+                    } else { close(); model.setOrigin(null) }
+                }
+            }
+            if (query.isNotBlank() && submitted != query.trim()) item {
+                IconRow(Icons.Filled.Search, "Search for “${query.trim()}”") { search() }
+            }
             if (searching) item { Text("Searching…", Modifier.padding(16.dp), color = secondaryText) }
-            if (!destination) item { IconRow(Icons.Filled.MyLocation, "Your location") { model.setOrigin(null); close() } }
-            items(results, key = { it.id }) { place ->
-                IconRow(Icons.Filled.Place, place.name, place.address) {
-                    if (destination) model.setDestination(place) else model.setOrigin(place)
-                    close()
+            val places = if (query.isBlank()) {
+                val s = AppSettings
+                (listOfNotNull(s.home, s.work) + s.placeShortcuts + s.recentPlaces.take(6) + s.saved.take(8)).distinctBy { it.id }
+            } else suggestions.places.distinctBy { it.id }.take(25)
+            if (places.isNotEmpty() && query.isBlank()) item { SectionTitle("Saved and recent") }
+            items(places, key = { it.id }) { place ->
+                Box(Modifier.padding(horizontal = 16.dp).clip(RoundedCornerShape(18.dp)).background(interfaceSurface)) {
+                    PlaceResultSummary(place, onOpen = { pick(place) }, here = model.userLatLng, openLabel = "Use this place") {
+                        FilledTonalIconButton({ pick(place) }) { Icon(Icons.Filled.Check, "Use ${place.name}") }
+                    }
+                }
+            }
+            if (query.isBlank()) {
+                item { SectionTitle("Nearby places") }
+                items(Category.all.distinctBy { it.query }, key = { it.query }) { IconRow(it.icon, it.label) { search(it.query) } }
+            } else {
+                items(suggestions.queries.distinct()) { next -> IconRow(Icons.Filled.Search, next) { search(next) } }
+                if (submitted != null && !searching && places.isEmpty()) item {
+                    Text("No matching places", Modifier.padding(16.dp), color = secondaryText)
                 }
             }
         }
@@ -1070,28 +1140,48 @@ fun StopPicker(model: AppModel) {
     var query by remember { mutableStateOf(model.stopSearch?.query.orEmpty()) }
     val close = { model.addingStop = false }
     fun search() { model.searchStops(query, named = OutdoorData.kind(query) == null) }
-    PickerPage("Add stop", close) {
-        PickerSearchField(query, { query = it }, "Search by name or address", ::search)
-        if (query.isNotBlank()) IconRow(Icons.Filled.Search, "Search for “${query.trim()}”") { search() }
-        IconRow(Icons.Filled.AddLocationAlt, "Choose a point on the map") { model.beginStopPin() }
-        LazyColumn(Modifier.fillMaxSize()) {
-            item { SectionTitle("Along the route") }
-            val categories = Category.all.filter { it.icon in listOf(Icons.Filled.LocalGasStation,
-                Icons.Filled.LocalCafe, Icons.Filled.Restaurant, Icons.Filled.ShoppingCart,
-                Icons.Filled.LocalParking, Icons.Filled.LocalPharmacy) } +
-                listOf(Category("EV charging", Icons.Filled.EvStation, "ev charging station"),
-                    Category(if (Fmt.yards) "Toilets" else "Restrooms", Icons.Filled.Wc,
-                        if (Fmt.yards) "public toilets" else "public restroom"))
-            items(categories.distinctBy { it.label }) { c -> IconRow(c.icon, c.label) { model.searchStops(c.query) } }
-            val s = AppSettings
-            val mine = listOfNotNull(s.home?.let { it to Icons.Filled.Home }, s.work?.let { it to Icons.Filled.Work }) +
-                s.saved.take(12).map { it to Icons.Filled.Bookmark }
-            if (mine.isNotEmpty()) {
-                item { SectionTitle("Your places") }
-                items(mine) { (p, icon) ->
-                    IconRow(icon, p.name, p.address) { model.acceptStop(StopCandidate(p, null, 0.0)) }
-                }
-            }
+    var detent by rememberSaveable { mutableStateOf(SheetDetent.HALF) }
+    androidx.activity.compose.BackHandler {
+        if (detent == SheetDetent.FULL) detent = SheetDetent.HALF else close()
+    }
+    BoxWithConstraints(Modifier.fillMaxSize().systemBarsPadding().imePadding()) {
+        val height = maxHeight
+        Box(Modifier.align(Alignment.BottomCenter)) {
+            BottomSheet(detent, { detent = it }, height, peekHeight = 126.dp, opaque = true,
+                header = {
+                    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Add stop", Modifier.weight(1f), fontSize = KType.headline, fontWeight = FontWeight.Bold, color = primaryText)
+                        IconButton({ detent = if (detent == SheetDetent.FULL) SheetDetent.HALF else SheetDetent.FULL }) {
+                            Icon(if (detent == SheetDetent.FULL) Icons.Filled.ExpandMore else Icons.Filled.ExpandLess, "Resize search panel")
+                        }
+                        IconButton(close) { Icon(Icons.Filled.Close, "Close stop search") }
+                    }
+                    PickerSearchField(query, { query = it }, "Search by name or address", autoFocus = false, onFocused = { detent = SheetDetent.FULL }, onSearch = ::search)
+                }, content = {
+                    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
+                        if (query.isNotBlank()) item {
+                            IconRow(Icons.Filled.Search, "Search for “${query.trim()}”") { search() }
+                        }
+                        item { IconRow(Icons.Filled.AddLocationAlt, "Choose a point on the map") { model.beginStopPin() } }
+                        item { SectionTitle("Along the route") }
+                        val categories = Category.all.filter { it.icon in listOf(Icons.Filled.LocalGasStation,
+                            Icons.Filled.LocalCafe, Icons.Filled.Restaurant, Icons.Filled.ShoppingCart,
+                            Icons.Filled.LocalParking, Icons.Filled.LocalPharmacy) } +
+                            listOf(Category("EV charging", Icons.Filled.EvStation, "ev charging station"),
+                                Category(if (Fmt.yards) "Toilets" else "Restrooms", Icons.Filled.Wc,
+                                    if (Fmt.yards) "public toilets" else "public restroom"))
+                        items(categories.distinctBy { it.label }) { c -> IconRow(c.icon, c.label) { model.searchStops(c.query) } }
+                        val s = AppSettings
+                        val mine = (listOfNotNull(s.home?.let { it to Icons.Filled.Home }, s.work?.let { it to Icons.Filled.Work }) +
+                            (s.placeShortcuts + s.saved.take(12)).map { it to Icons.Filled.Bookmark }).distinctBy { it.first.id }
+                        if (mine.isNotEmpty()) {
+                            item { SectionTitle("Your places") }
+                            items(mine) { (p, icon) ->
+                                IconRow(icon, p.name, p.address) { model.acceptStop(StopCandidate(p, null, 0.0)) }
+                            }
+                        }
+                    }
+                })
         }
     }
 }
@@ -1102,12 +1192,19 @@ fun StopMapOverlay(model: AppModel, showMapbox: Boolean) {
     var showList by rememberSaveable(search.query, search.parking) { mutableStateOf(false) }
     var onlyOpen by rememberSaveable(search.query, search.parking) { mutableStateOf(false) }
     val list = key(search.query, search.parking) { rememberLazyListState() }
-    androidx.activity.compose.BackHandler { model.closeStopSearch() }
-    if (showList) StopResultsPage(search, list, onlyOpen, { onlyOpen = it }, close = { showList = false }) { candidate ->
-        model.showStopPin(candidate)
-        showList = false
+    var listDetent by rememberSaveable(search.query, search.parking) { mutableStateOf(SheetDetent.HALF) }
+    LaunchedEffect(search.results) {
+        if (search.results.isNotEmpty()) {
+            listDetent = SheetDetent.HALF
+            showList = true
+        }
     }
-    Box(Modifier.fillMaxSize().systemBarsPadding()) {
+    LaunchedEffect(search.selected?.place?.id) { if (search.selected != null) showList = false }
+    androidx.activity.compose.BackHandler {
+        if (showList && listDetent != SheetDetent.PEEK) listDetent = SheetDetent.PEEK else model.closeStopSearch()
+    }
+    BoxWithConstraints(Modifier.fillMaxSize().systemBarsPadding()) {
+        val height = maxHeight
         if (showMapbox) MapboxAttribution(Modifier.align(Alignment.TopStart).padding(start = 16.dp, top = 62.dp))
         Row(Modifier.align(Alignment.TopCenter).padding(12.dp).fillMaxWidth().glass(RoundedCornerShape(22.dp))
             .padding(start = 16.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1117,7 +1214,15 @@ fun StopMapOverlay(model: AppModel, showMapbox: Boolean) {
             IconButton({ model.closeStopSearch() }) { Icon(Icons.Filled.Close, "Close stop search") }
         }
         val selected = search.selected
-        if (selected != null && !search.loading) {
+        if (showList && !search.loading) {
+            Box(Modifier.align(Alignment.BottomCenter)) {
+                StopResultsPanel(search, list, onlyOpen, { onlyOpen = it }, listDetent, { listDetent = it },
+                    height, close = { showList = false }) { candidate ->
+                    model.showStopPin(candidate)
+                    showList = false
+                }
+            }
+        } else if (selected != null && !search.loading) {
             var expanded by rememberSaveable(selected.place.id) { mutableStateOf(false) }
             Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(12.dp)) {
                 StopResultCard(search, selected, search.results.indexOf(selected) + 1, expanded, toggle = { expanded = !expanded },
@@ -1148,7 +1253,18 @@ fun StopMapOverlay(model: AppModel, showMapbox: Boolean) {
 
 @Composable
 fun StopPinOverlay(model: AppModel, showMapbox: Boolean, center: () -> LatLng?) {
-    androidx.activity.compose.BackHandler { model.finishStopPin() }
+    MapPinOverlay("Add this stop", showMapbox, { model.finishStopPin() }) { center()?.let(model::finishStopPin) }
+}
+
+@Composable
+fun EndpointPinOverlay(model: AppModel, showMapbox: Boolean, center: () -> LatLng?) {
+    val label = if (model.placingEndpoint == true) "Set destination" else "Set start"
+    MapPinOverlay(label, showMapbox, { model.finishEndpointPin() }) { center()?.let(model::finishEndpointPin) }
+}
+
+@Composable
+private fun MapPinOverlay(label: String, showMapbox: Boolean, cancel: () -> Unit, confirm: () -> Unit) {
+    androidx.activity.compose.BackHandler(onBack = cancel)
     Box(Modifier.fillMaxSize()) {
         Icon(Icons.Filled.AddLocationAlt, "Pin position", tint = Vela.accentText(LocalDark.current),
             modifier = Modifier.align(Alignment.Center).offset(y = (-15).dp).size(38.dp))
@@ -1156,11 +1272,9 @@ fun StopPinOverlay(model: AppModel, showMapbox: Boolean, center: () -> LatLng?) 
         Row(Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(12.dp).glass(RoundedCornerShape(22.dp))
             .padding(start = 16.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Move the map to place the pin", Modifier.weight(1f), color = primaryText)
-            IconButton({ model.finishStopPin() }) { Icon(Icons.Filled.Close, "Cancel") }
+            IconButton(cancel) { Icon(Icons.Filled.Close, "Cancel") }
         }
-        Button({ center()?.let { model.finishStopPin(it) } }, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(18.dp)) {
-            Text("Add this stop")
-        }
+        Button(confirm, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(18.dp)) { Text(label) }
     }
 }
 

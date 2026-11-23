@@ -145,7 +145,15 @@ class AppModel {
     val scope = MainScope()
 
     var query by mutableStateOf("")
+    var searchPrompt by mutableIntStateOf(0)
+        private set
     /** Autocomplete while typing: Google's, or OpenStreetMap's without Google. */
+    fun consumeSearchPrompt(): Boolean {
+        if (searchPrompt == 0) return false
+        searchPrompt = 0
+        return true
+    }
+
     var suggestions by mutableStateOf(SuggestParser.Result())
     private var suggestTask: Job? = null
     private var suggestedQuery: String? = null
@@ -201,6 +209,21 @@ class AppModel {
     /** The route's cameras in order, when the open one was picked from the route's row (for next/previous). */
     var liveCamRoute by mutableStateOf<List<LiveCam>>(emptyList())
     /** The "Add stop" search sheet. */
+    var navigationPlace by mutableStateOf<Place?>(null)
+        private set
+
+    fun showNavigationPlace(place: Place?) {
+        if (nav?.arrived == false) navigationPlace = place
+    }
+
+    fun addNavigationPlace(place: Place) {
+        val n = nav?.takeUnless { it.arrived } ?: return
+        if (n.stops.size >= 8 || n.stops.any(place::matchesNearby) || n.destination.matchesNearby(place)) return
+        navigationPlace = null
+        n.addStop(place)
+        if (!n.following) recenterNav()
+    }
+
     var addingStop by mutableStateOf(false)
     var placingStop by mutableStateOf(false)
         private set
@@ -501,8 +524,39 @@ class AppModel {
         }
     }
 
+    fun openKiteLink(link: KiteLinks.Target) {
+        tab = AppTab.MAP
+        when (link) {
+            KiteLinks.Target.Map -> Unit
+            is KiteLinks.Target.Search -> {
+                val text = link.query
+                when {
+                    nav != null && text != null -> searchStops(text, named = OutdoorData.kind(text) == null)
+                    nav != null -> addingStop = true
+                    !isGuiding && text != null -> search(text)
+                    !isGuiding -> { directions = null; searchPrompt++ }
+                }
+            }
+            is KiteLinks.Target.Place -> {
+                val place = Place("pin:${link.at.lat},${link.at.lng}", link.name ?: "Dropped pin", link.at, "pin")
+                if (nav != null) showNavigationPlace(place)
+                else if (link.directions) openDirections(place)
+                else if (!isGuiding) {
+                    directions = null
+                    dropPin(link.at, place.name)
+                }
+            }
+            is KiteLinks.Target.Shortcut -> settings.placeShortcuts.firstOrNull { it.id == link.id }?.let {
+                if (nav != null) showNavigationPlace(it) else openDirections(it)
+            }
+            is KiteLinks.Target.Saved -> perform(LaunchKind.valueOf(link.name))
+        }
+    }
+
     /** A pasted Google Maps, Waze or Apple Maps link (or coordinates): show the spot it points at. */
     fun openLink(text: String) {
+        KiteLinks.parse(text)?.let { openKiteLink(it); return }
+        if (Link(text.trim()).scheme.equals("kite", ignoreCase = true)) return
         searchTask?.cancel()
         suggestTask?.cancel()
         suggestedQuery = null
@@ -829,6 +883,7 @@ class AppModel {
     }
 
     fun searchStops(query: String, named: Boolean = false, parking: Boolean = false) {
+        navigationPlace = null
         val q = query.trim()
         if (q.isEmpty()) return
         val driving = nav
@@ -1055,6 +1110,36 @@ class AppModel {
     private var avoidJob: Job? = null
     var pickingOrigin by mutableStateOf(false)
     var pickingDestination by mutableStateOf(false)
+    var placingEndpoint by mutableStateOf<Boolean?>(null)
+        private set
+
+    fun beginEndpointPin(destination: Boolean) {
+        if (directions == null) return
+        pickingOrigin = false
+        pickingDestination = false
+        placingEndpoint = destination
+    }
+
+    fun finishEndpointPin(at: LatLng? = null) {
+        val destination = placingEndpoint ?: return
+        placingEndpoint = null
+        if (directions == null) return
+        if (at == null) {
+            if (destination) pickingDestination = true else pickingOrigin = true
+            return
+        }
+        val point = Place("pin:${at.lat},${at.lng}", "Dropped pin", at, "pin")
+        if (destination) setDestination(point) else setOrigin(point)
+    }
+
+    fun positionEndpointPin(at: LatLng): Boolean {
+        if (placingEndpoint == null) return false
+        val m = map ?: return true
+        val camera = visibleCamera?.invoke() ?: m.cameraPosition
+        MapCam.animate(m, CameraPosition.Builder(camera).target(at.ml()).build(), ms = 220, native = nativeCamera)
+        return true
+    }
+
 
     fun setDestination(place: Place) {
         val plan = directions ?: return
@@ -1545,6 +1630,7 @@ class AppModel {
         transitDeparturesJob?.cancel()
         transitGuidance?.walking?.stop()
         transitGuidance = null
+        navigationPlace = null
         placingStop = false
         stopPinWasFollowing = false
         closeStopSearch(restore = false)

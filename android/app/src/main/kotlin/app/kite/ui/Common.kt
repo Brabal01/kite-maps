@@ -359,7 +359,7 @@ fun MapLookButton(look: MapLook, heading: Double = 0.0, size: Dp = 52.dp, onClic
 /** Home or Work: one tap for directions, or to set it. */
 @Composable
 fun PlaceTile(model: AppModel, icon: ImageVector, color: Color, title: String, place: Place?, modifier: Modifier = Modifier,
-              unset: () -> Unit, go: () -> Unit = {}, rename: (() -> Unit)? = null, remove: (() -> Unit)? = null) {
+              unset: () -> Unit, go: () -> Unit = {}, rename: (() -> Unit)? = null, remove: (() -> Unit)? = null, pin: (() -> Unit)? = null) {
     val dark = LocalDark.current
     var menu by remember { mutableStateOf(false) }
     Box(modifier) {
@@ -383,6 +383,8 @@ fun PlaceTile(model: AppModel, icon: ImageVector, color: Color, title: String, p
         DropdownMenu(menu, { menu = false }) {
             DropdownMenuItem(text = { Text(if (rename == null) "Change ${title.lowercase()}" else "Rename shortcut") },
                 leadingIcon = { Icon(Icons.Filled.Edit, null) }, onClick = { menu = false; (rename ?: unset)() })
+            if (pin != null) DropdownMenuItem(text = { Text("Pin to Android launcher") },
+                leadingIcon = { Icon(Icons.Filled.PushPin, null) }, onClick = { menu = false; pin() })
             if (remove != null) DropdownMenuItem(text = { Text("Remove shortcut") },
                 leadingIcon = { Icon(Icons.Filled.DeleteOutline, null) }, onClick = { menu = false; remove() })
         }
@@ -399,23 +401,28 @@ fun Shortcuts(model: AppModel, done: () -> Unit) {
             PlaceTile(model, Icons.Filled.Work, Color(0xFF8B5CF6), "Work", AppSettings.work, Modifier.weight(1f),
                 unset = { done(); model.picking = PickKind.WORK }, go = done)
         }
-        CustomShortcuts(model, done)
+        CustomShortcuts(model, done, canAdd = false)
     }
 }
 
 @Composable
-internal fun CustomShortcuts(model: AppModel, done: () -> Unit) {
+internal fun CustomShortcuts(model: AppModel, done: () -> Unit, canAdd: Boolean = true) {
     val settings = model.settings
+    val context = LocalContext.current
     FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
         maxItemsInEachRow = 2, modifier = Modifier.fillMaxWidth()) {
         for (place in settings.placeShortcuts) key(place.id) {
             PlaceTile(model, Icons.Filled.Place, interfaceAccentText, place.name, place, Modifier.weight(1f),
                 unset = {}, go = { done(); model.tab = AppTab.MAP },
                 rename = { model.shortcutDraft = place },
-                remove = { settings.placeShortcuts = settings.placeShortcuts.filterNot { it.id == place.id } })
+                remove = { settings.placeShortcuts = settings.placeShortcuts.filterNot { it.id == place.id } },
+                pin = {
+                    if (!runCatching { QuickLaunch.pin(context, place) }.getOrDefault(false))
+                        android.widget.Toast.makeText(context, "This launcher does not support pinning shortcuts.", android.widget.Toast.LENGTH_SHORT).show()
+                })
         }
     }
-    OutlinedButton(onClick = { done(); model.picking = PickKind.SHORTCUT }) {
+    if (canAdd) OutlinedButton(onClick = { done(); model.picking = PickKind.SHORTCUT }) {
         Icon(Icons.Filled.Add, null, Modifier.size(19.dp))
         Spacer(Modifier.width(6.dp))
         Text("Add shortcut")

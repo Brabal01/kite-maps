@@ -16,6 +16,8 @@ import androidx.compose.runtime.setValue
 import org.maplibre.android.MapLibre
 import org.maplibre.android.WellKnownTileServer
 import app.kite.core.*
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import org.maplibre.android.camera.CameraPosition
@@ -148,6 +150,8 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         model.select(place)
         return true
     }
+
+    fun googlePlace(id: String?): Place? = googlePlaces.firstOrNull { it.id == id }
 
     fun openGooglePlace(id: String?): Boolean {
         val place = googlePlaces.firstOrNull { it.id == id } ?: return false
@@ -570,14 +574,22 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         }
     }
 
-    private fun googlePlacesEnabled() = AppSettings.googleMapPlaces && !AppSettings.noGoogle && AppSettings.welcomed
+    private fun googlePlacesEnabled() = !AppSettings.noGoogle && AppSettings.welcomed &&
+        (AppSettings.googleMapPlaces || OpenMapStyle.googleNavigationActive(model))
+
+    private var googlePlaceTerms = emptyList<String>()
 
     private fun showGooglePlaces(style: Style) {
         val s = model.settings
         val browsing = model.results.isEmpty() && !model.isGuiding && model.selected == null &&
             model.directions == null && model.tab == AppTab.MAP && (map?.cameraPosition?.zoom ?: 0.0) >= 14.5
-        val google = if (browsing && googlePlacesEnabled()) googlePlaces else emptyList()
-        val googleVisible = google
+        val driving = OpenMapStyle.googleNavigationActive(model) && model.stopSearch == null && !model.placingStop
+        val googleVisible = when {
+            !googlePlacesEnabled() -> emptyList()
+            driving -> googlePlaces.filter { OpenMapStyle.groupFor(it) in s.navigationPlaceGroups }
+            browsing && s.googleMapPlaces -> googlePlaces
+            else -> emptyList()
+        }
         val native = scenery?.ready == true
         val groups = OpenMapStyle.visibleGroups(model)
         val config = listOf(groups, s.hikingTrails, s.bikeTrails, native)
@@ -672,8 +684,10 @@ class KiteMap(private val model: AppModel, private val context: Context) {
     }
 
     private fun loadGooglePlaces(m: MapLibreMap) {
-        if (!googlePlacesEnabled() || m.cameraPosition.zoom < 14.0 || model.isGuiding ||
-            model.results.isNotEmpty() || model.selected != null || model.directions != null || model.tab != AppTab.MAP) {
+        val driving = OpenMapStyle.googleNavigationActive(model) && model.stopSearch == null && !model.placingStop
+        val browsing = !model.isGuiding && model.cruise == null && AppSettings.googleMapPlaces &&
+            model.results.isEmpty() && model.selected == null && model.directions == null
+        if (!googlePlacesEnabled() || m.cameraPosition.zoom < (if (driving) 13.0 else 14.0) || !(driving || browsing) || model.tab != AppTab.MAP) {
             if (googlePlacesJob?.isActive == true) {
                 googlePlacesJob?.cancel()
                 googlePlacesCenter = null
@@ -681,8 +695,16 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             m.style?.let(::showGooglePlaces)
             return
         }
+        val terms = if (driving) OpenMapStyle.navigationGoogleQueries() else listOf("places", "restaurants", "coffee", "shops", "gas stations")
+        if (terms != googlePlaceTerms) {
+            googlePlaceTerms = terms
+            googlePlacesCache.clear()
+            googlePlacesCenter = null
+        }
+        if (terms.isEmpty()) return
         val center = m.cameraPosition.target?.kite() ?: return
-        if (googlePlacesCenter?.distanceTo(center)?.let { it < 650 } == true) {
+        val refreshDistance = if (driving) 1_200.0 else 650.0
+        if (googlePlacesCenter?.distanceTo(center)?.let { it < refreshDistance } == true) {
             m.style?.let(::showGooglePlaces)
             return
         }
@@ -698,12 +720,14 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         googlePlaces = cached?.places ?: googlePlaces.filter { it.location.distanceTo(center) < 1_600 }
         m.style?.let(::showGooglePlaces)
         googlePlacesJob = scope.launch {
-            val terms = listOf("places", "restaurants", "coffee", "shops", "gas stations")
             val found = cached?.places.orEmpty().toMutableList()
             val batches = Channel<List<Place>>(terms.size)
+            val limit = Semaphore(if (driving) 3 else terms.size)
             for (term in terms) {
                 launch(Dispatchers.Default) {
-                    val places = try { GoogleClient.shared.search(term, center, 4_000.0, pages = 1) }
+                    val places = try {
+                        limit.withPermit { GoogleClient.shared.search(term, center, if (driving) 5_500.0 else 4_000.0, pages = 1) }
+                    }
                     catch (e: CancellationException) { throw e }
                     catch (_: Exception) { emptyList() }
                     batches.send(places)
@@ -1649,7 +1673,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
     private fun str(f: Feature, k: String): String? = f.getProperty(k)?.takeIf { it.isJsonPrimitive }?.asString
 
     private fun tapped(m: MapLibreMap, at: org.maplibre.android.geometry.LatLng): Boolean {
-        if (model.streetViewMapTapped(at.kite())) return true
+        if (model.streetViewMapTapped(at.kite()) || model.positionEndpointPin(at.kite())) return true
         if (model.stopSearch != null) {
             val pin = m.queryRenderedFeatures(box(m, at), StopSearch.PINS).firstOrNull()
             model.selectStopPin(pin?.let { str(it, "id") })
@@ -1659,7 +1683,9 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         val box = box(m, at)
         if (model.nav != null) {
             val hit = m.queryRenderedFeatures(box, "vela-waze", "vela-waze-group").firstOrNull()
-            return openWazeAlert(hit?.let { str(it, "id") })
+            if (openWazeAlert(hit?.let { str(it, "id") })) return true
+            model.showNavigationPlace(navigationPlaceAt(m, at))
+            return true
         }
         if (model.directions != null) {
             val hits = m.queryRenderedFeatures(box, "vela-route-bubble-0", "vela-route-alt", "vela-route-alt-edge")
@@ -1731,9 +1757,32 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         return true
     }
 
+    private fun navigationPlaceAt(m: MapLibreMap, at: org.maplibre.android.geometry.LatLng): Place? {
+        if (!AppSettings.navigationPlaces) return null
+        val hits = m.queryRenderedFeatures(box(m, at), "kite-google-places", GOOGLE_UNREVIEWED, OpenMapStyle.POIS)
+        for (hit in hits) {
+            googlePlace(str(hit, "id"))?.let { return it }
+            val group = str(hit, "class")
+            val subclass = str(hit, "subclass")
+            if (group == null && subclass == null) continue
+            val point = hit.geometry() as? Point ?: continue
+            val name = OpenMapStyle.title(str(hit, "name") ?: str(hit, "name:en"), subclass, group)
+            return Place("osm:${point.latitude()},${point.longitude()}:$name", name,
+                LatLng(point.latitude(), point.longitude()), "osm", category = subclass ?: group)
+        }
+        return null
+    }
+
     private fun pressed(m: MapLibreMap, at: org.maplibre.android.geometry.LatLng) {
         if (model.streetView != null || model.stopSearch != null || model.placingStop) return
+        if (model.positionEndpointPin(at.kite())) return
         pinDroppedAt = now()
+        if (model.nav != null) {
+            val place = navigationPlaceAt(m, at) ?: return
+            view?.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+            model.addNavigationPlace(place)
+            return
+        }
         if (model.isGuiding || model.directions != null) return
         view?.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
         model.dropPin(at.kite())

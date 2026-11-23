@@ -72,7 +72,7 @@ object MapLinks {
         return Link(s)
     }
 
-    fun looksLikeLink(text: String): Boolean = link(text) != null || coordinates(text) != null
+    fun looksLikeLink(text: String): Boolean = KiteLinks.parse(text) != null || link(text) != null || coordinates(text) != null
 
     /** Plain coordinates typed or pasted: "51.50072, -0.12462" or "51.5 -0.12". */
     fun coordinates(text: String): LatLng? {

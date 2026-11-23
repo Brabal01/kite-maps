@@ -50,6 +50,7 @@ class NavGlide : Choreographer.FrameCallback {
     }
     /** The map's height in dp. */
     var heightDp = 800f
+    var compactViewport = false
     var widthDp = 400f
     /**
      * True while the camera follows the car: the car then always sits at the same spot on screen,
@@ -65,14 +66,16 @@ class NavGlide : Choreographer.FrameCallback {
     companion object {
         /** Where the car sits on screen while following: 70% of the way down. */
         const val TOP_FRACTION = 0.7f
-        fun bottomInset(height: Float): Float = min(170f, height * 0.34f)
-        fun topInset(height: Float): Float {
+        fun bottomInset(height: Float, compact: Boolean = false): Float =
+            if (compact) height * 0.12f else min(170f, height * 0.34f)
+        fun topInset(height: Float, compact: Boolean = false): Float {
+            if (compact) return height * 0.43f
             val viewport = min(height, max(48f, height * 0.10f))
             return min(height * TOP_FRACTION, max(0f, height - bottomInset(height) - viewport))
         }
         /** The car's height on a screen [height] dp tall, matching the camera's padded center. */
-        fun carY(height: Float, north: Float = 0f): Float =
-            (topInset(height) * (1 - north) + height - bottomInset(height)) / 2
+        fun carY(height: Float, north: Float = 0f, compact: Boolean = false): Float =
+            (topInset(height, compact) * (if (compact) 1f else 1 - north) + height - bottomInset(height, compact)) / 2
         const val PUCK = "vela-puck"
 
         internal fun shortestTurn(from: Double, to: Double): Double = ((to - from + 540) % 360) - 180
@@ -276,7 +279,8 @@ class NavGlide : Choreographer.FrameCallback {
             // A pitched camera sees farther than the same zoom flat: zoom in a little to match the iPhone's distance.
             val zoom = MapCam.zoomFor(shownAcross, coordNow.lat, widthDp) + 0.35
             val camera = CameraPosition.Builder().target(coordNow.ml()).zoom(zoom).tilt(shownPitch).bearing(heading)
-                .padding(0.0, topInset(heightDp) * (1 - northBlend) * d, 0.0, bottomInset(heightDp) * d).build()
+                .padding(0.0, topInset(heightDp, compactViewport) * (if (compactViewport) 1.0 else 1 - northBlend) * d,
+                    0.0, bottomInset(heightDp, compactViewport) * d).build()
             val visible = enter(camera)
             carTurn = shortestTurn(visible.bearing, markerBearing).toFloat()
             val last = lastCamera

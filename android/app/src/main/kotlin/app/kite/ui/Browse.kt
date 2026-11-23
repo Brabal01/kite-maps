@@ -60,6 +60,9 @@ fun BrowseOverlay(model: AppModel, showMapbox: Boolean) {
     val ctx = LocalContext.current
     val s = AppSettings
     var focused by remember { mutableStateOf(false) }
+    LaunchedEffect(model.searchPrompt) {
+        if (model.consumeSearchPrompt()) focused = true
+    }
     var showCategories by rememberSaveable { mutableStateOf(false) }
     val focus = LocalFocusManager.current
     val hasSheet = model.selected != null || model.results.isNotEmpty()

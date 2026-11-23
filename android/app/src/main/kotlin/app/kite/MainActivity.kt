@@ -1,6 +1,11 @@
 package app.kite
 
 import android.Manifest
+import android.app.PictureInPictureParams
+import android.content.pm.PackageManager
+import android.content.res.Configuration
+import android.graphics.Rect
+import android.util.Rational
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
@@ -30,6 +35,45 @@ import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
+    var inPip by mutableStateOf(false)
+        private set
+    private var pipAvailable = false
+
+    private fun pipParams(enterAutomatically: Boolean): PictureInPictureParams {
+        val params = PictureInPictureParams.Builder().setAspectRatio(Rational(16, 10))
+        val bounds = Rect()
+        if (window.decorView.getGlobalVisibleRect(bounds) && !bounds.isEmpty) params.setSourceRectHint(bounds)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            params.setAutoEnterEnabled(enterAutomatically).setSeamlessResizeEnabled(false)
+        }
+        return params.build()
+    }
+
+    fun offerPip(eligible: Boolean) {
+        val available = eligible && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+        if (pipAvailable == available) return
+        pipAvailable = available
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) runCatching { setPictureInPictureParams(pipParams(available)) }
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S && pipAvailable && !isInPictureInPictureMode) {
+            runCatching { enterPictureInPictureMode(pipParams(false)) }
+        }
+    }
+
+    override fun onPictureInPictureModeChanged(active: Boolean, configuration: Configuration) {
+        super.onPictureInPictureModeChanged(active, configuration)
+        inPip = active
+        if (active && model.nav != null) {
+            model.addingStop = false
+            model.closeStopSearch(restore = false)
+            if (model.placingStop) model.finishStopPin()
+        }
+        if (active && model.mapNavigator?.following == false) model.recenterNav()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -99,6 +143,13 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
     val ctx = activity
     val s = AppSettings
     val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val inPip = activity.inPip
+    LaunchedEffect(s.placeShortcuts) {
+        val places = s.placeShortcuts
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching { QuickLaunch.sync(activity.applicationContext, places) }
+        }
+    }
     val kiteMap = remember { KiteMap(model, ctx.applicationContext).also { DemoScript.kite = it } }
     val dark = LocalDark.current
     SideEffect {
@@ -154,7 +205,7 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
         kiteMap.refreshPinSizes()
         scenery.refreshPinSizes()
     }
-    LaunchedEffect(s.googleMapPlaces, s.openMapPlaces, s.openPlaceGroups, s.navigationPlaces, s.navigationPlaceGroups, s.hikingTrails, s.bikeTrails, s.transitLines, s.noGoogle, model.tab, model.mapNavigator != null, model.transitGuidance != null, model.directions != null, model.selected != null, model.results.isEmpty(), model.cruise != null) {
+    LaunchedEffect(s.googleMapPlaces, s.openMapPlaces, s.openPlaceGroups, s.navigationPlaces, s.navigationPlaceSource, s.navigationPlaceGroups, s.hikingTrails, s.bikeTrails, s.transitLines, s.noGoogle, model.tab, model.mapNavigator != null, model.transitGuidance != null, model.directions != null, model.selected != null, model.results.isEmpty(), model.cruise != null) {
         kiteMap.refreshGooglePlaces()
         scenery.showTransit(s.transitLines && model.nav == null && model.transitGuidance == null)
         LocationService.last?.let(scenery::updatePosition)
@@ -207,13 +258,17 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
                 s.home, s.work, s.parking, s.saved, LocationService.authorized, model.tab,
                 s.welcomed, s.noGoogle, s.surveillanceCameras, s.wazeOn, s.wazeKinds, s.wazeMaxAge,
                 s.liveCams, s.liveRoadCams, s.liveWebcams, LiveCamStore.version, model.cruise, s.driveMarker, model.routeReports,
-                s.aheadSignals, s.aheadStops, s.aheadRail, s.aheadCrossings, s.aheadWaze, s.aheadCameras, s.aheadTraffic, s.roadWazeKinds, s.navigationPlaces, s.navigationPlaceGroups)
+                s.aheadSignals, s.aheadStops, s.aheadRail, s.aheadCrossings, s.aheadWaze, s.aheadCameras, s.aheadTraffic, s.roadWazeKinds, s.navigationPlaces, s.navigationPlaceSource, s.navigationPlaceGroups)
         }.collect { kiteMap.render() }
     }
     // Kept on while driving; once arrived the phone goes in a pocket, so the screen may sleep (like the iPhone).
     val screenOn = model.transitGuidance?.let { it.phase != TransitGuidance.Phase.COMPLETE }
         ?: model.nav?.let { !it.arrived } ?: (model.cruise != null)
-    LaunchedEffect(screenOn) { activity.keepScreenOn(screenOn) }
+    val activeGuidance = model.nav?.let { !it.arrived } == true ||
+        model.transitGuidance?.let { it.phase != TransitGuidance.Phase.COMPLETE } == true
+    val autoPip = activeGuidance && s.navigationPictureInPicture
+    LaunchedEffect(autoPip) { activity.offerPip(autoPip) }
+    LaunchedEffect(screenOn, inPip) { activity.keepScreenOn(screenOn && !inPip) }
     LaunchedEffect(s.wazeOn, s.wazeOnMap, s.wazeHeatmap) {
         if (!s.wazeOn) WazeWeb.shutDown()
         kiteMap.refreshWaze()
@@ -241,6 +296,7 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
         val mapPane = if (panorama == null) maxHeight else maxHeight * if (model.streetViewMapExpanded) 0.58f else 0.30f
         model.mapWidthDp = maxWidth.value
         model.mapHeightDp = mapPane.value
+        model.glide.compactViewport = inPip
         model.glide.heightDp = maxHeight.value
         model.glide.widthDp = maxWidth.value
         AndroidView(
@@ -256,7 +312,9 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
             LocalMapboxAttribution provides if (standardReady) scenery::openAttribution else null,
         ) {
             when {
+                inPip -> NavigationPictureInPicture(model, showingMapbox)
                 panorama != null -> StreetViewScreen(model, panorama, mapPane, showingMapbox)
+                model.placingEndpoint != null -> EndpointPinOverlay(model, showingMapbox) { scenery.centerPoint() ?: kiteMap.centerPoint() }
                 model.placingStop -> StopPinOverlay(model, showingMapbox) { scenery.centerPoint() ?: kiteMap.centerPoint() }
                 model.stopSearch != null -> StopMapOverlay(model, showingMapbox)
                 model.transitGuidance != null -> TransitNavigationOverlay(model, requireNotNull(model.transitGuidance), showingMapbox)
@@ -270,19 +328,24 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
                 }
             }
         }
-        if (panorama == null && model.measurement != null && !model.placingStop && model.stopSearch == null && model.tab == AppTab.MAP) {
+        if (!inPip && panorama == null && model.measurement != null && !model.placingStop && model.stopSearch == null && model.placingEndpoint == null && model.tab == AppTab.MAP) {
             DistanceMeasure(model, Modifier.align(androidx.compose.ui.Alignment.CenterStart))
         }
+        if (!inPip && nav != null && !nav.arrived && model.stopSearch == null && !model.addingStop && !model.placingStop) {
+            model.navigationPlace?.let { place -> NavigationPlaceCard(model, place, Modifier.align(Alignment.BottomCenter)) }
+        }
         val info = model.wazeInfo
-        if (panorama == null && info != null && model.tab == AppTab.MAP && model.stopSearch == null && !model.placingStop) {
+        if (!inPip && panorama == null && info != null && model.tab == AppTab.MAP && model.stopSearch == null && !model.placingStop) {
             val placement = if (nav == null) Modifier else Modifier.align(androidx.compose.ui.Alignment.Center)
             WazeInfoToast(model, info, placement)
         }
         val cam = model.liveCam
-        if (panorama == null && cam != null && nav == null && model.tab == AppTab.MAP) {
+        if (!inPip && panorama == null && cam != null && nav == null && model.tab == AppTab.MAP) {
             LiveCamCard(model, cam)
         }
     }
+
+    if (inPip) return
 
     model.surveillanceInfo?.let { cam ->
         val details = listOfNotNull(cam.operatorName?.let { "Operator: $it" }, cam.manufacturer?.let { "Manufacturer: $it" },

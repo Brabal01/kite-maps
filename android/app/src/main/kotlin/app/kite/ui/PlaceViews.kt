@@ -74,6 +74,7 @@ fun PlaceHeader(model: AppModel, place: Place) {
                 CircleIconButton(Icons.Filled.Share, description = "Share place") { share = true }
                 DropdownMenu(share, { share = false }) {
                     listOf("Open in Google Maps" to { ctx.open(place.shareUrl) },
+                        "Kite link" to { ctx.share(QuickLaunch.shareLink(place)) },
                         "Share Google Maps link" to { ctx.share(place.shareUrl) },
                         "Share place name" to { ctx.share(place.name) },
                         "Share coordinates" to { ctx.share("${place.location.lat.plain()}, ${place.location.lng.plain()}") },

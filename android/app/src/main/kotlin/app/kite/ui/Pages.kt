@@ -95,7 +95,7 @@ fun SavedPage(model: AppModel) {
                     MineTile(model, Icons.Filled.Home, Vela.routeBlue, "Home", s.home, PickKind.HOME, ::go, ::distance)
                     MineTile(model, Icons.Filled.Work, hex(0x8B5CF6), "Work", s.work, PickKind.WORK, ::go, ::distance)
                 }
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { CustomShortcuts(model) {} }
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { CustomShortcuts(model, done = {}) }
                 s.parking?.let { car ->
                     Box(Modifier.clip(RoundedCornerShape(24.dp)).background(interfaceSurface)) {
                         SavedRow(car, Icons.Filled.LocalParking, Vela.routeBlue, distance(car), null, ::show, ::go)
@@ -476,14 +476,16 @@ private fun MapSettings() {
     var editColors by remember { mutableStateOf(false) }
     var editRoadReports by remember { mutableStateOf(false) }
     var editOpenPlaces by remember { mutableStateOf(false) }
-    SettingsGroup {
+    var editNavigationPlaces by remember { mutableStateOf(false) }
+    var editRoadAhead by remember { mutableStateOf(false) }
+    SettingsGroup(header = "Appearance and units") {
         PickRow("App theme", Icons.Filled.Contrast, 0x334155, s.theme, ThemeMode.entries.toList(), { it.label }) { s.theme = it }
         RowDivider()
         PickRow("Distance units", Icons.Filled.Straighten, 0x0891B2, s.units, UnitsMode.entries.toList(), { it.label }) { s.units = it }
         RowDivider()
         ToggleRow("Parking button on the map", Icons.Filled.LocalParking, 0x2563EB, s.parkingButton) { s.parkingButton = it }
     }
-    SettingsGroup(header = "Map interface") {
+    SettingsGroup(header = "Controls and search") {
         ToggleRow("Swap navigation controls and speedometer", Icons.Filled.SwapHoriz, 0x2563EB, s.swapNavigationSides) { s.swapNavigationSides = it }
         RowDivider()
         ToggleRow("Solid search background", Icons.Filled.Search, 0x0F766E, s.solidMapSearch) { s.solidMapSearch = it }
@@ -572,34 +574,59 @@ private fun MapSettings() {
         PickRow("Road ahead position", Icons.Filled.SwapVert, 0x0F766E,
             s.roadStripPosition, RoadStripPosition.entries.toList(), { it.label }) { s.roadStripPosition = it }
     }
-    SettingsGroup(header = "Places while navigating", footer = "Choose which OpenStreetMap places are visible on the driving map.") {
-        ToggleRow("Show places while navigating", Icons.Filled.Place, 0x0F766E, s.navigationPlaces) { s.navigationPlaces = it }
-        if (s.navigationPlaces) for (group in OpenPlaceGroup.entries) {
-            ToggleRow(group.label, Icons.Filled.Place, 0x0F766E, group in s.navigationPlaceGroups) { show ->
-                s.navigationPlaceGroups = if (show) s.navigationPlaceGroups + group else s.navigationPlaceGroups - group
+    SettingsGroup(header = "Navigation overlays") {
+        ToggleRow("Picture-in-picture", Icons.Filled.PictureInPictureAlt, 0x2563EB, s.navigationPictureInPicture) {
+            s.navigationPictureInPicture = it
+        }
+        RowDivider()
+        IconRow(Icons.Filled.Place, "Places while navigating",
+            if (s.navigationPlaces) s.navigationPlaceGroups.size.toString() + " selected categories" else "Off") { editNavigationPlaces = true }
+        RowDivider()
+        IconRow(Icons.Filled.Traffic, "Road ahead and map alerts", "Traffic, crossings and reports") { editRoadAhead = true }
+    }
+    if (editNavigationPlaces) TripSheet("Places while navigating", "Done", { editNavigationPlaces = false }) {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            SettingsGroup(footer = "Tap a place for its details. Touch and hold a place to add it as the next stop.") {
+                ToggleRow("Show places while navigating", Icons.Filled.Place, 0x0F766E, s.navigationPlaces) { s.navigationPlaces = it }
+                RowDivider()
+                val choice = if (s.noGoogle) NavigationPlaceSource.OPENSTREETMAP else s.navigationPlaceSource
+                val providers = NavigationPlaceSource.entries.filter { !s.noGoogle || it == NavigationPlaceSource.OPENSTREETMAP }
+                PickRow("Icon source", Icons.Outlined.Map, 0x1D4ED8, choice, providers, { it.label }) { s.navigationPlaceSource = it }
+            }
+            if (s.navigationPlaces) SettingsGroup(header = "What to show") {
+                for (group in OpenPlaceGroup.entries) {
+                    ToggleRow(group.label, Icons.Filled.Place, 0x0F766E, group in s.navigationPlaceGroups) { show ->
+                        s.navigationPlaceGroups = if (show) s.navigationPlaceGroups + group else s.navigationPlaceGroups - group
+                    }
+                }
             }
         }
     }
-    SettingsGroup(header = "Road ahead and map", footer = "Choose which events appear on your route during navigation.") {
-        ToggleRow("Traffic and jams", Icons.Filled.Traffic, 0xAD362C, s.aheadTraffic) { s.aheadTraffic = it }
-        RowDivider()
-        ToggleRow("Traffic lights", Icons.Filled.Traffic, 0x1D4ED8, s.aheadSignals) { s.aheadSignals = it }
-        RowDivider()
-        ToggleRow("Stop signs", Icons.Filled.StopCircle, 0xB91C1C, s.aheadStops) { s.aheadStops = it }
-        RowDivider()
-        ToggleRow("Railroad crossings", Icons.Filled.Train, 0x92400E, s.aheadRail) { s.aheadRail = it }
-        RowDivider()
-        ToggleRow("Pedestrian crossings", Icons.AutoMirrored.Filled.DirectionsWalk, 0x126782, s.aheadCrossings) { s.aheadCrossings = it }
-        RowDivider()
-        ToggleRow("Waze road reports", Icons.Filled.Warning, 0x0F766E, s.aheadWaze) { s.aheadWaze = it }
-        RowDivider()
-        Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).tap { editRoadReports = true }.padding(horizontal = 14.dp),
-            verticalAlignment = Alignment.CenterVertically) {
-            SettingLabel("Waze report types", Icons.Filled.Tune, 0x0F766E, Modifier.weight(1f))
-            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = secondaryText)
+    if (editRoadAhead) TripSheet("Road ahead and map", "Done", { editRoadAhead = false }) {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp)) {
+            SettingsGroup(header = "Road ahead and map", footer = "Choose which events appear on your route during navigation.") {
+                ToggleRow("Traffic and jams", Icons.Filled.Traffic, 0xAD362C, s.aheadTraffic) { s.aheadTraffic = it }
+                RowDivider()
+                ToggleRow("Traffic lights", Icons.Filled.Traffic, 0x1D4ED8, s.aheadSignals) { s.aheadSignals = it }
+                RowDivider()
+                ToggleRow("Stop signs", Icons.Filled.StopCircle, 0xB91C1C, s.aheadStops) { s.aheadStops = it }
+                RowDivider()
+                ToggleRow("Railroad crossings", Icons.Filled.Train, 0x92400E, s.aheadRail) { s.aheadRail = it }
+                RowDivider()
+                ToggleRow("Pedestrian crossings", Icons.AutoMirrored.Filled.DirectionsWalk, 0x126782, s.aheadCrossings) { s.aheadCrossings = it }
+                RowDivider()
+                ToggleRow("Waze road reports", Icons.Filled.Warning, 0x0F766E, s.aheadWaze) { s.aheadWaze = it }
+                RowDivider()
+                Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).tap { editRoadReports = true }.padding(horizontal = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    SettingLabel("Waze report types", Icons.Filled.Tune, 0x0F766E, Modifier.weight(1f))
+                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = secondaryText)
+                }
+                RowDivider()
+                ToggleRow("Cameras on the route", Icons.Filled.PhotoCamera, 0x6D4EB0, s.aheadCameras) { s.aheadCameras = it }
+            }
         }
-        RowDivider()
-        ToggleRow("Cameras on the route", Icons.Filled.PhotoCamera, 0x6D4EB0, s.aheadCameras) { s.aheadCameras = it }
     }
     if (editRoadReports) TripSheet("Waze road reports", "Done", { editRoadReports = false }) {
         val items = listOf(WazeAlert.Kind.POLICE to "Police", WazeAlert.Kind.ACCIDENT to "Crashes",

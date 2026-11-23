@@ -41,11 +41,19 @@
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
+            android:resizeableActivity="true"
+            android:supportsPictureInPicture="true"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="kite" />
             </intent-filter>
             <!-- Map links shared or opened from other apps (Google Maps, Waze, Apple Maps, geo:). -->
             <intent-filter>
@@ -88,6 +96,17 @@
             android:name=".DriveService"
             android:exported="false"
             android:foregroundServiceType="location" />
+
+        <service
+            android:name=".QuickMapTile"
+            android:exported="true"
+            android:icon="@drawable/ic_shortcut_car"
+            android:label="@string/quick_map_tile"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
 
         <provider
             android:name="androidx.core.content.FileProvider"

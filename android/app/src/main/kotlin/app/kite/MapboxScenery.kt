@@ -187,23 +187,19 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
             if (error.type.name.startsWith("STYLE") && style == null) failStyle()
         }
         map.addOnMapClickListener { point ->
-            if (model.streetViewMapTapped(point.kite())) true
+            if (model.streetViewMapTapped(point.kite()) || model.positionEndpointPin(point.kite())) true
             else if (model.stopSearch != null) {
                 val search = model.stopSearch
                 val pixel = map.pixelForCoordinate(point)
                 val pad = 13.0 * context.resources.displayMetrics.density
                 val hitbox = ScreenBox(ScreenCoordinate(pixel.x - pad, pixel.y - pad), ScreenCoordinate(pixel.x + pad, pixel.y + pad))
                 map.queryRenderedFeatures(RenderedQueryGeometry(hitbox), RenderedQueryOptions(listOf("kite-stop-hit"), null)) { result ->
-                    if (model.stopSearch === search) model.selectStopPin(
+                    if (search != null && model.stopSearch?.results === search.results) model.selectStopPin(
                         result.value?.firstOrNull()?.queriedFeature?.feature?.getStringProperty("id"))
                 }
                 true
             } else if (model.nav != null && !model.placingStop) {
-                map.queryRenderedFeatures(RenderedQueryGeometry(map.pixelForCoordinate(point)),
-                    RenderedQueryOptions(listOf("kite-vela-waze", "kite-vela-waze-group"), null)) { result ->
-                    val hit = result.value?.firstOrNull()?.queriedFeature?.feature
-                    if (hit != null) kite.openWazeAlert(hit.getStringProperty("id"))
-                }
+                navigationPlaceAt(mapView, point, longPress = false)
                 true
             } else if (!model.placingStop && !model.isGuiding && model.directions == null) {
                 val pixel = map.pixelForCoordinate(point)
@@ -237,11 +233,48 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
             } else kite.sceneTap(point.kite())
         }
         map.addOnMapLongClickListener { point ->
-            if (model.stopSearch == null && model.streetView == null) kite.scenePress(point.kite())
+            if (model.stopSearch == null && model.streetView == null) {
+                if (model.nav != null && !model.placingStop) navigationPlaceAt(mapView, point, longPress = true)
+                else kite.scenePress(point.kite())
+            }
             true
         }
         load()
         return mapView
+    }
+
+    private fun navigationPlaceAt(mapView: MapView, point: Point, longPress: Boolean) {
+        val nav = model.nav ?: return
+        val map = mapView.mapboxMap
+        val pixel = map.pixelForCoordinate(point)
+        val pad = 12.0 * mapView.resources.displayMetrics.density
+        val hitbox = ScreenBox(ScreenCoordinate(pixel.x - pad, pixel.y - pad), ScreenCoordinate(pixel.x + pad, pixel.y + pad))
+        val layers = buildList {
+            if (!longPress) addAll(listOf("kite-vela-waze", "kite-vela-waze-group"))
+            if (AppSettings.navigationPlaces) addAll(listOf(GOOGLE_PLACES, KiteMap.GOOGLE_UNREVIEWED, OpenMapStyle.POIS))
+        }
+        if (layers.isEmpty()) return
+        map.queryRenderedFeatures(RenderedQueryGeometry(hitbox), RenderedQueryOptions(layers, null)) { result ->
+            if (view !== mapView || model.nav !== nav || model.stopSearch != null || model.placingStop) return@queryRenderedFeatures
+            for (hit in result.value.orEmpty()) {
+                val feature = hit.queriedFeature.feature
+                fun str(key: String) = feature.getProperty(key)?.takeIf { it.isJsonPrimitive }?.asString
+                if (!longPress && kite.openWazeAlert(str("id"))) return@queryRenderedFeatures
+                val at = feature.geometry() as? Point ?: continue
+                val group = str("class")
+                val subclass = str("subclass")
+                val place = kite.googlePlace(str("id")) ?: if (subclass != null || group != null) {
+                    val name = OpenMapStyle.title(str("name") ?: str("name:en"), subclass, group)
+                    Place("osm:${at.latitude()},${at.longitude()}:$name", name, at.kite(), "osm", category = subclass ?: group)
+                } else continue
+                if (longPress) {
+                    mapView.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                    model.addNavigationPlace(place)
+                } else model.showNavigationPlace(place)
+                return@queryRenderedFeatures
+            }
+            if (!longPress) model.showNavigationPlace(null)
+        }
     }
 
     fun touch(event: MotionEvent) {

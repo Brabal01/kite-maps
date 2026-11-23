@@ -18,6 +18,8 @@ enum class DriveMarker(val label: String, val sprite: String, val top: Int? = nu
     VAN("Van", "puck-van", R.drawable.drive_van, R.drawable.drive_van_tilt),
 }
 
+enum class NavigationPlaceSource(val label: String) { OPENSTREETMAP("OpenStreetMap"), GOOGLE("Google Maps") }
+
 enum class ThemeMode(val label: String) { SYSTEM("System"), LIGHT("Light"), DARK("Dark") }
 
 enum class UnitsMode(val label: String) {
@@ -98,6 +100,11 @@ object AppSettings {
             ?: OpenPlaceGroup.entries.toSet() },
         { e, v -> e.putStringSet("openPlaceGroups", v.map { it.name }.toSet()) })
     var navigationPlaces by bool("navigationPlaces")
+    var navigationPlaceSource by Pref("navigationPlaceSource",
+        { p -> NavigationPlaceSource.entries.firstOrNull { it.name == p.getString("navigationPlaceSource", null) }
+            ?: NavigationPlaceSource.OPENSTREETMAP },
+        { e, v -> e.putString("navigationPlaceSource", v.name) })
+    var navigationPictureInPicture by bool("navigationPictureInPicture", true)
     var navigationPlaceGroups: Set<OpenPlaceGroup> by Pref("navigationPlaceGroups",
         { p -> p.getStringSet("navigationPlaceGroups", null)?.let { names -> OpenPlaceGroup.entries.filter { it.name in names }.toSet() }
             ?: setOf(OpenPlaceGroup.FUEL, OpenPlaceGroup.PARKING, OpenPlaceGroup.FOOD, OpenPlaceGroup.TOILETS) },

@@ -4,4 +4,5 @@
     <string name="shortcut_home">Go home</string>
     <string name="shortcut_work">Go to work</string>
     <string name="shortcut_car">Find my car</string>
+    <string name="quick_map_tile">Kite Map</string>
 </resources>

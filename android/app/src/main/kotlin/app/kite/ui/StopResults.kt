@@ -24,6 +24,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.kite.*
@@ -33,8 +34,9 @@ import app.kite.core.Place
 import kotlinx.coroutines.CancellationException
 
 @Composable
-internal fun StopResultsPage(
+internal fun StopResultsPanel(
     search: StopSearch, list: LazyListState, onlyOpen: Boolean, setOnlyOpen: (Boolean) -> Unit,
+    detent: SheetDetent, setDetent: (SheetDetent) -> Unit, height: Dp,
     close: () -> Unit, showOnMap: (StopCandidate) -> Unit,
 ) {
     var expandedId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -45,30 +47,30 @@ internal fun StopResultsPage(
         }
     }
 
-    FullScreenDialog(close) {
-        Column(Modifier.fillMaxSize().background(interfaceSheet).systemBarsPadding()) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(if (search.parking) "Parking near destination" else search.query.replaceFirstChar { it.titlecase() },
-                        fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, color = primaryText,
-                        maxLines = 2, overflow = TextOverflow.Ellipsis)
+    BottomSheet(detent, setDetent, height, peekHeight = 104.dp, topClearance = 68.dp, opaque = true,
+        header = {
+            Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(if (search.parking) "Parking nearby" else "Stops along the route",
+                        fontSize = KType.headline, fontWeight = FontWeight.ExtraBold, color = primaryText,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
                     val count = numbered.size
-                    Text(if (count == 1) "1 result" else "$count results", fontSize = KType.subheadline, color = secondaryText)
+                    Text(if (count == 1) "1 result" else "$count results", fontSize = KType.caption, color = secondaryText)
                 }
-                FilledTonalButton(onClick = close, contentPadding = PaddingValues(horizontal = 12.dp)) {
-                    Icon(Icons.Outlined.Map, null, Modifier.size(19.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Map")
+                IconButton({ setDetent(if (detent == SheetDetent.FULL) SheetDetent.HALF else SheetDetent.FULL) }) {
+                    Icon(if (detent == SheetDetent.FULL) Icons.Filled.ExpandMore else Icons.Filled.ExpandLess, "Resize results")
                 }
+                TextButton(close) { Text("Map") }
             }
-            Box(Modifier.padding(start = 16.dp, bottom = 8.dp)) {
+            if (detent != SheetDetent.PEEK) Box(Modifier.padding(start = 16.dp, top = 5.dp, bottom = 8.dp)) {
                 FilterChipLabel("Open now", onlyOpen, menu = false) { setOnlyOpen(!onlyOpen) }
             }
-            LazyColumn(
+        }, content = {
+            if (detent != SheetDetent.PEEK) LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 state = list,
-                contentPadding = PaddingValues(start = 16.dp, top = 4.dp, end = 16.dp, bottom = 24.dp),
+                contentPadding = PaddingValues(start = 16.dp, top = 4.dp, end = 16.dp, bottom = 18.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 if (numbered.isEmpty()) item {
@@ -82,13 +84,12 @@ internal fun StopResultsPage(
                         showOnMap = { showOnMap(candidate) })
                 }
             }
-        }
-    }
+        })
 }
 
 @Composable
 internal fun StopResultCard(
-    search: StopSearch, candidate: StopCandidate, number: Int, expanded: Boolean, toggle: () -> Unit,
+    search: StopSearch, candidate: StopCandidate, number: Int?, expanded: Boolean, toggle: () -> Unit,
     showOnMap: (() -> Unit)? = null, footer: (@Composable () -> Unit)? = null,
 ) {
     val place = candidate.place
@@ -145,6 +146,25 @@ internal fun StopResultCard(
                 price, ukQuote, showOnMap)
             footer?.invoke()
         }
+    }
+}
+
+@Composable
+internal fun NavigationPlaceCard(model: AppModel, place: Place, modifier: Modifier = Modifier) {
+    var expanded by rememberSaveable(place.id) { mutableStateOf(false) }
+    val nav = model.nav ?: return
+    val candidate = remember(place) { StopCandidate(place, null, 0.0) }
+    val search = remember(place) { StopSearch(place.name, wasFollowing = nav.following, loading = false) }
+    androidx.activity.compose.BackHandler { model.showNavigationPlace(null) }
+    Box(modifier.fillMaxWidth().navigationBarsPadding().padding(12.dp)) {
+        StopResultCard(search, candidate, null, expanded, toggle = { expanded = !expanded }, footer = {
+            Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                TextButton({ model.showNavigationPlace(null) }) { Text("Close") }
+                val canAdd = !nav.rerouting && nav.stops.size < 8 && nav.stops.none(place::matchesNearby) && !nav.destination.matchesNearby(place)
+                Button({ model.addNavigationPlace(place) }, enabled = canAdd) { Text("Add as next stop") }
+            }
+        })
     }
 }
 

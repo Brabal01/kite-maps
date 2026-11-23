@@ -1,5 +1,8 @@
 package app.kite
 
+import app.kite.core.FuelPrices
+import app.kite.core.Place
+
 enum class OpenPlaceGroup(val label: String, val icon: String, vararg val tags: String) {
     WATER("Drinking water", "osm-drinking_water", "drinking_water", "water_point", "water_well", "water_tap"),
     PARKING("Parking", "poi-parking", "parking", "parking_entrance", "parking_space"),
@@ -72,10 +75,49 @@ object OpenMapStyle {
 
     fun visibleGroups(model: AppModel): Set<OpenPlaceGroup> = when {
         model.nav != null || model.cruise != null ->
-            if (AppSettings.navigationPlaces) AppSettings.navigationPlaceGroups else emptySet()
+            if (AppSettings.navigationPlaces && !navigationUsesGoogle()) AppSettings.navigationPlaceGroups else emptySet()
         model.transitGuidance == null && AppSettings.openMapPlaces -> AppSettings.openPlaceGroups
         else -> emptySet()
     }
+
+    fun navigationUsesGoogle(): Boolean =
+        !AppSettings.noGoogle && AppSettings.navigationPlaceSource == NavigationPlaceSource.GOOGLE
+
+    fun googleNavigationActive(model: AppModel): Boolean =
+        (model.nav != null || model.cruise != null) && AppSettings.navigationPlaces &&
+            AppSettings.navigationPlaceGroups.isNotEmpty() && navigationUsesGoogle()
+
+    fun groupFor(place: Place): OpenPlaceGroup {
+        val category = Place.fold(place.category.orEmpty()).replace('_', ' ')
+        fun has(vararg labels: String) = labels.any(category::contains)
+        return when {
+            FuelPrices.isStation(place) || has("charging station", "fuel") -> OpenPlaceGroup.FUEL
+            has("parking", "car park") -> if (has("bicycle", "bike")) OpenPlaceGroup.BIKE else OpenPlaceGroup.PARKING
+            has("toilet", "restroom") -> OpenPlaceGroup.TOILETS
+            has("drinking water", "water fountain") -> OpenPlaceGroup.WATER
+            has("restaurant", "cafe", "coffee", "fast food", " pub") || category in setOf("bar", "pub") -> OpenPlaceGroup.FOOD
+            has("pharmacy", "hospital", "clinic", "doctor", "dentist", "medical") -> OpenPlaceGroup.MEDICAL
+            has("station", "transit stop", "bus stop") -> OpenPlaceGroup.TRANSIT
+            has("bicycle", "bike") -> OpenPlaceGroup.BIKE
+            has("park", "viewpoint", "camping", "scenic") -> OpenPlaceGroup.OUTDOORS
+            has("store", "shop", "supermarket", "bakery", "mall", "market") -> OpenPlaceGroup.SHOP
+            else -> OpenPlaceGroup.MORE
+        }
+    }
+
+    private val googleQueries = mapOf(
+        OpenPlaceGroup.WATER to "drinking water", OpenPlaceGroup.PARKING to "parking",
+        OpenPlaceGroup.TOILETS to "public toilets", OpenPlaceGroup.BIKE to "bicycle parking",
+        OpenPlaceGroup.OUTDOORS to "parks and viewpoints", OpenPlaceGroup.FOOD to "restaurants and cafes",
+        OpenPlaceGroup.SHOP to "shops",
+        OpenPlaceGroup.MEDICAL to "pharmacies and clinics", OpenPlaceGroup.TRANSIT to "bus stops",
+        OpenPlaceGroup.MORE to "places",
+    )
+
+    fun navigationGoogleQueries(): List<String> =
+        OpenPlaceGroup.entries.filter { it in AppSettings.navigationPlaceGroups }.flatMap { group ->
+            if (group == OpenPlaceGroup.FUEL) listOf("gas stations", "EV charging stations") else listOfNotNull(googleQueries[group])
+        }
 
     fun title(name: String?, subclass: String?, klass: String?): String =
         name?.takeIf { it.isNotBlank() } ?: (subclass ?: klass ?: "place").replace('_', ' ').replaceFirstChar(Char::titlecase)
