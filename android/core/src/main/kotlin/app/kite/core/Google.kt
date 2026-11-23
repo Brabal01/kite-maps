@@ -90,6 +90,15 @@ class GoogleClient {
     suspend fun reviews(featureId: String): List<PlaceReview> {
         val pb = GooglePlaceMedia.reviewParameter(featureId) ?: return emptyList()
         warm()
+        val request = GooglePlaceMedia.reviewFeedRequest(featureId)
+        val feed = try {
+            if (request == null) emptyList() else GooglePlaceMedia.reviewFeed(placeBatch("qv9Egd", request))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            emptyList()
+        }
+        if (feed.any { it.photos.isNotEmpty() } || feed.size >= 8) return feed
         val legacy = try {
             val body = get("https://www.google.com/maps/preview/review/listentitiesreviews?authuser=0&hl=en&gl=us&pb=" +
                 urlEnc(pb), "https://www.google.com/maps/", true)
@@ -99,16 +108,8 @@ class GoogleClient {
         } catch (_: Exception) {
             emptyList()
         }
-        if (legacy.isNotEmpty()) return legacy
-        val request = GooglePlaceMedia.reviewFeedRequest(featureId) ?: return emptyList()
-        val feed = try {
-            GooglePlaceMedia.reviewFeed(placeBatch("qv9Egd", request))
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {
-            emptyList()
-        }
-        if (feed.isNotEmpty()) return feed
+        val both = (feed + legacy).distinctBy { Triple(it.author, it.stars, it.text) }
+        if (both.isNotEmpty()) return both
         val releaseUrl = GoogleReviews.url(featureId) ?: return emptyList()
         return GoogleReviews.parse(get(releaseUrl, "https://www.google.com/", true)).orEmpty().map {
             PlaceReview(it.author, it.rating, it.whenText, it.text, emptyList())

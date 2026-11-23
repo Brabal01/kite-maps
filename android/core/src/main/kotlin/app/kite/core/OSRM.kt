@@ -209,7 +209,7 @@ object OSRM {
             val annotationCount = legs.sumOf { it["annotation"].asMap()?.get("maxspeed").asList()?.size ?: 0 }
             if (source != "mapbox" || annotationCount == cum.lastIndex) route.speedLimits = speedLimits(legs, cum)
             if (source == "mapbox") route.trafficSpans = MapboxDirections.trafficSpans(legs, cum)
-            if (controls.isEmpty()) route else route.copy(roadControls = Overpass.projectControls(controls.distinct(), line))
+            if (controls.isEmpty()) route else route.copy(roadControls = Overpass.projectControls(controls.distinct(), line, fromRouter = true))
         }
     }
 

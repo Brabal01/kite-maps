@@ -66,6 +66,10 @@ object AppSettings {
         DriveMarker.entries.firstOrNull { it.name == p.getString("driveMarker", null) } ?: DriveMarker.ARROW
     }, { e, v -> e.putString("driveMarker", v.name) })
     var swapNavigationSides by bool("swapMapSides")
+    var categoryMenu by bool("categoryMenu")
+    var browseMapLook by Pref("browseMapLook", { p ->
+        MapLook.entries.firstOrNull { it.name == p.getString("browseMapLook", null) } ?: MapLook.NORTH
+    }, { e, v -> e.putString("browseMapLook", v.name) })
     var solidMapSearch by bool("solidMapSearch", true)
     var osmOnlySearch by bool("osmOnlySearch")
     var googleIconPercent by int("googleIconPercent", 100)

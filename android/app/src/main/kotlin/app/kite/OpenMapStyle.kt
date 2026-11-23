@@ -20,6 +20,13 @@ object OpenMapStyle {
     const val SOURCE = "kite-osm-tiles"
     const val HIKING = "kite-hiking"
     const val CYCLING = "kite-cycling"
+    const val WALK_PATHS = "kite-walk-paths"
+    const val BIKE_PATHS = "kite-bike-paths"
+
+    val pathLayers = mapOf(
+        WALK_PATHS to ("""["all",["==",["geometry-type"],"LineString"],["match",["get","subclass"],["path","footway","steps"],true,false],["!=",["get","foot"],"no"],["!=",["get","access"],"private"]]""" to 0xFF188858),
+        BIKE_PATHS to ("""["all",["==",["geometry-type"],"LineString"],["any",["==",["get","subclass"],"cycleway"],["==",["get","bicycle"],"designated"]],["!=",["get","access"],"private"]]""" to 0xFF3276C6),
+    )
     const val ATTRIBUTION = "© OpenStreetMap contributors · Waymarked Trails, CC BY-SA 3.0"
     fun trailTile(kind: String) = "https://tile.waymarkedtrails.org/$kind/{z}/{x}/{y}.png"
 

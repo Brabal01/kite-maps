@@ -39,4 +39,29 @@ class GooglePlaceMediaTests {
         assertEquals("18446744073709551615", GooglePlaceMedia.cid("0x1:0xffffffffffffffff"))
         assertNull(GooglePlaceMedia.photoRequest("not-a-feature-id"))
     }
+
+    @Test fun panoramaLinksKeepNearbyWalksAndExcludeHistoricalImagery() {
+        val node = Json.parse("""[[1],[2,"AbCdEfGhIjKlMnOpQrStUv"],null,null,null,[[null,
+          [[null,null,50.087,14.421],null,[252.5]],null,
+          [[[[2,"firstWalkPanorama12345"],null,[[null,null,50.08709,14.421]]],
+            [[2,"nextWalkPanorama123456"],null,[[null,null,50.0872,14.421]]],
+            [[2,"olderViewPanorama12345"],null,[[null,null,50.087,14.42115]]]]],null,null,null,null,
+          [[2,[2020,1]]]]]]""")
+        val p = assertNotNull(StreetView.parse(Json.write(listOf(listOf(0), node))))
+        val link = p.links.single()
+        assertEquals("firstWalkPanorama12345", link.id)
+        assertEquals(0.0, link.bearing, 0.001)
+    }
+
+
+    @Test fun publicPageAttachesOnlyContributorPhotosToTheirReview() {
+        val rows = """[{"author":"Dana","rating":5,"text":"Good coffee","photos":[
+            "https://lh3.googleusercontent.com/a/Avatar",
+            "https://lh3.googleusercontent.com/grass-cs/CustomerPhoto=k-no"
+        ]},{"author":"Alex","rating":4,"photos":[]}]"""
+        val (first, second) = GooglePlaceMedia.publicPageReviews(rows)
+        assertEquals(listOf("https://lh3.googleusercontent.com/grass-cs/CustomerPhoto=w800-h600"), first.photos)
+        assertTrue(second.photos.isEmpty())
+    }
+
 }

@@ -126,6 +126,8 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
         show(OpenMapStyle.POIS, s.openMapPlaces && model.nav == null && model.transitGuidance == null)
         show(OpenMapStyle.HIKING, s.hikingTrails)
         show(OpenMapStyle.CYCLING, s.bikeTrails)
+        show(OpenMapStyle.WALK_PATHS, s.hikingTrails)
+        show(OpenMapStyle.BIKE_PATHS, s.bikeTrails)
         Value.fromJson(OpenMapStyle.filter(s.openPlaceGroups)).value?.let {
             st.setStyleLayerProperty(OpenMapStyle.POIS, "filter", it)
         }
@@ -205,7 +207,7 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
                             val klass = str("class")
                             val name = OpenMapStyle.title(str("name"), subclass, klass)
                             model.select(Place("osm:${loc.latitude()},${loc.longitude()}:$name", name, loc.kite(), "osm",
-                                category = subclass ?: klass), focus = false, ambientOsm = true)
+                                category = subclass ?: klass), focus = false)
                         }
                     }
                 }
@@ -352,12 +354,16 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
         cameraEase = null
     }
 
-    private fun copyCameraToKite(mapView: MapView) {
+    fun cameraPosition(): CameraPosition? = view?.let(::cameraPosition)
+
+    private fun cameraPosition(mapView: MapView): CameraPosition {
         val c = mapView.mapboxMap.cameraState
         val p = c.padding
-        kite.syncFromScenery(CameraPosition.Builder().target(c.center.kite().ml())
-            .zoom(c.zoom).bearing(c.bearing).tilt(c.pitch).padding(p.left, p.top, p.right, p.bottom).build())
+        return CameraPosition.Builder().target(c.center.kite().ml())
+            .zoom(c.zoom).bearing(c.bearing).tilt(c.pitch).padding(p.left, p.top, p.right, p.bottom).build()
     }
+
+    private fun copyCameraToKite(mapView: MapView) = kite.syncFromScenery(cameraPosition(mapView))
 
     fun updateOverlay(id: String, json: () -> String) {
         if (id !in overlaySources || view == null) return
@@ -485,13 +491,11 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
             if (!look.satellite) {
                 configs["show3dTrees"] = Value.valueOf(true)
                 configs["show3dLandmarks"] = Value.valueOf(true)
-                configs["showHdRoads"] = Value.valueOf(look.driving)
+                configs["showHdRoads"] = Value.valueOf(true)
                 for (field in MapColor.entries) field.styleKey?.let { configs[it] = Value.valueOf(look.palette[field]) }
                 configs["colorTrunks"] = Value.valueOf(look.palette[MapColor.HIGHWAYS])
             }
             if (!look.satellite) st.setStyleImportConfigProperties("basemap", configs)
-        } else if (previous.driving != look.driving && !look.satellite) {
-            st.setStyleImportConfigProperty("basemap", "showHdRoads", Value.valueOf(look.driving))
         }
         if (themeChanged || previous.satellite != look.satellite || previous.driving != look.driving) {
             fun visible(id: String, on: Boolean) {
@@ -667,6 +671,13 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
             st.addSource(RasterSource.Builder(id).tiles(listOf(OpenMapStyle.trailTile(kind)))
                 .tileSize(256).minzoom(6).maxzoom(18).attribution(OpenMapStyle.ATTRIBUTION).build())
             st.addLayer(RasterLayer(id, id).slot("middle").rasterOpacity(0.9).visibility(Visibility.NONE))
+        }
+        for ((id, definition) in OpenMapStyle.pathLayers) {
+            val (filter, tint) = definition
+            st.addLayer(LineLayer(id, OpenMapStyle.SOURCE).sourceLayer("transportation").slot("middle")
+                .filter(Expression.fromRaw(filter)).minZoom(14.0).lineColor(tint.toInt())
+                .lineWidth(Expression.fromRaw("""["interpolate",["linear"],["zoom"],14,1.4,19,3.2]"""))
+                .lineOpacity(0.82).lineCap(LineCap.ROUND).lineEmissiveStrength(0.65).visibility(Visibility.NONE))
         }
         st.addLayer(marker(GOOGLE_PLACES, "kite-google-places").iconImage(Expression.get("icon"))
             .filter(Expression.fromRaw("""["==",["get","reviewed"],true]""")))

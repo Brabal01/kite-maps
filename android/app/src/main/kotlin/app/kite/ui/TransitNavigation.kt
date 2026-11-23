@@ -88,10 +88,14 @@ fun TransitNavigationOverlay(model: AppModel, journey: TransitGuidance, showMapb
                     val live = journey.liveDeparture
                     val time = status?.board?.departure ?: live?.time ?: leg?.depart
                     val call = leg?.calls?.firstOrNull()
-                    val details = listOfNotNull(
-                        leg?.headsign?.let { "Toward $it" },
-                        (status?.board?.platform ?: live?.platform ?: call?.platform)?.takeIf(String::isNotBlank)?.let { "Platform $it" },
-                        time?.let { Fmt.time(Date(it)) })
+                    val platform = (status?.board?.platform ?: live?.platform ?: call?.platform)?.takeIf(String::isNotBlank)
+                    val details = listOfNotNull(leg?.headsign?.let { "Toward $it" }, time?.let { Fmt.time(Date(it)) })
+                    if (platform != null) {
+                        val change = if (call?.platform != null && call.platform != platform) " · changed from ${call.platform}" else ""
+                        Text("Platform $platform$change", fontWeight = FontWeight.Bold, color = interfaceAccentText)
+                    } else if (leg?.vehicle == TransitLeg.Vehicle.TRAIN) {
+                        Text("Platform not published", color = secondaryText, fontSize = KType.caption)
+                    }
                     if (leg != null) TransitStatus(leg, status, departureDelay = live?.delayMinutes)
                     if (details.isNotEmpty()) Text(details.joinToString(" · "), color = secondaryText)
                     if (time != null && now > time + 180_000) Text("This departure may have passed.", color = Vela.closed)

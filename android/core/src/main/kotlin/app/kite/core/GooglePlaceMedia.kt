@@ -7,7 +7,7 @@ data class PlaceReview(val author: String, val stars: Int?, val relativeTime: St
 /** Place detail response shapes from Vela Maps' Google client (GPL-3.0). */
 object GooglePlaceMedia {
     private val featureIdPattern = Regex("^0x([0-9a-fA-F]{1,16}):0x([0-9a-fA-F]{1,16})$")
-    private val size = Regex("=[swh]\\d[\\w-]*$")
+    private val size = Regex("=(?:[swh]\\d[\\w-]*|k-no)$")
 
     fun cid(featureId: String): String? = featureIdPattern.matchEntire(featureId)
         ?.groupValues?.get(2)?.toULong(16)?.toString()
@@ -50,6 +50,19 @@ object GooglePlaceMedia {
             gstr(at(review, 2, 15, 0, 0))?.takeIf { it.isNotBlank() }, imageUrls(at(review, 2, 2), limit = 8))
     }
 
+    fun publicPageReviews(value: String): List<PlaceReview> {
+        val pages = Json.parse(value).asMaps().orEmpty()
+        return pages.take(24).mapNotNull { item ->
+            val author = item["author"].text()?.trim()?.takeIf(String::isNotEmpty) ?: return@mapNotNull null
+            val stars = item["rating"].int()?.takeIf { it in 1..5 }
+            val text = item["text"].text()?.trim()?.takeIf(String::isNotEmpty)
+            val date = item["time"].text()?.trim()?.takeIf(String::isNotEmpty)
+            val photos = imageUrls(item["photos"], limit = 8)
+            if (stars == null && text == null && photos.isEmpty()) return@mapNotNull null
+            PlaceReview(author, stars, date, text, photos)
+        }.distinct()
+    }
+
     fun photos(body: String): List<String> = imageUrls(at(batchPayload(body, "hspqX"), 0), limit = 40)
 
     fun imageUrls(root: Any?, limit: Int): List<String> = strings(root).mapNotNull { value ->
@@ -59,7 +72,7 @@ object GooglePlaceMedia {
         val host = url.host ?: return@mapNotNull null
         if (!host.endsWith(".googleusercontent.com") && !host.endsWith(".ggpht.com")) return@mapNotNull null
         val path = url.path ?: return@mapNotNull null
-        if (!listOf("/p/", "/gps-cs", "/geougc", "/places/").any(path::startsWith)) return@mapNotNull null
+        if (!listOf("/p/", "/gps-cs", "/grass-cs/", "/geougc", "/places/").any(path::startsWith)) return@mapNotNull null
         val base = uri.substringBefore('?').replace(size, "")
         "$base=w800-h600"
     }.distinct().take(limit).toList()

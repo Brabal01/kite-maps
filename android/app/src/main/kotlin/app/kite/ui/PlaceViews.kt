@@ -170,18 +170,42 @@ fun PlaceBody(model: AppModel, place: Place) {
         return
     }
     var tab by remember(place.id) { mutableIntStateOf(0) }
-    val mediaId = place.featureId.takeUnless { AppSettings.noGoogle }
-    val canReview = mediaId != null && (place.reviewCount ?: 1) > 0
+    val allowsGoogle = !AppSettings.noGoogle
+    var related by remember(place.id, allowsGoogle) { mutableStateOf<Place?>(null) }
+    LaunchedEffect(place.id, allowsGoogle) {
+        if (!allowsGoogle || place.featureId != null || place.source != "osm" ||
+            place.name.equals(OpenMapStyle.title(null, place.category, null), ignoreCase = true)) return@LaunchedEffect
+        delay(400)
+        val matches = try {
+            GoogleClient.shared.search(place.name, place.location, 2_000.0, pages = 1)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            emptyList()
+        }
+        related = matches.filter {
+            it.featureId != null && it.name.equals(place.name, ignoreCase = true) && it.location.distanceTo(place.location) <= 85
+        }.minByOrNull { it.location.distanceTo(place.location) }
+    }
+    val mediaPlace = related ?: place
+    val mediaId = mediaPlace.featureId.takeIf { allowsGoogle }
+    val canReview = mediaId != null && (mediaPlace.reviewCount ?: 1) > 0
     var reviews by remember(mediaId) { mutableStateOf<List<PlaceReview>?>(null) }
     var reviewsFailed by remember(mediaId) { mutableStateOf(false) }
     var attempt by remember(mediaId) { mutableIntStateOf(0) }
     var gallery by remember(mediaId) { mutableStateOf<List<String>?>(null) }
     var driveSeconds by remember(place.id) { mutableStateOf<Double?>(null) }
+    fun mergeReviews(incoming: List<PlaceReview>) {
+        val merged = (incoming + reviews.orEmpty()).groupBy { Triple(it.author, it.stars, it.text) }.values.map { group ->
+            group.first().copy(photos = group.flatMap { it.photos }.distinct())
+        }
+        if (reviews != merged) reviews = merged
+    }
     LaunchedEffect(mediaId, canReview, attempt) {
         if (mediaId == null || !canReview) return@LaunchedEffect
         reviewsFailed = false
         try {
-            reviews = GoogleClient.shared.reviews(mediaId)
+            mergeReviews(GoogleClient.shared.reviews(mediaId))
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
@@ -197,12 +221,14 @@ fun PlaceBody(model: AppModel, place: Place) {
             emptyList()
         }
     }
-    val previews = if (AppSettings.noGoogle) place.photoUrls.filterNot(::isGooglePhoto) else place.photoUrls
-    val photos = (gallery.orEmpty() + previews).distinctBy { it.substringBeforeLast("=w") }
+    val previews = if (AppSettings.noGoogle) place.photoUrls.filterNot(::isGooglePhoto) else (place.photoUrls + mediaPlace.photoUrls)
+    val reviewPhotos = reviews.orEmpty().flatMap { it.photos }
+    val photos = (gallery.orEmpty() + reviewPhotos + previews).distinctBy { it.substringBeforeLast("=w") }
     LaunchedEffect(place.id) {
         val from = model.userLatLng ?: return@LaunchedEffect
         val d = from.distanceTo(place.location)
         if (d <= 300 || d >= 300_000) return@LaunchedEffect
+        delay(700)
         val s = model.settings
         var r: List<Route>? = null
         if (!s.noGoogle) r = runCatching { GoogleClient.shared.directions(from, place.location, TravelMode.DRIVE, s.avoidHighways, s.avoidTolls) }.getOrNull()
@@ -237,12 +263,19 @@ fun PlaceBody(model: AppModel, place: Place) {
             }
         }
         when (selectedTab) {
-            "Reviews" -> PlaceReviews(place, reviews, reviewsFailed) { attempt++ }
-            "Photos" -> PlacePhotos(place, photos, loading = mediaId != null && gallery == null)
+            "Reviews" -> PlaceReviews(mediaPlace, reviews, reviewsFailed, retry = { attempt++ }, onReviews = { more ->
+                mergeReviews(more)
+                reviewsFailed = false
+            })
+            "Photos" -> PlacePhotos(mediaPlace, photos, loading = mediaId != null && gallery == null)
             "About" -> PlaceAbout(place)
             else -> {
-                PhotoStrip(photos.take(5), 140.dp, opensViewer = true, streetView = place, model = model)
-                if (photos.isNotEmpty()) TextButton({ tab = mediaTabs.indexOf("Photos") }) { Text("See more photos") }
+                if (photos.isNotEmpty()) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Photos", fontWeight = FontWeight.Bold, color = primaryText, fontSize = KType.headline,
+                        modifier = Modifier.weight(1f))
+                    TextButton({ tab = mediaTabs.indexOf("Photos") }) { Text("See all") }
+                }
+                PhotoStrip(photos.take(6), 156.dp, opensViewer = true, streetView = place, model = model)
                 PlaceOverview(place)
                 if (reviews.orEmpty().isNotEmpty() || canReview && !place.featuredReview.isNullOrBlank()) {
                     Text("Reviews", fontWeight = FontWeight.Bold, color = primaryText, fontSize = KType.headline)
@@ -252,7 +285,8 @@ fun PlaceBody(model: AppModel, place: Place) {
                 }
             }
         }
-        val attribution = when (place.source) {
+        val attribution = if (related != null) "Map data © OpenStreetMap contributors · Photos and reviews from Google Maps"
+        else when (place.source) {
             "google" -> "Place details from Google Maps"
             "mapbox" -> "Map data © Mapbox and OpenStreetMap contributors"
             else -> "Map data © OpenStreetMap contributors"
@@ -262,7 +296,8 @@ fun PlaceBody(model: AppModel, place: Place) {
 }
 
 @Composable
-private fun PlaceReviews(place: Place, reviews: List<PlaceReview>?, failed: Boolean, retry: () -> Unit) {
+private fun PlaceReviews(place: Place, reviews: List<PlaceReview>?, failed: Boolean, retry: () -> Unit,
+                         onReviews: (List<PlaceReview>) -> Unit) {
     val ctx = LocalContext.current
     var openWeb by remember(place.id) { mutableStateOf(false) }
     if (failed) {
@@ -278,13 +313,14 @@ private fun PlaceReviews(place: Place, reviews: List<PlaceReview>?, failed: Bool
         TextButton({ openWeb = true }) { Text("Read all reviews") }
         TextButton({ ctx.open(place.shareUrl) }) { Text("Open Google Maps") }
     }
-    if (openWeb && !AppSettings.noGoogle) GoogleReviewsPage(place) { openWeb = false }
+    if (openWeb && !AppSettings.noGoogle) GoogleReviewsPage(place, onReviews) { openWeb = false }
 }
 
 @Composable
 private fun ReviewRow(review: PlaceReview) {
-    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-        Text(review.author, fontWeight = FontWeight.Bold, color = primaryText)
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(interfaceGround).padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        Text(review.author, fontWeight = FontWeight.Bold, color = primaryText, fontSize = KType.subheadline)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             review.stars?.let { rating ->
                 val stars = rating.coerceIn(0, 5)
@@ -300,9 +336,8 @@ private fun ReviewRow(review: PlaceReview) {
             review.relativeTime?.let { Text(it, fontSize = KType.caption, color = secondaryText) }
         }
         review.text?.let { Text(it, color = primaryText) }
-        if (review.photos.isNotEmpty()) PhotoStrip(review.photos, 82.dp, opensViewer = true)
+        if (review.photos.isNotEmpty()) PhotoStrip(review.photos, 96.dp, opensViewer = true)
     }
-    HorizontalDivider()
 }
 
 @Composable
@@ -499,11 +534,11 @@ fun PhotoStrip(all: List<String>, height: Dp = 130.dp, opensViewer: Boolean = fa
     // "Use Kite without Google": a place saved earlier still has Google's photo links; don't load them.
     val urls = if (AppSettings.noGoogle) all.filterNot(::isGooglePhoto) else all
     var viewing by remember { mutableStateOf<Int?>(null) }
-    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        if (streetView != null && model != null) StreetViewTile(model, streetView, height)
-        urls.forEachIndexed { i, u ->
-            AsyncImage(u, null, contentScale = ContentScale.Crop,
-                modifier = Modifier.size(height * 1.4f, height).clip(RoundedCornerShape(10.dp)).background(secondaryText.copy(alpha = 0.15f))
+    androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (streetView != null && model != null) item { StreetViewTile(model, streetView, height) }
+        items(urls.size) { i ->
+            AsyncImage(urls[i], "Photo ${i + 1}", contentScale = ContentScale.Crop,
+                modifier = Modifier.size(height * 1.4f, height).clip(RoundedCornerShape(15.dp)).background(secondaryText.copy(alpha = 0.15f))
                     .then(if (opensViewer) Modifier.clickable { viewing = i } else Modifier))
         }
     }

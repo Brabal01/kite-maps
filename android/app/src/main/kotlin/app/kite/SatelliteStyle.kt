@@ -3,7 +3,7 @@ package app.kite
 /** A standalone basemap puts the imagery below every overlay without another opaque basemap. */
 internal object SatelliteStyle {
     const val URL = "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer"
-    private const val TILES = "$URL/tile/{z}/{y}/{x}"
+    private const val TILES = "$URL/tile/{z}/{y}/{x}?blankTile=false"
     const val CREDIT = "Imagery © Esri, Vantor, Earthstar Geographics and the GIS User Community"
     private const val ATTRIBUTION = "<a href='$URL'>$CREDIT</a>"
 
@@ -17,10 +17,10 @@ internal object SatelliteStyle {
             "version":8,
             "glyphs":"$glyphs",
             "sources":{"kite-imagery":{"type":"raster","tiles":["$TILES"],"tileSize":256,
-                       "maxzoom":19,"attribution":"$ATTRIBUTION"}},
+                       "maxzoom":21,"attribution":"$ATTRIBUTION"}},
             "layers":[
                 {"id":"kite-imagery-background","type":"background","paint":{"background-color":"#293333"}},
-                {"id":"kite-imagery","type":"raster","source":"kite-imagery","paint":{"raster-fade-duration":120}}
+                {"id":"kite-imagery","type":"raster","source":"kite-imagery","paint":{"raster-fade-duration":90}}
                 $slots
             ]
         }""".trimIndent()

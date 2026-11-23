@@ -487,11 +487,9 @@ private fun MapSettings() {
         RowDivider()
         ToggleRow("Solid search background", Icons.Filled.Search, 0x0F766E, s.solidMapSearch) { s.solidMapSearch = it }
         RowDivider()
-        MapUiColorRow("Control accent", s.mapUiAccent, accentColors) { s.mapUiAccent = it }
+        ToggleRow("Categories in one button", Icons.Filled.Category, 0x0F766E, s.categoryMenu) { s.categoryMenu = it }
         RowDivider()
-        MapUiColorRow("Light interface panels", s.mapUiDayPanel, lightPanelColors) { s.mapUiDayPanel = it }
-        RowDivider()
-        MapUiColorRow("Dark interface panels", s.mapUiNightPanel, darkPanelColors) { s.mapUiNightPanel = it }
+        MapInterfaceColors()
     }
     SettingsGroup(header = "Map icon sizes") {
         PinSizeRow("Google Maps icons", s.googleIconPercent) { s.googleIconPercent = it }
@@ -631,6 +629,16 @@ private val darkPanelColors = linkedMapOf(
     "Midnight" to "#141E30", "Slate" to "#253042", "Deep ocean" to "#152B46", "Forest" to "#142F29",
     "Plum" to "#301D3A", "Burgundy" to "#391F2A", "Espresso" to "#30241B", "Graphite" to "#24272E",
 )
+
+@Composable
+internal fun MapInterfaceColors() {
+    val s = AppSettings
+        MapUiColorRow("Control accent", s.mapUiAccent, accentColors) { s.mapUiAccent = it }
+        RowDivider()
+        MapUiColorRow("Light interface panels", s.mapUiDayPanel, lightPanelColors) { s.mapUiDayPanel = it }
+        RowDivider()
+        MapUiColorRow("Dark interface panels", s.mapUiNightPanel, darkPanelColors) { s.mapUiNightPanel = it }
+}
 
 @Composable
 private fun MapUiColorRow(label: String, current: String?, swatches: Map<String, String>, save: (String?) -> Unit) {

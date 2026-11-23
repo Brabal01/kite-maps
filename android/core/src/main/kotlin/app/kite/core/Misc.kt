@@ -330,10 +330,12 @@ class RouteTracker(val route: Route) {
 /** Google Street View, keyless: the panorama lookup Google's own pages use, a thumbnail, and image tiles. */
 object StreetView {
     data class Hint(val id: String, val yaw: Double?)
+    data class Link(val id: String, val at: LatLng, val bearing: Double)
 
     data class Panorama(
         val id: String, val location: LatLng, val width: Int = 16384, val height: Int = 8192,
         val heading: Double = 0.0, val tileSize: Int = 512, val levels: List<Pair<Int, Int>> = emptyList(),
+        val links: List<Link> = emptyList(), val credit: String? = null,
     ) {
         fun size(zoom: Int): Pair<Int, Int> {
             levels.getOrNull(zoom)?.let { return it }
@@ -375,7 +377,9 @@ object StreetView {
         if (!validId(id)) return null
         val url = "https://www.google.com/maps/photometa/v1?authuser=0&hl=en&gl=us&pb=" +
             "!1m4!1smaps_sv.tactile!11m2!2m1!1b1!2m2!1sen!2sus!3m3!1m2!1e2!2s$id" +
-            "!4m57!1e1!1e2!1e3!1e4!1e5!1e6!1e8!1e12!2m1!1e1!4m1!1i48!5m1!1e1!5m1!1e2!6m1!1e1!6m1!1e2"
+            "!4m57!1e1!1e2!1e3!1e4!1e5!1e6!1e8!1e12!2m1!1e1!4m1!1i48!5m1!1e1!5m1!1e2!6m1!1e1!6m1!1e2" +
+            "!9m36!1m3!1e2!2b1!3e2!1m3!1e2!2b0!3e3!1m3!1e3!2b1!3e2!1m3!1e3!2b0!3e3!1m3!1e8!2b0!3e3" +
+            "!1m3!1e1!2b0!3e3!1m3!1e4!2b0!3e3!1m3!1e10!2b1!3e2!1m3!1e10!2b0!3e3"
         return Http.getOrNull(url, headers, client)?.takeIf { it.ok }?.let { parse(it.text) }?.takeIf { it.id == id }
     }
 
@@ -398,7 +402,28 @@ object StreetView {
         val tileSize = gint(at(node, 2, 3, 1, 0))?.takeIf { it in 128..1024 } ?: 512
         val width = levels.lastOrNull()?.first ?: gint(at(node, 2, 2, 1))?.takeIf { it in 1024..65536 } ?: 16384
         val height = levels.lastOrNull()?.second ?: gint(at(node, 2, 2, 0))?.takeIf { it in 512..32768 } ?: 8192
-        return Panorama(id, LatLng(lat, lng), width, height, gdbl(at(position, 2, 0)) ?: 0.0, tileSize, levels)
+        val here = LatLng(lat, lng)
+        val graph = arr(at(node, 5, 0, 3, 0)).orEmpty()
+        val historical = arr(at(node, 5, 0, 8)).orEmpty().mapNotNull { item ->
+            val idx = gint(at(item, 0)) ?: return@mapNotNull null
+            gstr(at(graph.getOrNull(idx), 0, 1))
+        }.toSet()
+        val neighbors = graph.mapNotNull { entry ->
+            val neighbor = gstr(at(entry, 0, 1))?.takeIf { validId(it) && it != id && it !in historical } ?: return@mapNotNull null
+            val a = gdbl(at(entry, 2, 0, 2))?.takeIf { it in -90.0..90.0 } ?: return@mapNotNull null
+            val b = gdbl(at(entry, 2, 0, 3))?.takeIf { it in -180.0..180.0 } ?: return@mapNotNull null
+            val point = LatLng(a, b)
+            val distance = here.distanceTo(point)
+            if (distance !in 3.0..38.0) return@mapNotNull null
+            Link(neighbor, point, Geo.bearing(here, point)) to distance
+        }.sortedBy { it.second }
+        val links = buildList<Link> {
+            for ((link, _) in neighbors) {
+                if (none { Geo.diff(it.bearing, link.bearing) < 33 }) add(link)
+            }
+        }
+        return Panorama(id, here, width, height, gdbl(at(position, 2, 0)) ?: 0.0, tileSize, levels, links,
+            gstr(at(node, 4, 0, 0, 0, 0)))
     }
 
     fun tileUrl(pano: Panorama, x: Int, y: Int, zoom: Int) =

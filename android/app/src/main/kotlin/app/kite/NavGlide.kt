@@ -41,9 +41,9 @@ class NavGlide : Choreographer.FrameCallback {
         outputCamera(camera, synchronize = true)
     }
 
-    fun easeFromCurrentCamera() {
+    fun easeFromCurrentCamera(current: CameraPosition? = null) {
         mapTouched = false
-        cameraEntry = map?.cameraPosition
+        cameraEntry = current ?: map?.cameraPosition
         cameraEntryAt = System.nanoTime()
         lastCamera = null
         map?.cancelTransitions()
@@ -130,7 +130,7 @@ class NavGlide : Choreographer.FrameCallback {
         nav = n
         val p = n.progress
         val poly = n.route.polyline
-        if (poly.size != line.size || poly.firstOrNull() != line.firstOrNull() || poly.lastOrNull() != line.lastOrNull()) {
+        if (poly !== line) {
             line = poly
             cum = Geo.cumulative(poly)
             shownAlong = null
@@ -195,7 +195,8 @@ class NavGlide : Choreographer.FrameCallback {
         lastFrame = frameTimeNanos
         step(dt)
         if (running) {
-            val stationary = fixSpeed <= 0.5 && cameraEntry == null
+            val stationary = fixSpeed <= 0.5 && cameraEntry == null && abs(shownPitch - targetPitch) < 0.15 &&
+                abs(northBlend - if (look == MapLook.NORTH) 1.0 else 0.0) < 0.005 && abs(shownAcross - targetAcross) < 1
             val choreographer = Choreographer.getInstance()
             if (mapTouched || stationary || nav?.following == false) choreographer.postFrameCallbackDelayed(this, 48L)
             else choreographer.postFrameCallback(this)
@@ -235,7 +236,7 @@ class NavGlide : Choreographer.FrameCallback {
         // Zooming in for a turn takes about a second; easing back out afterwards is gentler.
         val zoomTime = if (targetAcross < shownAcross) 1.0 else 2.0
         shownAcross += (targetAcross - shownAcross) * (if (dt == 0.0) 1.0 else 1 - exp(-dt / zoomTime))
-        shownPitch += (targetPitch - shownPitch) * (if (dt == 0.0) 1.0 else 1 - exp(-dt / zoomTime))
+        shownPitch += (targetPitch - shownPitch) * (if (dt == 0.0) 1.0 else 1 - exp(-dt / 0.28))
 
         val entering = cameraEntry != null
         if (n.following && !entering) {
@@ -300,7 +301,7 @@ class NavGlide : Choreographer.FrameCallback {
         val from = cameraEntry ?: return target
         val a = from.target ?: return target.also { cameraEntry = null }
         val b = target.target ?: return target.also { cameraEntry = null }
-        val t = ((System.nanoTime() - cameraEntryAt) / 720_000_000.0).coerceIn(0.0, 1.0)
+        val t = ((System.nanoTime() - cameraEntryAt) / 390_000_000.0).coerceIn(0.0, 1.0)
         if (t >= 1.0) {
             cameraEntry = null
             return target

@@ -80,7 +80,7 @@ object Overpass {
 
     enum class ControlKind { SIGNAL, STOP, RAIL, CROSSING }
     data class RoadControl(val kind: ControlKind, val along: Double, val at: LatLng? = null)
-    data class RoadsideNode(val kind: ControlKind, val at: LatLng, val direction: String? = null)
+    data class RoadsideNode(val kind: ControlKind, val at: LatLng, val direction: String? = null, val roads: List<List<LatLng>> = emptyList())
 
     suspend fun controlsInBox(box: Box): List<RoadsideNode>? {
         val filter = "(${box.s.plain()},${box.w.plain()},${box.n.plain()},${box.e.plain()})"
@@ -90,20 +90,24 @@ object Overpass {
     suspend fun controlsOnRoute(line: List<LatLng>, walking: Boolean = false): List<RoadControl>? {
         if (line.size < 2) return emptyList()
         val path = coords(thinTo(line, 150))
-        val raw = controlsQuery("(around:42,$path)", "(around:28,$path)", walking) ?: return null
+        val signals = "(around:42,$path)"
+        val others = "(around:28,$path)"
+        val raw = controlsQuery(signals, others, walking, withWays = true)
+            ?: controlsQuery(signals, others, walking) ?: return null
         return withContext(Dispatchers.Default) { projectControls(parseRoadControls(raw), line) }
     }
 
-    private suspend fun controlsQuery(signals: String, others: String, walking: Boolean = false): ByteArray? {
+    private suspend fun controlsQuery(signals: String, others: String, walking: Boolean = false, withWays: Boolean = false): ByteArray? {
         val tags = if (walking) """node["highway"="crossing"]$others;node["railway"="crossing"]$others;"""
         else """node["highway"="traffic_signals"]$signals;node["highway"="stop"]$others;node["railway"="level_crossing"]$others;"""
+        val roads = if (withWays) """way(bn.controls)["highway"];out geom 180;""" else ""
         return withTimeoutOrNull(12_000) {
-            firstAnswer("""[out:json][timeout:8];($tags);out body 900;""",
+            firstAnswer("""[out:json][timeout:8];($tags)->.controls;.controls out body 900;$roads""",
                 stagger = 1.5, useLocalMirrors = true, get = !signals.startsWith("(around:")) { Json.obj(it)?.get("elements").asList() != null }
         }
     }
 
-    fun projectControls(nodes: List<RoadsideNode>, line: List<LatLng>): List<RoadControl> {
+    fun projectControls(nodes: List<RoadsideNode>, line: List<LatLng>, fromRouter: Boolean = false): List<RoadControl> {
         if (line.size < 2) return emptyList()
         val cum = Geo.cumulative(line)
         val exact = if (line.size > 32 && nodes.size > 3) buildMap {
@@ -115,7 +119,21 @@ object Overpass {
                 ControlKind.SIGNAL, ControlKind.STOP -> 4.0
                 ControlKind.RAIL, ControlKind.CROSSING -> 5.0
             }
-            if (hit.offset > radius) return@mapNotNull null
+            if (hit.offset > radius) {
+                val onWay = hit.offset <= 12 && node.roads.any { road ->
+                    val distances = Geo.cumulative(road)
+                    val at = Geo.project(node.at, road, distances).along
+                    val probes = listOf(-1, 1).map { side ->
+                        listOf(10.0, 20.0).map { at + side * it }
+                    }
+                    probes.any { pair ->
+                        pair.all { it in 0.0..distances.last() } && pair.map {
+                            Geo.project(Geo.point(road, it, distances), line, cum)
+                        }.let { hits -> hits.all { it.offset <= 7.5 } && abs(hits[1].along - hits[0].along) > 5.0 }
+                    }
+                }
+                if (!onWay && !(fromRouter && hit.offset <= 15)) return@mapNotNull null
+            }
             RoadCamera.bearings(node.direction)?.let { directions ->
                 val heading = Geo.bearing(Geo.point(line, hit.along - 5, cum), Geo.point(line, hit.along + 5, cum))
                 if (directions.none { Geo.diff(it, heading) <= 65 }) return@mapNotNull null
@@ -281,8 +299,22 @@ object Overpass {
         return out.sortedBy { it.startMeters }
     }
 
-    fun parseRoadControls(data: ByteArray): List<RoadsideNode> =
-        Json.obj(data)?.get("elements").asMaps().orEmpty().mapNotNull { e ->
+    fun parseRoadControls(data: ByteArray): List<RoadsideNode> {
+        val elements = Json.obj(data)?.get("elements").asMaps().orEmpty()
+        val roads = mutableMapOf<Long, MutableList<List<LatLng>>>()
+        for (element in elements) {
+            if (element["type"] != "way" || element.tags()["highway"] == null) continue
+            val geometry = element["geometry"].asMaps().orEmpty().mapNotNull { node ->
+                val lat = node["lat"].num() ?: return@mapNotNull null
+                val lon = node["lon"].num() ?: return@mapNotNull null
+                LatLng(lat, lon)
+            }
+            if (geometry.size < 2) continue
+            for (id in element["nodes"].asList().orEmpty().mapNotNull { it.long() }) {
+                roads.getOrPut(id) { mutableListOf() }.add(geometry)
+            }
+        }
+        return elements.mapNotNull { e ->
             val tags = e.tags()
             val kind = when {
                 tags["highway"] == "traffic_signals" -> ControlKind.SIGNAL
@@ -293,8 +325,9 @@ object Overpass {
             }
             val lat = e["lat"].num() ?: return@mapNotNull null
             val lng = e["lon"].num() ?: return@mapNotNull null
-            RoadsideNode(kind, LatLng(lat, lng), tags["direction"])
+            RoadsideNode(kind, LatLng(lat, lng), tags["direction"], roads[e["id"].long()].orEmpty())
         }
+    }
 
     fun parseSignalNodes(data: ByteArray): List<SignalNode> {
         val elements = Json.obj(data)?.get("elements").asMaps() ?: return emptyList()

@@ -14,7 +14,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -38,6 +39,7 @@ import app.kite.core.WazeAlert
 @Composable
 fun LayersSheet(liveCount: Int? = null, close: () -> Unit) {
     val s = AppSettings
+    var editColors by rememberSaveable { mutableStateOf(false) }
     val hasHeatmap = WazeAlert.Kind.POLICE in Waze.shares
     ModalBottomSheet(
         onDismissRequest = close,
@@ -64,6 +66,15 @@ fun LayersSheet(liveCount: Int? = null, close: () -> Unit) {
                 }
                 LayerSection("Appearance") {
                     MapAppearance(s.mapStyleMode) { s.mapStyleMode = it }
+                    FilledTonalButton({ editColors = !editColors }, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Filled.Palette, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Interface colors", Modifier.weight(1f))
+                        Icon(if (editColors) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, null)
+                    }
+                    if (editColors) Column(Modifier.clip(RoundedCornerShape(16.dp)).background(interfaceSurface)) {
+                        MapInterfaceColors()
+                    }
                 }
                 LayerSection("Place icons") {
                     LayerRow {

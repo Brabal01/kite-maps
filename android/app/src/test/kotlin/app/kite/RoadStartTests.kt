@@ -47,4 +47,13 @@ class RoadStartTests {
         assertEquals(here, action.destination.location)
         assertEquals(listOf(end, start, via), action.stops)
     }
+
+    @Test fun remotePlannerDoesNotUseThePhoneLocationUntilSelected() {
+        val remote = DirectionsState(end, mode = TravelMode.DRIVE, useCurrentOrigin = false)
+        assertNull(remote.endpoints(here).first)
+        assertNull(remote.roadStart(here))
+        assertEquals(start.location, remote.copy(start = start).endpoints(null).first)
+        assertEquals(here, remote.copy(useCurrentOrigin = true).endpoints(here).first)
+    }
+
 }

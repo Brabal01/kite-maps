@@ -458,7 +458,7 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
         }
         announce(p)
         checkTraffic(p, loc)
-        if (!p.offRoute) refreshRoadControls(p.alongMeters)
+        if (p.offsetMeters <= 120) refreshRoadControls(p.alongMeters)
         checkCameras(p)
         checkWaze(p)
         checkRisk(p)

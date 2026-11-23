@@ -17,17 +17,34 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import app.kite.core.GooglePlaceMedia
 import app.kite.core.Place
+import app.kite.core.PlaceReview
+import kotlinx.coroutines.delay
 import app.kite.primaryText
 
 /** Google Maps' public reviews tab as an in-app fallback when the native feed is empty. */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-internal fun GoogleReviewsPage(place: Place, close: () -> Unit) {
+internal fun GoogleReviewsPage(place: Place, onReviews: (List<PlaceReview>) -> Unit, close: () -> Unit) {
     val ctx = LocalContext.current
     val cid = place.featureId?.let(GooglePlaceMedia::cid)
     val url = cid?.let { "https://www.google.com/maps?cid=$it&hl=en" } ?: place.shareUrl
     var loading by remember(url) { mutableStateOf(true) }
     var error by remember(url) { mutableStateOf(false) }
+    var browser by remember(url) { mutableStateOf<WebView?>(null) }
+    val publish by rememberUpdatedState(onReviews)
+    LaunchedEffect(browser, loading, error) {
+        val view = browser ?: return@LaunchedEffect
+        if (loading || error) return@LaunchedEffect
+        repeat(15) {
+            delay(700)
+            if (view.url?.startsWith("https://www.google.com/maps") != true) return@repeat
+            view.evaluateJavascript(COLLECT_REVIEWS) { reply ->
+                if (browser !== view || view.url?.startsWith("https://www.google.com/maps") != true) return@evaluateJavascript
+                val reviews = GooglePlaceMedia.publicPageReviews(reply.orEmpty())
+                if (reviews.isNotEmpty()) publish(reviews)
+            }
+        }
+    }
     TripSheet("Google Maps reviews", "Done", close) {
         Box(Modifier.fillMaxSize()) {
             AndroidView(
@@ -58,11 +75,16 @@ internal fun GoogleReviewsPage(place: Place, close: () -> Unit) {
                                 }
                             }
                         }
+                        browser = this
                         loadUrl(url)
                     }
                 },
                 onReset = null,
-                onRelease = { view -> view.stopLoading(); view.destroy() },
+                onRelease = { view ->
+                    if (browser === view) browser = null
+                    view.stopLoading()
+                    view.destroy()
+                },
             )
             if (loading) CircularProgressIndicator(Modifier.align(Alignment.Center).size(28.dp))
             if (error) Column(Modifier.align(Alignment.Center).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -83,4 +105,24 @@ private const val SELECT_REVIEWS = """(() => {
         if (button) button.click();
         if (button || ++attempts === 20) clearInterval(timer);
     }, 400);
+})();"""
+
+
+private const val COLLECT_REVIEWS = """(() => {
+    const text = (card, selector) => card.querySelector(selector)?.textContent?.trim() || null;
+    return Array.from(document.querySelectorAll('.jJc9Ad')).slice(0, 24).flatMap(card => {
+        if (!card.matches('[data-review-id]') && !card.querySelector('[data-review-id]')) return [];
+        const author = text(card, '.d4r55,.Vpc5Fe,.TSUbDb');
+        if (!author) return [];
+        const stars = Array.from(card.querySelectorAll('[role="img"][aria-label]'))
+            .map(el => el.getAttribute('aria-label')?.match(/^([1-5])(?:\.0)?\s/))
+            .find(Boolean);
+        const photos = Array.from(card.querySelectorAll('img,button[style],div[style]')).flatMap(el => {
+            const urls = Array.from((el.style.backgroundImage || '').matchAll(/url\(["']?([^"')]+)["']?\)/g), match => match[1]);
+            if (el instanceof HTMLImageElement && (el.currentSrc || el.src)) urls.push(el.currentSrc || el.src);
+            return urls;
+        });
+        return [{author, rating: stars ? Number(stars[1]) : null,
+            text: text(card, '.wiI7pd'), time: text(card, '.rsqaWe'), photos: [...new Set(photos)].slice(0, 16)}];
+    });
 })();"""

@@ -88,4 +88,16 @@ class TransitRideTests {
         assertNull(Transitous.parseMbtaVehicle(data, "abc", now + 90_000))
     }
 
+
+    @Test fun adjacentSignalNeedsEvidenceFromTheRoadItBelongsTo() {
+        val route = listOf(LatLng(50.0, 14.0), LatLng(50.01, 14.0))
+        val at = LatLng(50.0045, 14.00009)
+        val routeRoad = listOf(LatLng(50.004, 14.0), at, LatLng(50.005, 14.0))
+        val sideRoad = listOf(at, LatLng(50.0045, 14.002))
+        val node = Overpass.RoadsideNode(Overpass.ControlKind.SIGNAL, at)
+        assertTrue(Overpass.projectControls(listOf(node.copy(roads = listOf(sideRoad))), route).isEmpty())
+        val signal = Overpass.projectControls(listOf(node.copy(roads = listOf(routeRoad))), route).single()
+        assertEquals(14.0, signal.at?.lng)
+    }
+
 }

@@ -33,11 +33,11 @@ object MapCam {
     }
 
     fun fit(m: MapLibreMap, b: LatLngBounds, padding: IntArray, ms: Int = 600,
-            native: ((CameraPosition, Int) -> Boolean)? = null) {
+            native: ((CameraPosition, Int) -> Boolean)? = null, pitch: Double = 0.0) {
         val d = density()
         val px = padding.map { (it * d).toInt() }
-        val pos = m.getCameraForLatLngBounds(b, intArrayOf(px[0], px[1], px[2], px[3]), 0.0, 0.0) ?: return
+        val pos = m.getCameraForLatLngBounds(b, intArrayOf(px[0], px[1], px[2], px[3]), 0.0, pitch) ?: return
         val z = min(pos.zoom, 17.5)
-        animate(m, CameraPosition.Builder(pos).zoom(z).tilt(0.0).bearing(0.0).build(), ms = ms, native = native)
+        animate(m, CameraPosition.Builder(pos).zoom(z).tilt(pitch).bearing(0.0).build(), ms = ms, native = native)
     }
 }

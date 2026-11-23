@@ -121,7 +121,7 @@ fun EndpointsCard(model: AppModel, state: DirectionsState) {
         Row(Modifier.padding(horizontal = 16.dp).fillMaxWidth().glass(CircleShape, solid = true).padding(end = 4.dp),
             verticalAlignment = Alignment.CenterVertically) {
             IconButton(model::closeDirections) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-            Text("${points.first().waypointName()} → ${points.last().waypointName()}", color = primaryText,
+            Text("${if (state.missingOrigin) "Choose start" else points.first().waypointName()} → ${points.last().waypointName()}", color = primaryText,
                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).tap { compact = false })
             IconButton({ compact = false }) { Icon(Icons.Filled.ExpandMore, "Expand route places") }
         }
@@ -166,7 +166,7 @@ private fun RouteEditor(model: AppModel, state: DirectionsState, close: () -> Un
     val draft = model.routePlan("")
     var naming by remember { mutableStateOf(false) }
     var name by remember { mutableStateOf("") }
-    val canMove = model.userLatLng != null || points.none { it == null }
+    val canMove = !state.missingOrigin && (model.userLatLng != null || points.none { it == null })
     val dark = LocalDark.current
     val scroll = rememberScrollState()
     var dragged by remember { mutableStateOf<Int?>(null) }
@@ -240,8 +240,9 @@ private fun RouteEditor(model: AppModel, state: DirectionsState, close: () -> Un
                     val moving = dragIndex == index
                     Box(Modifier.fillMaxWidth().height(rowHeight).zIndex(if (moving) 1f else 0f)
                         .graphicsLayer { translationY = shift }
-                        .background(if (moving) Vela.chip(dark) else Vela.ground(dark))) {
-                        Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+                        .padding(vertical = 3.dp).clip(RoundedCornerShape(15.dp))
+                        .background(if (moving) interfaceAccent.copy(alpha = 0.18f) else interfaceSurface)) {
+                        Row(Modifier.fillMaxSize().padding(end = 3.dp), verticalAlignment = Alignment.CenterVertically) {
                             Box(Modifier.width(52.dp).fillMaxHeight().semantics {
                                 contentDescription = "Drag ${place.waypointName()} to reorder"
                             }, contentAlignment = Alignment.Center) {
@@ -253,7 +254,10 @@ private fun RouteEditor(model: AppModel, state: DirectionsState, close: () -> Un
                                     points.lastIndex -> "Destination"
                                     else -> "Stop $index"
                                 }, color = secondaryText, fontSize = KType.caption)
-                                Text(place.waypointName(), color = primaryText, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                Text(if (index == 0 && state.missingOrigin) "Choose starting point" else place.waypointName(),
+                                    color = if (index == 0 && state.missingOrigin) interfaceAccentText else primaryText,
+                                    fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                                    modifier = if (index == 0 && !state.reversed) Modifier.tap { close(); model.pickingOrigin = true } else Modifier)
                             }
                             IconButton({ model.moveWaypoint(index, -1) }, enabled = canMove && index > 0) {
                                 Icon(Icons.Filled.KeyboardArrowUp, "Move up")
@@ -265,12 +269,16 @@ private fun RouteEditor(model: AppModel, state: DirectionsState, close: () -> Un
                                 Icon(Icons.Filled.Close, "Remove stop")
                             } else Spacer(Modifier.width(48.dp))
                         }
-                        HorizontalDivider(Modifier.align(Alignment.BottomCenter))
                     }
                 }
+                if (!state.transit && state.stops.size < 8) FilledTonalButton(
+                    { close(); model.addingStop = true }, Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                    Icon(Icons.Filled.AddLocationAlt, null, Modifier.size(19.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Add stop")
+                }
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    TextButton(model::reverseDirections) { Text("Reverse") }
-                    if (!state.transit && state.stops.size < 8) TextButton({ close(); model.addingStop = true }) { Text("Add stop") }
+                    TextButton({ if (state.missingOrigin) close(); model.reverseDirections() }) { Text("Reverse") }
                     TextButton({ name = draft?.name.orEmpty(); naming = true }, enabled = draft != null) { Text("Save route") }
                     TextButton({ draft?.let { ctx.share(it.shareText()) } }, enabled = draft != null) { Text("Share route") }
                 }
@@ -298,7 +306,8 @@ private fun OriginRow(model: AppModel, state: DirectionsState) {
     Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Icon(if (state.start == null) Icons.Filled.MyLocation else Icons.Outlined.Circle, null,
             tint = if (state.reversed) Vela.closed else Vela.tealLight, modifier = Modifier.size(18.dp))
-        Text(state.start?.name ?: "Your location", fontSize = 19.sp, fontWeight = FontWeight.SemiBold, color = primaryText, maxLines = 1,
+        Text(state.start?.name ?: if (state.missingOrigin) "Choose starting point" else "Your location",
+            fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = if (state.missingOrigin) interfaceAccentText else primaryText, maxLines = 1,
             overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).tap { model.pickingOrigin = true })
         if (state.start != null) {
             Icon(Icons.Filled.Close, "Start from your location", tint = secondaryText,
@@ -466,6 +475,10 @@ fun TripHeader(model: AppModel) {
             Box(Modifier.weight(1f)) {
                 val r = d.route
                 when {
+                    d.missingOrigin -> Column {
+                        Text("Choose where to start", color = primaryText, fontWeight = FontWeight.Bold)
+                        TextButton({ model.pickingOrigin = true }) { Text("Set starting point") }
+                    }
                     d.waitingForLocation -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(when {
                             model.location.denied -> AppModel.LOCATION_OFF_TEXT
@@ -519,7 +532,7 @@ fun ModeTabs(model: AppModel, state: DirectionsState) {
             ModeTile(modeIcon(m), !state.transit && m == state.mode, m in state.loading,
                 state.routes[m]?.firstOrNull()?.let { Fmt.shortDuration(it.durationSeconds) }) { model.setMode(m) }
         }
-        ModeTile(Icons.Filled.Tram, state.transit, state.transit && state.trips == null && !state.waitingForLocation,
+        ModeTile(Icons.Filled.Tram, state.transit, state.transit && state.trips == null && !state.waitingForLocation && !state.missingOrigin,
             // The same trip the header shows (the picked one, else the first), so the two never disagree.
             (state.pickedTrip ?: state.trips?.firstOrNull())?.let { Fmt.shortDuration(it.durationSeconds) }) { model.showTransit() }
     }
@@ -732,6 +745,7 @@ fun TransitBody(model: AppModel, state: DirectionsState) {
             }
         }
     }
+    if (state.missingOrigin) return
     val trips = state.trips
     var expandedTrip by rememberSaveable { mutableStateOf<String?>(null) }
     when {
@@ -814,6 +828,8 @@ fun TripRow(trip: TransitTrip, picked: Boolean, expanded: Boolean, live: Transit
                 delay != null -> Text(transitDelay(delay), fontSize = KType.caption, color = if (delay > 0) Vela.closed else Vela.open)
             }
         }
+        (live?.board?.platform ?: trip.rides.firstOrNull()?.calls?.firstOrNull()?.platform)
+            ?.takeIf(String::isNotBlank)?.let { Text("Platform $it", fontSize = KType.caption, fontWeight = FontWeight.Bold, color = interfaceAccentText) }
     }
 }
 
@@ -1005,7 +1021,7 @@ fun OriginPicker(model: AppModel) {
         if (text.isEmpty()) return
         job?.cancel()
         searching = true
-        val (center, span) = model.viewport
+        val (center, span) = model.directions?.takeIf { it.missingOrigin }?.destination?.location?.let { it to 50_000.0 } ?: model.viewport
         job = scope.launch {
             results = PlaceSearch.search(text, center, span, !AppSettings.noGoogle).places.take(25)
             searching = false

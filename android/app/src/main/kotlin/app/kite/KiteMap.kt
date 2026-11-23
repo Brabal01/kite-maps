@@ -235,12 +235,14 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             model.nativeCamera = { camera, duration ->
                 scenery?.takeIf { it.ready }?.animateCamera(camera, duration) == true
             }
+            model.visibleCamera = { scenery?.takeIf { it.ready }?.cameraPosition() ?: m.cameraPosition }
             m.uiSettings.isCompassEnabled = false
             m.uiSettings.isLogoEnabled = false
             m.uiSettings.setAttributionMargins(24, 0, 0, 24)
             m.uiSettings.isAttributionEnabled = true
             if (model.glide.followingCamera != null) model.glide.restoreFollowingCamera()
-            else m.cameraPosition = CameraPosition.Builder().target(org.maplibre.android.geometry.LatLng(51.5074, -0.1278)).zoom(11.0).build()
+            else m.cameraPosition = CameraPosition.Builder().target(org.maplibre.android.geometry.LatLng(51.5074, -0.1278))
+                .zoom(11.0).tilt(if (model.browseLook == MapLook.TILTED) 48.0 else 0.0).build()
             v.addOnDidFailLoadingMapListener {
                 if (loadingStyle?.token != null) {
                     Toast.makeText(context, "Mapbox map unavailable. Using OpenFreeMap.", Toast.LENGTH_LONG).show()
@@ -325,6 +327,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         if (model.map === map) {
             model.glide.cameraOutput = null
             model.nativeCamera = null
+            model.visibleCamera = null
             model.map = null
         }
         map = null
@@ -565,6 +568,8 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             (style.getLayer(OpenMapStyle.POIS) as? SymbolLayer)?.setFilter(raw(OpenMapStyle.filter(s.openPlaceGroups)))
             visible(style, OpenMapStyle.HIKING, !native && s.hikingTrails)
             visible(style, OpenMapStyle.CYCLING, !native && s.bikeTrails)
+            visible(style, OpenMapStyle.WALK_PATHS, !native && s.hikingTrails)
+            visible(style, OpenMapStyle.BIKE_PATHS, !native && s.bikeTrails)
             scenery?.applyOutdoorLayers()
         }
         fun features(places: List<Place>) = places.map { place ->
@@ -748,6 +753,16 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             }, 256))
             val layer = RasterLayer(id, id).withProperties(rasterOpacity(0.9f), visibility(Property.NONE))
             firstSymbolLayer(style)?.let { style.addLayerBelow(layer, it) } ?: style.addLayer(layer)
+        }
+        for ((id, definition) in OpenMapStyle.pathLayers) {
+            val (filter, tint) = definition
+            val path = LineLayer(id, openSource).withSourceLayer("transportation")
+                .withFilter(raw(filter)).withProperties(
+                    lineColor(tint.toInt()), lineWidth(interpolate(linear(), zoom(), stop(14, 1.4f), stop(19, 3.2f))),
+                    lineOpacity(0.82f), lineCap(Property.LINE_CAP_ROUND), visibility(Property.NONE),
+                )
+            path.minZoom = 14f
+            firstSymbolLayer(style)?.let { style.addLayerBelow(path, it) } ?: style.addLayer(path)
         }
         style.addSource(RasterSource("vela-terrain", TileSet("tiles", "https://services.arcgisonline.com/ArcGIS/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}")
             .apply { maxZoom = 16f; attribution = "Hillshade © Esri" }, 256))
@@ -1162,7 +1177,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         val walking = nav?.route?.mode == TravelMode.WALK
         val range = if (walking) 650 else 5000
         val controls = nav?.roadControls.orEmpty().filter {
-            nav?.progress?.offRoute != true && model.settings.showsControl(it.kind) &&
+            (nav?.progress?.offsetMeters ?: 0.0) <= 120 && model.settings.showsControl(it.kind) &&
                 it.along in (from - 12)..(from + range) && (walking || it.kind != Overpass.ControlKind.CROSSING)
         }
         val key = "${nav?.route?.id}|${controls.hashCode()}"
@@ -1377,17 +1392,17 @@ class KiteMap(private val model: AppModel, private val context: Context) {
     private fun renderResults(style: Style?) {
         val showList = model.directions == null && !model.isGuiding
         val list = if (showList) model.visibleResults else emptyList()
-        val plan = model.directions.takeIf { model.nav == null }?.orderedPlaces()
+        val directions = model.directions.takeIf { model.nav == null }
+        val plan = directions?.orderedPlaces()
         val here = model.userLatLng
         val target = model.mapNavigator?.destination ?: model.transitGuidance?.destination ?:
             if (plan != null) plan.last() else model.selected
         val destination = target?.location ?: here.takeIf { plan != null }
-        val origin = plan?.let { it.first()?.location ?: here }
+        val origin = plan?.let { it.first()?.location ?: here.takeUnless { directions.missingOrigin } }
         val stops = model.nav?.stops ?: plan?.drop(1)?.dropLast(1)?.filterNotNull().orEmpty()
         val searchSelection = target != null && list.any { it.id == target.id }
-        val ambientSelection = plan == null && !model.isGuiding && target != null && target.id == model.selectedAmbientOsmId
         fun cell(at: LatLng?) = at?.let { "${(it.lat * 7000).toInt()},${(it.lng * 7000).toInt()}" }
-        val destinationKey = "${target?.id}:${cell(destination)}:$ambientSelection"
+        val destinationKey = "${target?.id}:${cell(destination)}"
         val key = "${list.joinToString(",") { it.id }}|$destinationKey|${cell(origin)}|${stops.joinToString(",") { it.id }}"
         if (key == lastResultsKey) return
         lastResultsKey = key
@@ -1396,7 +1411,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             point(p.location, mapOf("id" to p.id, "icon" to MapIcons.searchName(p), "label" to listOfNotNull(p.name, rating).joinToString("\n"), "rank" to i))
         })
         val sel = mutableListOf<Feature>()
-        if (destination != null && !searchSelection && !ambientSelection) {
+        if (destination != null && !searchSelection ) {
             sel.add(point(destination, mapOf("id" to (target?.id ?: "destination"), "icon" to "pin-selected", "anchor" to "bottom", "label" to (target?.name ?: "Your location"))))
         }
         stops.forEachIndexed { i, stop -> sel.add(point(stop.location, mapOf("id" to "stop$i", "icon" to "pin-stop", "anchor" to "center", "label" to stop.name))) }
@@ -1668,7 +1683,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             val g = poi.geometry() as? Point
             model.select(Place("osm:${g?.latitude()},${g?.longitude()}:$name", name,
                 g?.let { LatLng(it.latitude(), it.longitude()) } ?: at.kite(), "osm",
-                category = str(poi, "subclass") ?: str(poi, "class")), focus = false, ambientOsm = true)
+                category = str(poi, "subclass") ?: str(poi, "class")), focus = false)
             return true
         }
         if (model.selected != null) model.closePlace()

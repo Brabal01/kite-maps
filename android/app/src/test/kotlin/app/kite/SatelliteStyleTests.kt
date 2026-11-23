@@ -3,6 +3,7 @@ package app.kite
 import app.kite.core.Json
 import app.kite.core.asMap
 import app.kite.core.asMaps
+import app.kite.core.int
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -18,7 +19,8 @@ class SatelliteStyleTests {
             val sources = assertNotNull(root["sources"].asMap())
             val source = assertNotNull(sources[imagery["source"]].asMap())
             assertEquals("raster", source["type"])
-            assertEquals(listOf("${SatelliteStyle.URL}/tile/{z}/{y}/{x}"), source["tiles"])
+            assertEquals(listOf("${SatelliteStyle.URL}/tile/{z}/{y}/{x}?blankTile=false"), source["tiles"])
+            assertEquals(21, source["maxzoom"].int())
             assertEquals("background", layers.first()["type"])
             assertEquals(1, layers.indexOf(imagery))
             val slots = layers.drop(2).map { it["id"] to it["type"] }

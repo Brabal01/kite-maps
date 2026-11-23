@@ -60,7 +60,7 @@ fun BrowseOverlay(model: AppModel, showMapbox: Boolean) {
     val ctx = LocalContext.current
     val s = AppSettings
     var focused by remember { mutableStateOf(false) }
-    var showCategories by rememberSaveable { mutableStateOf(true) }
+    var showCategories by rememberSaveable { mutableStateOf(false) }
     val focus = LocalFocusManager.current
     val hasSheet = model.selected != null || model.results.isNotEmpty()
     val idle = !hasSheet && !focused
@@ -119,15 +119,35 @@ fun BrowseOverlay(model: AppModel, showMapbox: Boolean) {
             KiteDock(model)
         }
 
-        Column(Modifier.fillMaxWidth().statusBarsPadding().padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (!hasSheet || model.detent != SheetDetent.FULL || focused) Column(
+            Modifier.fillMaxWidth().statusBarsPadding().padding(top = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
             SearchBar(model, focused, { focused = it }, unfocus = { focus.clearFocus(); focused = false })
-            if (idle) {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp).horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+            if (idle && s.categoryMenu) {
+                Column(Modifier.padding(horizontal = 16.dp)) {
                     AssistChip({ showCategories = !showCategories }, { Text("Places") },
+                        leadingIcon = { Icon(Icons.Filled.Category, null, Modifier.size(18.dp)) },
                         trailingIcon = { Icon(if (showCategories) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, null) },
                         colors = AssistChipDefaults.assistChipColors(containerColor = interfaceSurface))
-                    if (showCategories) Category.all.take(6).forEach { category ->
+                    AnimatedVisibility(showCategories,
+                        enter = androidx.compose.animation.expandVertically() + fadeIn(),
+                        exit = androidx.compose.animation.shrinkVertically() + fadeOut()) {
+                        Column(Modifier.widthIn(min = 190.dp).heightIn(max = 300.dp).clip(RoundedCornerShape(18.dp))
+                            .background(interfaceSheet).verticalScroll(rememberScrollState()).padding(vertical = 5.dp)) {
+                            for (category in Category.all) {
+                                IconRow(category.icon, category.label) {
+                                    showCategories = false
+                                    model.search(category.query, category.label)
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if (idle) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp).horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Category.all.forEach { category ->
                         AssistChip({ model.search(category.query, category.label) }, { Text(category.label) },
                             leadingIcon = { Icon(category.icon, null, Modifier.size(16.dp)) },
                             colors = AssistChipDefaults.assistChipColors(containerColor = interfaceSurface))
