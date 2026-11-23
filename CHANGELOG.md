@@ -3,6 +3,30 @@
 Every version of Kite Maps, newest first. The small number goes up for fixes and polish, and
 the middle number for big milestones.
 
+## v36 roundabout accuracy, live traffic and simulator fix (branch `iphone-custom-v36-traffic-roundabout-accuracy`)
+
+Built on the verified v35 `a616f490`; PR #14 targets the v35 branch. Details in
+`docs/V36_ROUNDABOUT_ACCURACY.md` and `docs/V36_LIVE_TRAFFIC.md`.
+
+- **Roundabout exit accuracy (Olomouc, Vejdovského):** captured the real,
+  fragmented seven-way ring as a golden OpenStreetMap fixture. Regression tests prove
+  the through drive (SW → NE Vejdovského) resolves to the **2nd** exit and overrides
+  the router's wrong "1st", while the first (service) arm still resolves to 1.
+  Root cause was display/timing, not counting: an unconfirmed router-only number was
+  shown as if certain, and a late OSM answer was frozen once a heads-up was spoken.
+  Now an exit is shown only when confirmed (`RoundaboutExitResolver` §3.7), and the
+  freeze is narrowed to the turn actually being said so a late correct answer lands
+  everywhere at once (§3.8).
+- **Live traffic without a route:** new `TrafficOverlayState` — one shared model
+  separating map overlay, route congestion and incidents, with an honest
+  on/loading/off/unavailable/coverage status. The layer inspector reports a live
+  "PROVIDER: STATUS" line while browsing. MapLibre in no-Google mode is truthfully
+  "no coverage" rather than a fake free-flow overlay.
+- **Simulator fix:** the v35 rail-demo fixture is no longer gated on map zoom, so the
+  transit layer reappears after car navigation ends (fixes `V35UITests` line 39).
+- **CI:** the v36 branch is wired into the simulator PR and custom-IPA push lists so
+  the mandatory checks run on this PR; custom IPA artifacts are named `Kite-v36-*`.
+
 ## v33 reliability and UX (branch `iphone-custom-v33-reliability-ux`)
 
 Built on v32 `c812777`; PR #11 targets the v32 branch. Details in `docs/V33_ARCHITECTURE.md`.

@@ -1,5 +1,14 @@
 # Test results
 
+## v36 (branch `iphone-custom-v36-traffic-roundabout-accuracy`)
+
+* VelaCore: **440 tests, 0 failures** (6 skips for live/opt-in checks), run in a
+  `swift:6.0` container. New suites: `OlomoucRoundaboutTests` (5, real OSM golden
+  fixture) and `TrafficOverlayStateTests` (8).
+* Detailed results: `docs/V36_TEST_RESULTS.md`.
+* iOS build, simulator UI and IPA results are on PR #14.
+* Physical-device checks: `docs/V36_DEVICE_TEST_CHECKLIST.md`.
+
 ## v33 (branch `iphone-custom-v33-reliability-ux`)
 
 * VelaCore: **420 tests, 0 failures** (6 skips without live checks, 3 Darwin-only skips with

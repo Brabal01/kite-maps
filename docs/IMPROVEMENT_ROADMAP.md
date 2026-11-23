@@ -3,6 +3,22 @@
 This is a living backlog, not a claim that everything below exists. Items already shipped are
 marked **done**; everything else needs code and tests.
 
+## v36 status
+
+- **Done + unit-tested**: roundabout exit accuracy on the real Olomouc/Vejdovského
+  golden fixture (through drive resolves to the 2nd exit, overriding the router's
+  "1st"; an exit is shown only when confirmed, §3.7; a late OSM answer is frozen
+  only at the turn actually being said, §3.8). `TrafficOverlayState` — one shared
+  live-traffic model with an honest status, separating map/route/incident. The v35
+  simulator rail fixture is no longer gated on zoom (fixes `V35UITests` line 39).
+- **Done but needs a device**: real Olomouc drive, Apple/Google live tiles on a
+  phone, transit-layer hide/restore on a physical device, Live Activity, battery,
+  map FPS — see `docs/V36_DEVICE_TEST_CHECKLIST.md`.
+- **Still open (P2/P3)**: saved journeys, MHD Live Activity, smart voice, adaptive
+  performance, diagnostic incident reporter, smart reroute, way-alternatives,
+  road-intelligence enrichment, registry-driven transit fallback, Malta/Istanbul
+  transit, map-style refresh, HUD 4.0.
+
 ## v33 status
 
 - **Done**: Overpass response validation and central status classification, GPS jump guard and event-driven worker wake, complete-answer-only cache, three-level diagnostics with preview, camera jurisdiction from geocoding, Swift 6/deprecation warnings, replay controls, golden navigation fixtures, route preview, settings search, quick-action reorder, benchmark executable.

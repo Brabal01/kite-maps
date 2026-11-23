@@ -690,19 +690,32 @@ final class Navigator: ObservableObject {
             guard r.maneuvers.contains(where: { $0.type == .roundabout }),
                   let drawn = await Roundabouts.apply(to: r), self.route.id == r.id, self.route.maneuvers.count == drawn.maneuvers.count else { return }
             // The number, the words and the picture change together, so banner, diagram, voice and
-            // Live Activity read one authoritative maneuver. A prompt already spoken is frozen:
-            // late map evidence must not contradict what the driver has just heard.
+            // Live Activity read one authoritative maneuver.
+            //
+            // A prompt already spoken is frozen: late map evidence must not contradict what the
+            // driver has just heard. But V36 narrows that freeze to the turn that is actually being
+            // said (stage 3). Before that — during the "in 200 yards" heads-up (stage ≤ 2) — the
+            // number shown in the banner is corrected as soon as the map answers, so a router's wrong
+            // "1st exit" is replaced with the real one while there is still time to act. The voice
+            // never re-reads a number it has already spoken, so nothing sounds contradictory.
+            let imminentNow = max(40, speedMps * 4)
             for i in self.route.maneuvers.indices where i < drawn.maneuvers.count {
                 let d = drawn.maneuvers[i]
-                guard d.type == .roundabout, (self.spokenStage[i] ?? 0) < 2 else { continue }
+                guard d.type == .roundabout else { continue }
+                // Freeze only the imminent, already-spoken turn (stage 3, or within "say it now" reach).
+                // Before that the on-screen number and words are updated as soon as the map answers.
+                let atTurn = (spokenStage[i] ?? 0) >= 3
+                    || (progress.map { $0.distanceToNext <= imminentNow } ?? false)
                 self.route.maneuvers[i].roundabout = d.roundabout
-                self.route.maneuvers[i].exit = d.exit
-                self.route.maneuvers[i].instruction = d.instruction
-                self.route.maneuvers[i].routerExit = d.routerExit
-                self.route.maneuvers[i].alternativeExit = d.alternativeExit
-                self.route.maneuvers[i].exitSource = d.exitSource
-                self.route.maneuvers[i].exitConfidence = d.exitConfidence
-                self.route.maneuvers[i].exitAmbiguous = d.exitAmbiguous
+                if !atTurn {
+                    self.route.maneuvers[i].exit = d.exit
+                    self.route.maneuvers[i].instruction = d.instruction
+                    self.route.maneuvers[i].routerExit = d.routerExit
+                    self.route.maneuvers[i].alternativeExit = d.alternativeExit
+                    self.route.maneuvers[i].exitSource = d.exitSource
+                    self.route.maneuvers[i].exitConfidence = d.exitConfidence
+                    self.route.maneuvers[i].exitAmbiguous = d.exitAmbiguous
+                }
             }
             // The road matcher's lane counts, where OpenStreetMap's layout came without them.
             if let steps = Roundabouts.withEntryLanes(self.route.maneuvers, self.entryLanes) { self.route.maneuvers = steps }
