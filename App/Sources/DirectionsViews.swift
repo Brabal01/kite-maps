@@ -898,6 +898,11 @@ private struct TransitFallbackLinks: View {
                     Link(destination: url) { Label("Tallinja journey planner", systemImage: "arrow.up.right.square") }
                         .font(.subheadline)
                 }
+                if [from, to].allSatisfy({ (40.80...41.27).contains($0.lat) && (28.53...29.45).contains($0.lng) }),
+                   let url = URL(string: "https://metro.istanbul/en/") {
+                    Link(destination: url) { Label("Metro İstanbul journey planner", systemImage: "arrow.up.right.square") }
+                        .font(.subheadline)
+                }
                 if state.transitTime != nil {
                     Text("Set the departure or arrival time in the other planner.")
                         .font(.caption2).foregroundStyle(.secondary)

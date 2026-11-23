@@ -1628,10 +1628,10 @@ final class AppModel: ObservableObject {
                 guard !Task.isCancelled, directions?.destination.id == destId, transitRequest == req else { return }
                 directions?.transitProvider = provider
                 directions?.trips = trips.sorted { $0.durationSeconds < $1.durationSeconds }
-                if directions?.transit == true { frameRoute() }
                 if trips.isEmpty { directions?.tripsError = "No transit trips found here." }
                 updatePlanningTransit(count: trips.count, requestID: sessionID,
                                       failure: trips.isEmpty ? .noRoute : nil)
+                if directions?.transit == true { frameRoute() }
                 // Transitous already carries live times from its own GTFS-Realtime sources. An
                 // optional extra feed can add another region's delays, alerts and vehicle positions.
                 if !trips.isEmpty, provider == "Transitous",
@@ -1648,7 +1648,6 @@ final class AppModel: ObservableObject {
                 updatePlanningTransit(count: 0, requestID: sessionID,
                                       failure: Connectivity.shared.online ? .routerUnavailable : .offline)
             }
-            if directions?.transit == true { frameRoute() }
         }
     }
 
