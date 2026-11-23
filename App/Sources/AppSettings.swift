@@ -187,6 +187,7 @@ final class AppSettings: ObservableObject {
     /** Live camera photos (GitHub #15): camera dots on the map, and the cameras along a route before you go. */
     @Published var liveCams: Bool { didSet { d.set(liveCams, forKey: "liveCams") } }
     /** An optional GTFS-Realtime feed for the transit planner: delays, alerts and vehicle positions. */
+    @Published var transitFallbackServer: String { didSet { d.set(transitFallbackServer, forKey: "transitFallbackServer") } }
     @Published var gtfsRealtimeURL: String { didSet { d.set(gtfsRealtimeURL, forKey: "gtfsRealtimeURL") } }
     /**
      * Discover a public GTFS-Realtime feed from the Mobility Database catalog when no manual URL
@@ -271,6 +272,7 @@ final class AppSettings: ObservableObject {
         parkingButton = d.object(forKey: "parkingButton") as? Bool ?? true
         liveCams = d.object(forKey: "liveCams") as? Bool ?? true
         liveRoadCams = d.object(forKey: "liveRoadCams") as? Bool ?? true
+        transitFallbackServer = d.string(forKey: "transitFallbackServer") ?? ""
         gtfsRealtimeURL = d.string(forKey: "gtfsRealtimeURL") ?? ""
         autoTransitFeeds = d.object(forKey: "autoTransitFeeds") as? Bool ?? true
         liveWebcams = d.object(forKey: "liveWebcams") as? Bool ?? true

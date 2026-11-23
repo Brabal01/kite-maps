@@ -16,6 +16,7 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     @Published private(set) var reducedAccuracy = false
     /** The phone's compass, true north when iOS has it, magnetic otherwise. Nil while the compass is off or unreliable. */
     @Published private(set) var deviceHeading: Double?
+    var onHeadingChanged: (() -> Void)?
     var onUpdate: (@MainActor (CLLocation) -> Void)?
 
     /**
@@ -450,6 +451,7 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
         guard (0..<360).contains(value) else { return }
         Task { @MainActor in
             self.deviceHeading = value
+            self.onHeadingChanged?()
         }
     }
 

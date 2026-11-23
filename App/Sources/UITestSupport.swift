@@ -7,6 +7,47 @@ import VelaCore
  it: every entry point checks for the launch arguments below first.
  */
 enum UITestSupport {
+    #if targetEnvironment(simulator)
+    static var mapLayers: Bool {
+        ProcessInfo.processInfo.arguments.contains("-uitest-map-layers")
+    }
+
+    static let mapLayerOrigin = LatLng(49.590, 17.265)
+
+    static var mapLayerLines: [Transitous.Line] {
+        let payload = #"{"routes":[{"mode":"TRAM","transitRoutes":[{"color":"F21C74","shortName":"5"}]}],"polylines":[{"polyline":{"points":"optmHonjhBgEgE_DkH","precision":5},"routeIndexes":[0]}]}"#
+        return Transitous.parseLines(Data(payload.utf8))
+    }
+
+    @MainActor
+    static func installMapLayers(_ model: AppModel) {
+        model.endNavigation()
+        model.tab = .map
+        model.settings.welcomed = true
+        model.settings.wazeAsked = true
+        model.settings.waze = false
+        model.settings.transitLines = true
+        model.settings.hiddenTransitCategories = []
+        model.settings.useAppleMaps = true
+        model.settings.satellite = false
+        model.settings.traffic = false
+        model.map?.camera = model.startCamera(at: CLLocationCoordinate2D(
+            latitude: mapLayerOrigin.lat, longitude: mapLayerOrigin.lng))
+        model.setLayerInspection(true)
+    }
+
+    @MainActor
+    static func startMapLayerDrive(_ model: AppModel) {
+        let from = mapLayerOrigin
+        let to = LatLng(49.601, 17.285)
+        let destination = Place(id: "layer-test", name: "Map layer test", location: to, source: "demo")
+        var state = DirectionsState(destination: destination, origin: nil, exclusion: nil, mode: .drive)
+        state.routes[.drive] = routes(from: from, to: to, mode: .drive)
+        model.directions = state
+        model.startNavigation()
+    }
+    #endif
+
     static var planning: Bool {
         ProcessInfo.processInfo.arguments.contains("-uitest-planning")
     }

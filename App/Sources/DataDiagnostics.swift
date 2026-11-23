@@ -156,6 +156,14 @@ struct DataDiagnosticsView: View {
             }
 
             Section {
+                Toggle("Map Layer Inspector", isOn: Binding(
+                    get: { model.layerInspectionEnabled }, set: { model.setLayerInspection($0) }
+                ))
+            } footer: {
+                Text("Return to the map to isolate layers while parked. Close the inspector to restore every layer.")
+            }
+
+            Section {
                 Toggle("Detailed diagnostics", isOn: $detailed)
                     .onChange(of: detailed) { on in
                         DiagnosticsLog.shared.setDetailed(on)

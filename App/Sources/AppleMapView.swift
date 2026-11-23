@@ -47,8 +47,6 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
     private var pins: [String: [FeaturePin]] = [:]
     private var lines: [String: [MKPolyline]] = [:]
     private var paints: [ObjectIdentifier: LinePaint] = [:]
-    private var railGeometry: [MLNPolylineFeature] = []
-    private var showsRail = false
     private var heatLayer: AppleHeatTiles?
     private var puck: FeaturePin?
     private var puckBearing: Double = 0
@@ -78,7 +76,8 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
         }
         native.layoutMargins.bottom = 108
         let start = coordinator.model.mapStart
-        setCenter(start.center, zoomLevel: start.zoom, animated: false)
+        if start.usesFreshFix { camera = coordinator.model.startCamera(at: start.center) }
+        else { setCenter(start.center, zoomLevel: start.zoom, animated: false) }
         native.selectableMapFeatures = [.pointsOfInterest, .physicalFeatures, .territories]
         native.delegate = self
 
@@ -102,10 +101,6 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
         native.addGestureRecognizer(press)
         native.addGestureRecognizer(tap)
 
-        if let camera = pendingCamera {
-            camera.pitch = coordinator.model.browsePitch
-            pendingCamera = camera
-        }
     }
 
     required init?(coder: NSCoder) { nil }
@@ -220,7 +215,8 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
         completionHandler?()
     }
 
-    func apply(settings: AppSettings, dark: Bool, navigating: Bool, showsRail: Bool) {
+    func apply(settings: AppSettings, dark: Bool, navigating: Bool, driving: Bool,
+               showTraffic: Bool, showHeat: Bool) {
         let oldDark = self.dark
         let oldNavigating = self.navigating
         self.dark = dark
@@ -237,14 +233,12 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
                 native.preferredConfiguration = MKStandardMapConfiguration(elevationStyle: elevation, emphasisStyle: .muted)
             }
         }
-        let preset: MapPreset = navigating && settings.mapPreset != .minimal ? .navigation : settings.mapPreset
+        let preset: MapPreset = driving && settings.mapPreset != .minimal ? .navigation : settings.mapPreset
         let profile = MapPresetCatalog.profile(for: preset)
         native.pointOfInterestFilter = profile.showPOI ? .includingAll : .excludingAll
         let showBuildings = !settings.satellite && profile.showBuildings && (!navigating || settings.navBuildings)
         if native.showsBuildings != showBuildings { native.showsBuildings = showBuildings }
-        let showTraffic = settings.traffic && settings.welcomed && profile.showTraffic
         if native.showsTraffic != showTraffic { native.showsTraffic = showTraffic }
-        let showHeat = settings.wazeOn && settings.wazeHeatmap && settings.wazePolice
         if showHeat && heatLayer == nil {
             let layer = AppleHeatTiles()
             heatLayer = layer
@@ -256,10 +250,6 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
         } else if !showHeat, let heatLayer {
             native.removeOverlay(heatLayer)
             self.heatLayer = nil
-        }
-        if showsRail != self.showsRail {
-            self.showsRail = showsRail
-            replaceLines(showsRail ? railGeometry : [], source: "vela-rail")
         }
         if oldDark != dark || oldNavigating != navigating { refreshLineColors() }
         if settings.navArrowScale != arrowScale || oldDark != dark {
@@ -298,8 +288,7 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
             shapes = shape.map { [$0] } ?? []
         }
         let geometry = shapes.compactMap { $0 as? MLNPolylineFeature }
-        if source == "vela-rail" { railGeometry = geometry }
-        replaceLines(source == "vela-rail" && !showsRail ? [] : geometry, source: source)
+        replaceLines(geometry, source: source)
         let old = pins.removeValue(forKey: source) ?? []
         if !old.isEmpty { native.removeAnnotations(old) }
         let next = shapes.compactMap { ($0 as? MLNPointFeature).map { FeaturePin($0, source: source) } }
