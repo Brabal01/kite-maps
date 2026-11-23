@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.border
@@ -154,10 +155,20 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean,
             Box(Modifier.fillMaxWidth().offset {
                 IntOffset(0, with(density) { (NavGlide.carY(h.value, model.glide.carNorth).dp - 38.dp).roundToPx() })
             }, contentAlignment = Alignment.TopCenter) {
-                Image(puck, null, Modifier.size(76.dp).graphicsLayer {
-                    if (!tilted) scaleY = model.glide.carSquash
-                    rotationZ = model.glide.carTurn
-                })
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Image(puck, "Current position", Modifier.size(76.dp)
+                        .combinedClickable(onClick = { model.recenterNav() }, onDoubleClick = { model.recenterNav(closer = true) })
+                        .graphicsLayer {
+                            if (!tilted) scaleY = model.glide.carSquash
+                            rotationZ = model.glide.carTurn
+                        })
+                    nav.currentRoad?.takeUnless { nav.progress?.offRoute == true }?.let { road ->
+                        Text(road, fontSize = KType.caption, fontWeight = FontWeight.Bold, maxLines = 1,
+                            overflow = TextOverflow.Ellipsis, color = primaryText,
+                            modifier = Modifier.offset(y = (-15).dp).widthIn(max = w * 0.53f)
+                                .glass(CircleShape, solid = true).padding(horizontal = 10.dp, vertical = 4.dp))
+                    }
+                }
             }
         }
         // One column, so however many warnings are up, they push the map buttons down rather than cover them.
@@ -321,7 +332,8 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean,
             }
             if (!nav.following) {
                 Row(Modifier.align(Alignment.CenterHorizontally).height(52.dp).shadow(3.dp, CircleShape).clip(CircleShape).background(Vela.accent(dark))
-                    .tap { model.recenterNav() }.padding(horizontal = 22.dp), verticalAlignment = Alignment.CenterVertically,
+                    .combinedClickable(onClick = { model.recenterNav() }, onDoubleClick = { model.recenterNav(closer = true) })
+                    .padding(horizontal = 22.dp), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Icon(Icons.Filled.Navigation, null, tint = Vela.onAccent(dark))
                     Text("Re-centre", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Vela.onAccent(dark))
@@ -364,6 +376,17 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean,
                     TripAction(Icons.Filled.Search, "Add stop") { showSteps = false; model.addingStop = true }
                     TripAction(Icons.Filled.Share, "Share ETA") { ctx.share(etaText()) }
                     TripAction(Icons.Filled.ZoomOutMap, "Overview") { showSteps = false; model.overviewNav() }
+                }
+                nav.stops.firstOrNull()?.let { stop ->
+                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(interfaceSurface).padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Icon(Icons.Filled.Place, null, tint = interfaceAccentText)
+                        Column(Modifier.weight(1f)) {
+                            Text("Next stop", fontSize = KType.caption, color = secondaryText)
+                            Text(stop.name, maxLines = 2, overflow = TextOverflow.Ellipsis, color = primaryText)
+                        }
+                        TextButton(nav::removeNextStop, enabled = !nav.rerouting && !nav.arrived) { Text("Skip stop") }
+                    }
                 }
                 StepsList(nav.route, nav.progress?.nextIndex ?: 0)
             }

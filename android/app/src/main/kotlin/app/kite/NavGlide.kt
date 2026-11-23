@@ -234,7 +234,7 @@ class NavGlide : Choreographer.FrameCallback {
         shownBearing = (shownBearing + shortestTurn(shownBearing, bearingTarget) *
             (if (dt == 0.0) 1.0 else 1 - exp(-dt / 0.45)) + 360) % 360
         // Zooming in for a turn takes about a second; easing back out afterwards is gentler.
-        val zoomTime = if (targetAcross < shownAcross) 1.0 else 2.0
+        val zoomTime = if (targetAcross < shownAcross) 0.48 else 1.6
         shownAcross += (targetAcross - shownAcross) * (if (dt == 0.0) 1.0 else 1 - exp(-dt / zoomTime))
         shownPitch += (targetPitch - shownPitch) * (if (dt == 0.0) 1.0 else 1 - exp(-dt / 0.28))
 

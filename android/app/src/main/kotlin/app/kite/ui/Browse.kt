@@ -187,7 +187,7 @@ private fun LocateButton(model: AppModel) {
     val ctx = LocalContext.current
     var menu by remember { mutableStateOf(false) }
     Box {
-        Box(Modifier.size(52.dp).glass(CircleShape).combinedClickable(onClick = { model.centerOnUser(ctx) }, onLongClick = { menu = true }),
+        Box(Modifier.size(52.dp).glass(CircleShape).combinedClickable(onClick = { model.centerOnUser(ctx) }, onDoubleClick = { model.centerOnUser(ctx, closer = true) }, onLongClick = { menu = true }),
             contentAlignment = Alignment.Center) {
             Icon(Icons.Filled.MyLocation, "Centre on me", tint = Vela.accentText(dark), modifier = Modifier.size(24.dp))
         }

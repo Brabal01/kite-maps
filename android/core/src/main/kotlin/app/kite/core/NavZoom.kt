@@ -5,7 +5,7 @@ import kotlin.math.min
 
 /**
  * How far out the driving map sits and how much it tilts, from your speed and the next turn.
- * On a long stretch it pulls back and tilts up so you see far ahead; in the last 300 m before a turn it
+ * On a long stretch it pulls back and tilts up so you see far ahead; in the last 420 m before a turn it
  * glides in and flattens so the whole junction and the road you turn onto fill the screen; after the
  * turn it eases back out. Moving faster keeps it further out, so a motorway exit still shows the slip road.
  * Same as the iPhone's NavZoom.
@@ -15,8 +15,8 @@ object NavZoom {
     data class View(val across: Double, val pitch: Double)
 
     /** Where the zoom starts closing in before a turn, and where it is fully in. */
-    const val NEAR_START = 300.0
-    const val NEAR_END = 60.0
+    const val NEAR_START = 420.0
+    const val NEAR_END = 85.0
 
     /** The view for driving at [speed] m/s with the next maneuver [toNext] meters away, or a fixed close view on foot or by bike. */
     fun view(speed: Double, toNext: Double?, next: ManeuverType?, driving: Boolean): View {
@@ -31,7 +31,7 @@ object NavZoom {
             if (turning && d < NEAR_START) {
                 // 1 at 300 m out, 0 from 60 m in: slide from the normal view to the close one.
                 val f = max(0.0, min(1.0, (d - NEAR_END) / (NEAR_START - NEAR_END)))
-                val close = max(330.0, v * 14)
+                val close = max(225.0, v * 12)
                 if (close < across) across = close + (across - close) * f
                 pitch = 35 + 15 * f
             } else {
@@ -41,7 +41,7 @@ object NavZoom {
                 pitch = 50 + 5 * f
             }
             // Close to a roundabout, the whole of it and its exits fill the view.
-            if (next == ManeuverType.ROUNDABOUT && d < 350) across = min(across, 380.0)
+            if (next == ManeuverType.ROUNDABOUT && d < 350) across = min(across, max(255.0, v * 12))
         }
         return View(across, pitch)
     }

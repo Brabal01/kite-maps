@@ -1,6 +1,7 @@
 package app.kite.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.border
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -32,6 +33,7 @@ import androidx.compose.foundation.clickable
 import app.kite.Fmt
 import app.kite.core.Overpass
 import app.kite.glass
+import app.kite.interfaceSurface
 import app.kite.LocalDark
 import app.kite.LocalMapChrome
 import app.kite.primaryText
@@ -143,7 +145,8 @@ fun RoadAheadStrip(nav: Navigator, modifier: Modifier = Modifier, showLabels: Bo
                 val action = marker.alert?.let { alert -> Modifier.clickable { onAlert(alert) } } ?: Modifier
                 val position = if (vertical) Modifier.align(Alignment.TopCenter).offset(y = length - offset)
                     else Modifier.align(Alignment.CenterStart).offset(x = offset)
-                Box(position.size(badge).background(marker.color.copy(alpha = 0.23f), CircleShape)
+                Box(position.size(badge).background(interfaceSurface, CircleShape)
+                    .border(1.5.dp, marker.color.copy(alpha = 0.72f), CircleShape)
                     .then(action), contentAlignment = Alignment.Center) {
                     Icon(marker.icon, "${marker.name}, ${Fmt.distance(marker.distance)} ahead",
                         tint = if (marker.color.luminance() < 0.20f && dark) Color.White else marker.color,

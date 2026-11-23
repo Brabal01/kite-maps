@@ -95,6 +95,7 @@ fun SavedPage(model: AppModel) {
                     MineTile(model, Icons.Filled.Home, Vela.routeBlue, "Home", s.home, PickKind.HOME, ::go, ::distance)
                     MineTile(model, Icons.Filled.Work, hex(0x8B5CF6), "Work", s.work, PickKind.WORK, ::go, ::distance)
                 }
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { CustomShortcuts(model) {} }
                 s.parking?.let { car ->
                     Box(Modifier.clip(RoundedCornerShape(24.dp)).background(interfaceSurface)) {
                         SavedRow(car, Icons.Filled.LocalParking, Vela.routeBlue, distance(car), null, ::show, ::go)
@@ -571,6 +572,14 @@ private fun MapSettings() {
         PickRow("Road ahead position", Icons.Filled.SwapVert, 0x0F766E,
             s.roadStripPosition, RoadStripPosition.entries.toList(), { it.label }) { s.roadStripPosition = it }
     }
+    SettingsGroup(header = "Places while navigating", footer = "Choose which OpenStreetMap places are visible on the driving map.") {
+        ToggleRow("Show places while navigating", Icons.Filled.Place, 0x0F766E, s.navigationPlaces) { s.navigationPlaces = it }
+        if (s.navigationPlaces) for (group in OpenPlaceGroup.entries) {
+            ToggleRow(group.label, Icons.Filled.Place, 0x0F766E, group in s.navigationPlaceGroups) { show ->
+                s.navigationPlaceGroups = if (show) s.navigationPlaceGroups + group else s.navigationPlaceGroups - group
+            }
+        }
+    }
     SettingsGroup(header = "Road ahead and map", footer = "Choose which events appear on your route during navigation.") {
         ToggleRow("Traffic and jams", Icons.Filled.Traffic, 0xAD362C, s.aheadTraffic) { s.aheadTraffic = it }
         RowDivider()
@@ -990,8 +999,8 @@ private fun WazeSettings() {
 @Composable
 fun PlacePicker(model: AppModel, kind: PickKind) {
     val s = AppSettings
-    val title = if (kind == PickKind.HOME) "Home" else "Work"
-    val current = if (kind == PickKind.HOME) s.home else s.work
+    val title = when (kind) { PickKind.HOME -> "Home"; PickKind.WORK -> "Work"; PickKind.SHORTCUT -> "Shortcut" }
+    val current = when (kind) { PickKind.HOME -> s.home; PickKind.WORK -> s.work; PickKind.SHORTCUT -> null }
     var query by remember { mutableStateOf("") }
     var found by remember { mutableStateOf<List<Place>>(emptyList()) }
     var searching by remember { mutableStateOf(false) }
@@ -999,7 +1008,14 @@ fun PlacePicker(model: AppModel, kind: PickKind) {
     val scope = rememberCoroutineScope()
     var task by remember { mutableStateOf<Job?>(null) }
     fun close() { model.picking = null }
-    fun pick(p: Place) { if (kind == PickKind.HOME) model.setHome(p) else model.setWork(p); close() }
+    fun pick(p: Place) {
+        close()
+        when (kind) {
+            PickKind.HOME -> model.setHome(p)
+            PickKind.WORK -> model.setWork(p)
+            PickKind.SHORTCUT -> model.nameNewShortcut(p)
+        }
+    }
 
     /** As you type: quick suggestions. On Search: a full search, postcodes included. */
     fun lookUp(text: String, full: Boolean) {
@@ -1038,7 +1054,7 @@ fun PlacePicker(model: AppModel, kind: PickKind) {
         }
     }
 
-    PickerPage("Set ${title.lowercase()}", ::close) {
+    PickerPage(if (kind == PickKind.SHORTCUT) "Choose a shortcut location" else "Set ${title.lowercase()}", ::close) {
         PickerSearchField(query, { query = it; lookUp(it, false) }, "Address or postcode") { lookUp(query, true) }
         LazyColumn(Modifier.fillMaxSize()) {
             if (query.isBlank()) {

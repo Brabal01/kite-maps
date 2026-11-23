@@ -97,6 +97,11 @@ object AppSettings {
         { p -> p.getStringSet("openPlaceGroups", null)?.let { saved -> OpenPlaceGroup.entries.filter { it.name in saved }.toSet() }
             ?: OpenPlaceGroup.entries.toSet() },
         { e, v -> e.putStringSet("openPlaceGroups", v.map { it.name }.toSet()) })
+    var navigationPlaces by bool("navigationPlaces")
+    var navigationPlaceGroups: Set<OpenPlaceGroup> by Pref("navigationPlaceGroups",
+        { p -> p.getStringSet("navigationPlaceGroups", null)?.let { names -> OpenPlaceGroup.entries.filter { it.name in names }.toSet() }
+            ?: setOf(OpenPlaceGroup.FUEL, OpenPlaceGroup.PARKING, OpenPlaceGroup.FOOD, OpenPlaceGroup.TOILETS) },
+        { e, v -> e.putStringSet("navigationPlaceGroups", v.map { it.name }.toSet()) })
     var hikingTrails by bool("hikingTrails")
     var bikeTrails by bool("bikeTrails")
     var arrivalParking by bool("arrivalParking", true)
@@ -176,6 +181,7 @@ object AppSettings {
     var liveCamsOnRoute by bool("liveCamsOnRoute", true)
     var home: Place? by place("home")
     var work: Place? by place("work")
+    var placeShortcuts: List<Place> by places("placeShortcuts")
     /** Where the car is parked, with when in `statusText`. */
     var parking: Place? by place("parking")
     var welcomed by bool("welcomed")

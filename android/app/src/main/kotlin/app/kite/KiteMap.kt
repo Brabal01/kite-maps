@@ -579,12 +579,13 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         val google = if (browsing && googlePlacesEnabled()) googlePlaces else emptyList()
         val googleVisible = google
         val native = scenery?.ready == true
-        val config = listOf(s.openMapPlaces, s.openPlaceGroups, s.hikingTrails, s.bikeTrails, model.nav != null, model.transitGuidance != null, native)
+        val groups = OpenMapStyle.visibleGroups(model)
+        val config = listOf(groups, s.hikingTrails, s.bikeTrails, native)
         if (layerOptions != config) {
             layerOptions = config
             for (id in STOCK_POI) visible(style, id, false)
-            visible(style, OpenMapStyle.POIS, !native && s.openMapPlaces && model.nav == null && model.transitGuidance == null)
-            (style.getLayer(OpenMapStyle.POIS) as? SymbolLayer)?.setFilter(raw(OpenMapStyle.filter(s.openPlaceGroups)))
+            visible(style, OpenMapStyle.POIS, !native && groups.isNotEmpty())
+            (style.getLayer(OpenMapStyle.POIS) as? SymbolLayer)?.setFilter(raw(OpenMapStyle.filter(groups)))
             visible(style, OpenMapStyle.HIKING, !native && s.hikingTrails)
             visible(style, OpenMapStyle.CYCLING, !native && s.bikeTrails)
             visible(style, OpenMapStyle.WALK_PATHS, !native && s.hikingTrails)
@@ -797,9 +798,8 @@ class KiteMap(private val model: AppModel, private val context: Context) {
 
         val labels = if (showingMapbox) null else firstSymbolLayer(style)
         fun insert(l: Layer) { if (labels != null) style.addLayerBelow(l, labels) else style.addLayer(l) }
-        src("vela-route-alt"); src("vela-route", metrics = true); src("vela-route-traffic"); src("vela-route-done")
+        src("vela-route-alt"); src("vela-route", metrics = true); src("vela-route-traffic")
 
-        val done = line("vela-route-done", "vela-route-done", c(0x64748B), 10f).withProperties(lineOpacity(0.5f))
         val altEdge = line("vela-route-alt-edge", "vela-route-alt", c(0x115E59), 11f).withProperties(lineOpacity(0.6f))
         val altFill = line("vela-route-alt", "vela-route-alt", c(0x5EEAD4), 7f).withProperties(lineOpacity(0.6f))
         // The light look: one plain teal line, no darker edge and no chevrons along it.
@@ -811,7 +811,10 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             symbolPlacement(Property.SYMBOL_PLACEMENT_LINE), symbolSpacing(70f), iconImage("route-chevron"),
             iconRotationAlignment(Property.ICON_ROTATION_ALIGNMENT_MAP), iconAllowOverlap(true), iconIgnorePlacement(true),
             iconKeepUpright(false), iconOpacity(0.55f), visibility(Property.NONE)).apply { minZoom = 13f }
-        listOf(done, altEdge, altFill, edge, fill, chevrons).forEach { insert(it) }
+        listOf(altEdge, altFill, edge, fill, chevrons).forEach { insert(it) }
+        src("kite-path-section")
+        listOf(line("kite-path-section-edge", "kite-path-section", Color.WHITE, 16f),
+            line("kite-path-section-fill", "kite-path-section", c(0xE56C16), 10f)).forEach { insert(it) }
 
         src("vela-transit")
         val walk = line("vela-transit-walk", "vela-transit", c(0x5F6368), 5f).withProperties(lineDasharray(arrayOf(0.1f, 1.8f)))
@@ -918,8 +921,6 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         style.addLayer(CircleLayer("$STREET_VIEW-position", STREET_VIEW).withFilter(eq(get("role"), literal("position"))).withProperties(
             circleRadius(8f), circleColor(c(0x127A79)), circleStrokeColor(Color.WHITE), circleStrokeWidth(2.4f)))
         src("vela-selected")
-        style.addLayer(CircleLayer("kite-place-selection", "vela-selected").withFilter(eq(get("role"), literal("picked"))).withProperties(
-            circleRadius(16f), circleColor(c(0xE8453C, 0.21f)), circleStrokeColor(c(0xE8453C)), circleStrokeWidth(2f)))
         style.addLayer(SymbolLayer("vela-selected", "vela-selected").withProperties(
             iconImage(get("icon")), iconAnchor(get("anchor")), iconAllowOverlap(true), textAllowOverlap(false),
             textField(get("label")), textFont(overlayFont), textSize(13f), textAnchor(Property.TEXT_ANCHOR_TOP),
@@ -1442,7 +1443,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         val sel = mutableListOf<Feature>()
         if (destination != null && model.streetView == null) {
             sel.add(point(destination, mapOf("id" to (target?.id ?: "destination"), "icon" to "pin-selected",
-                "anchor" to "bottom", "label" to (target?.name ?: "Your location"), "role" to if (pickedPlace) "picked" else "destination")))
+                "anchor" to "bottom", "label" to (target?.name ?: "Your location"))))
         }
         stops.forEachIndexed { i, stop -> sel.add(point(stop.location, mapOf("id" to "stop$i", "icon" to "pin-stop", "anchor" to "center", "label" to stop.name))) }
         origin?.let { sel.add(point(it, mapOf("id" to "origin", "icon" to "pin-origin", "anchor" to "center", "label" to ""))) }
@@ -1453,6 +1454,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
     private var routeDistances = DoubleArray(0)
     private var routeContext = ""
     private var transitStopsKey = ""
+    private var visiblePathSection: Pair<String, Valhalla.PathSection>? = null
 
     private var vehicleKey = ""
     private fun renderRoutes(style: Style?) {
@@ -1490,7 +1492,13 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         val traffic = n?.roadTraffic ?: main?.trafficSpans.orEmpty().takeIf { AppSettings.traffic }.orEmpty()
         val context = "${trip?.id}|${session?.legIndex}|$overview|${main?.id}|${alts.joinToString { it.id }}"
         val follows = n?.following == true
-        val key = "$context|${(from / if (n?.route?.mode == TravelMode.WALK) 6 else 24).toInt()}|$follows|" +
+        val highlight = model.pathSectionHighlight.takeIf { n == null && main != null && it?.first == main.id }
+        if (visiblePathSection != highlight || routeContext.isEmpty()) {
+            visiblePathSection = highlight
+            val points = highlight?.second?.let { section -> main?.let { Geo.slice(it.polyline, section.from, section.to) } }.orEmpty()
+            setShape(style, "kite-path-section", if (points.size >= 2) listOf(polyline(points)) else emptyList())
+        }
+        val key = "$context|${(from / if (n?.route?.mode == TravelMode.WALK) 4 else 6).toInt()}|$follows|" +
             "${n?.nextManeuver?.alongMeters}|${traffic.hashCode()}"
         if (key == lastRouteKey) return
         lastRouteKey = key
@@ -1504,7 +1512,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         }
         val r = main
         if (r == null) {
-            for (id in listOf("vela-route", "vela-route-traffic", "vela-route-bubbles", "vela-route-done", "vela-turn-arrow", "vela-turn-head", "vela-next-road")) setShape(style, id, emptyList())
+            for (id in listOf("vela-route", "vela-route-traffic", "vela-route-bubbles", "vela-turn-arrow", "vela-turn-head", "vela-next-road")) setShape(style, id, emptyList())
             lastHeadKey = ""; lastNextRoadKey = ""
             return
         }
@@ -1517,8 +1525,6 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         val to = if (follows) min(total, from + 16_000.0) else total
         val ahead = if (from > 1 || to < total) Geo.slice(r.polyline, from, to, cum) else r.polyline
         setShape(style, "vela-route", if (ahead.size >= 2) listOf(polyline(ahead)) else emptyList())
-        val driven = if (n != null && from > 1) Geo.slice(r.polyline, if (follows) max(0.0, from - 3000.0) else 0.0, from, cum) else emptyList()
-        setShape(style, "vela-route-done", if (driven.size >= 2) listOf(polyline(driven)) else emptyList())
         setShape(style, "vela-route-traffic", traffic.mapNotNull { s ->
             val a = max(s.startMeters, from); val b = min(s.startMeters + s.lengthMeters, to)
             if (b <= a) return@mapNotNull null
@@ -1705,7 +1711,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             model.results.firstOrNull { it.id == id }?.let { model.select(it); return true }
         }
         val selectedId = model.selected?.id
-        if (selectedId != null && m.queryRenderedFeatures(box, "kite-place-selection", "vela-selected")
+        if (selectedId != null && m.queryRenderedFeatures(box, "vela-selected")
                 .any { str(it, "id") == selectedId }) return true
         val transitHit = m.queryRenderedFeatures(box, TRANSIT_STOPS).firstOrNull()
         if (transitHit != null && openOutdoorPlace(str(transitHit, "id"))) return true

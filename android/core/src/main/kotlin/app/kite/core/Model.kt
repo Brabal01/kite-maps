@@ -33,6 +33,8 @@ data class Place(
     var placeId: String? = null,
     var distanceMeters: Double? = null,
     var streetViewHint: StreetView.Hint? = null,
+    var fuelPrice: String? = null,
+    var fuelStation: Boolean = false,
 ) {
     /** The same nearby named feature across map and search providers. */
     fun matchesNearby(other: Place): Boolean {

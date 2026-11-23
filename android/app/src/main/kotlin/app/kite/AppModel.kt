@@ -19,7 +19,7 @@ import kotlin.math.*
 enum class AppTab { MAP, SAVED, SETTINGS }
 
 /** Which of your places the "pick a place" sheet is choosing. */
-enum class PickKind { HOME, WORK }
+enum class PickKind { HOME, WORK, SHORTCUT }
 
 enum class SheetDetent { PEEK, HALF, FULL }
 
@@ -226,6 +226,7 @@ class AppModel {
         private set
     private var stopSearchJob: Job? = null
     var picking by mutableStateOf<PickKind?>(null)
+    var shortcutDraft by mutableStateOf<Place?>(null)
     var showSteps by mutableStateOf(false)
     /** A drive that was under way when the app last closed, offered again on the home map. */
     var resumeOffer by mutableStateOf<SavedTrip?>(null)
@@ -686,6 +687,10 @@ class AppModel {
     fun myPlace(id: String): Place? =
         listOfNotNull(settings.home, settings.work, settings.parking).firstOrNull { it.id == id } ?: settings.saved.firstOrNull { it.id == id }
 
+    fun nameNewShortcut(place: Place) {
+        shortcutDraft = place.copy(id = "shortcut:" + java.util.UUID.randomUUID())
+    }
+
     fun setHome(p: Place?) {
         settings.home = p?.copy(distanceMeters = null)
         if (p != null) notice = "Saved as your home."
@@ -911,6 +916,12 @@ class AppModel {
                     else if (span > 0) Geo.point(line, start, cum) else origin
                 val visible = if (driving == null && span > 42_000) results else results.take(7)
                 frame(listOf(first) + visible.map { it.place.location }, bottomFraction = 0.27f, top = 125)
+            }
+            if (!parking) launch {
+                val prices = FuelPrices.ukQuotes(results.map { it.place })
+                if (prices.isNotEmpty()) stopSearch?.takeIf { it.results === results }?.let {
+                    stopSearch = it.copy(fuelQuotes = prices)
+                }
             }
             if (!parking && route?.mode == TravelMode.DRIVE && span > 0) {
                 val candidates = results.filter { it.routeMeters != null }.take(8)
@@ -1237,6 +1248,7 @@ class AppModel {
     // Navigation
 
     private var navZoomSteps = 0
+    private var navigationCameraUntil = 0L
 
     fun startTransitNavigation() {
         val d = directions ?: return
@@ -1489,6 +1501,7 @@ class AppModel {
         preparedRoadControls = null
         if (d.mode == TravelMode.DRIVE) n.avoid = d.avoid
         navZoomSteps = 0
+        navigationCameraUntil = android.os.SystemClock.elapsedRealtime() + 10_000L
         nav = n
         n.onFinished = { if (nav === n) endNavigation() }
         n.onEstimate = { estimate ->
@@ -1549,12 +1562,19 @@ class AppModel {
         mapTick++
     }
 
-    fun recenterNav() {
-        if (transitGuidance?.walking != null) { followTransit(); return }
-        val n = nav ?: return
+    fun recenterNav(closer: Boolean = false) {
+        val n = mapNavigator ?: return
+        if (closer) navZoomSteps = max(navZoomSteps, 2)
+        if (transitGuidance?.walking != null) {
+            followTransit()
+            return
+        }
+        navigationCameraUntil = android.os.SystemClock.elapsedRealtime() + 10_000L
         if (!n.following) glide.easeFromCurrentCamera(visibleCamera?.invoke())
+        else glide.mapTouched = false
         n.following = true
         location.last?.let { followCamera(n, it) }
+        glide.restoreFollowingCamera()
     }
 
     fun zoomNavigation(step: Int) {
@@ -1564,9 +1584,9 @@ class AppModel {
             navZoomSteps = (navZoomSteps + step).coerceIn(-4, 10)
             location.last?.let { followCamera(n, it) }
         } else {
-            val camera = m.cameraPosition
-            m.animateCamera(CameraUpdateFactory.newCameraPosition(CameraPosition.Builder(camera)
-                .zoom((camera.zoom + step * 0.55).coerceIn(2.0, 21.5)).build()), 220)
+            val camera = visibleCamera?.invoke() ?: m.cameraPosition
+            MapCam.animate(m, CameraPosition.Builder(camera)
+                .zoom((camera.zoom + step * 0.55).coerceIn(2.0, 21.5)).build(), ms = 220, native = nativeCamera, keepPadding = true)
         }
     }
 
@@ -1713,7 +1733,9 @@ class AppModel {
             else NavZoom.view(f.speed, p?.distanceToNext, n.nextManeuver?.type, n.route.mode == TravelMode.DRIVE)
         val view = rawView.applying(settings.mapZoom, settings.driveLook)
         glide.look = settings.driveLook
-        glide.fix(n, f, view.across / 1.36.pow(navZoomSteps), view.pitch)
+        val across = if (n.route.mode == TravelMode.DRIVE && android.os.SystemClock.elapsedRealtime() < navigationCameraUntil)
+            min(view.across, 560.0 * settings.mapZoom.scale) else view.across
+        glide.fix(n, f, across / 1.36.pow(navZoomSteps), view.pitch)
     }
 
     /** The map button while driving: 3D, then 2D, then north up. Kept for the next drive. */
@@ -1757,13 +1779,13 @@ class AppModel {
      * In 3D or 2D off a route, keeps you in the middle with the map facing the way you're going, as you
      * move. Pinching to zoom is kept; dragging the map, or opening a place, stops it until Centre on me.
      */
-    private fun followBrowse(f: Fix, entering: Boolean) {
+    private fun followBrowse(f: Fix, entering: Boolean, closer: Boolean = false) {
         val m = map ?: return
         if (!browseFollowing || nav != null) return
         if (!entering && (selected != null || results.isNotEmpty() || directions != null)) return
         val current = visibleCamera?.invoke() ?: m.cameraPosition
         val course = if (browseLook == MapLook.NORTH) 0.0 else if (f.courseKnown && f.speed > 2) f.course else current.bearing
-        val meters = if (browseLook == MapLook.TILTED) 700.0 else 950.0
+        val meters = if (closer) 230.0 else if (browseLook == MapLook.TILTED) 700.0 else 950.0
         val zoom = if (entering) max(current.zoom, MapCam.zoomFor(meters, f.lat, mapWidthDp)) else current.zoom
         if (!entering && current.target?.kite()?.distanceTo(f.coord)?.let { it < 9 } == true && Geo.diff(current.bearing, course) < 4) return
         val pos = CameraPosition.Builder().target(f.coord.ml()).zoom(zoom).tilt(browsePitch).bearing(course).build()
@@ -1774,14 +1796,14 @@ class AppModel {
 
     private val browsePitch: Double get() = if (browseLook == MapLook.TILTED) 48.0 else 0.0
 
-    fun centerOnUser(ctx: android.content.Context) {
+    fun centerOnUser(ctx: android.content.Context, closer: Boolean = false) {
         val loc = location.last
         if (map == null || loc == null) {
             if (location.denied) LocationService.openSettings(ctx) else location.start()
             return
         }
         browseFollowing = true
-        followBrowse(loc, entering = true)
+        followBrowse(loc, entering = true, closer = closer)
     }
 
     private fun resetCamera() {
@@ -1798,9 +1820,15 @@ class AppModel {
         MapCam.animate(m, CameraPosition.Builder().target(p.ml()).zoom(15.0).build(), ms = 500)
     }
 
+    var pathSectionHighlight by mutableStateOf<Pair<String, Valhalla.PathSection>?>(null)
+
     fun framePathSection(route: Route, section: Valhalla.PathSection) {
         if (directions?.route?.id != route.id) return
-        frame(Geo.slice(route.polyline, section.from, section.to))
+        val points = Geo.slice(route.polyline, section.from, section.to)
+        if (points.size < 2) return
+        pathSectionHighlight = route.id to section
+        detent = SheetDetent.PEEK
+        frame(points, bottomFraction = 0.30f, top = 184)
     }
 
     fun frame(points: List<LatLng>, bottomFraction: Float = 0.45f, top: Int = 130) {
@@ -1835,6 +1863,7 @@ data class StopSearch(
     val results: List<StopCandidate> = emptyList(),
     val selected: StopCandidate? = null,
     val detours: Map<String, Double> = emptyMap(),
+    val fuelQuotes: Map<String, FuelPrices.Quote> = emptyMap(),
 ) {
     companion object { const val PINS = "kite-stop-candidates" }
 }

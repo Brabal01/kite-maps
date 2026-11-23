@@ -93,7 +93,14 @@ fun DirectionsOverlay(model: AppModel, showMapbox: Boolean) {
             Box(Modifier.statusBarsPadding().padding(top = 6.dp).onSizeChanged { cardHeight = with(density) { it.height.toDp() } }) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     EndpointsCard(model, d)
-                    d.pickedTrip?.takeIf { it.path.isNotEmpty() }?.let { trip ->
+                    model.pathSectionHighlight?.takeIf { it.first == d.route?.id }?.second?.let { section ->
+                    AssistChip(onClick = { model.pathSectionHighlight = null },
+                        label = { Text("${Fmt.distance(section.from)} – ${Fmt.distance(section.to)}") },
+                        leadingIcon = { Icon(Icons.Filled.Terrain, null, Modifier.size(17.dp), tint = Color(0xFFE56C16)) },
+                        trailingIcon = { Icon(Icons.Filled.Close, "Clear section", Modifier.size(16.dp)) },
+                        colors = AssistChipDefaults.assistChipColors(containerColor = interfaceSurface))
+                }
+                d.pickedTrip?.takeIf { it.path.isNotEmpty() }?.let { trip ->
                         AssistChip(onClick = {
                             model.detent = SheetDetent.PEEK
                             model.frame(trip.path, bottomFraction = 0.30f, top = 170)
@@ -1093,9 +1100,10 @@ fun StopPicker(model: AppModel) {
 fun StopMapOverlay(model: AppModel, showMapbox: Boolean) {
     val search = model.stopSearch ?: return
     var showList by rememberSaveable(search.query, search.parking) { mutableStateOf(false) }
+    var onlyOpen by rememberSaveable(search.query, search.parking) { mutableStateOf(false) }
     val list = key(search.query, search.parking) { rememberLazyListState() }
     androidx.activity.compose.BackHandler { model.closeStopSearch() }
-    if (showList) StopResultsPage(search, list, close = { showList = false }) { candidate ->
+    if (showList) StopResultsPage(search, list, onlyOpen, { onlyOpen = it }, close = { showList = false }) { candidate ->
         model.showStopPin(candidate)
         showList = false
     }
@@ -1109,25 +1117,24 @@ fun StopMapOverlay(model: AppModel, showMapbox: Boolean) {
             IconButton({ model.closeStopSearch() }) { Icon(Icons.Filled.Close, "Close stop search") }
         }
         val selected = search.selected
-        Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(12.dp)
+        if (selected != null && !search.loading) {
+            var expanded by rememberSaveable(selected.place.id) { mutableStateOf(false) }
+            Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(12.dp)) {
+                StopResultCard(search, selected, search.results.indexOf(selected) + 1, expanded, toggle = { expanded = !expanded },
+                    footer = {
+                        Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            TextButton({ showList = true }) { Text("All results") }
+                            Button({ model.acceptStop(selected) }) { Text(if (search.parking) "Drive here" else "Add stop") }
+                        }
+                    })
+            }
+        } else Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(12.dp)
             .glass(RoundedCornerShape(24.dp)).padding(horizontal = 16.dp, vertical = 12.dp)) {
             when {
                 search.loading -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                     Text(if (search.parking) "Searching near the destination…" else "Looking along your route…", color = secondaryText)
-                }
-                selected != null -> {
-                    Text(selected.place.name, color = primaryText, fontWeight = FontWeight.Bold,
-                        maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    val distance = if (search.parking) "${Fmt.distance(selected.offset)} from the destination"
-                        else selected.ahead?.let { "${Fmt.distance(it)} ahead" }
-                    val sub = listOfNotNull(distance, search.detours[selected.place.id]?.let(::detourShort), selected.place.address)
-                    if (sub.isNotEmpty()) Text(sub.joinToString(" · "), color = secondaryText, maxLines = 2)
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically) {
-                        TextButton({ showList = true }) { Text("All results") }
-                        Button({ model.acceptStop(selected) }) { Text(if (search.parking) "Drive here" else "Add stop") }
-                    }
                 }
                 search.results.isEmpty() -> Text(if (search.parking) "No parking found nearby." else "No stops found near the road ahead.", color = primaryText, modifier = Modifier.padding(vertical = 8.dp))
                 else -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {

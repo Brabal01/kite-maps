@@ -479,6 +479,12 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
         lastFix?.let { reroute(it, quiet = true, adding = p) }
     }
 
+    fun removeNextStop() {
+        val next = stops.firstOrNull() ?: return
+        val fix = lastFix ?: return
+        if (!rerouting && !arrived) reroute(fix, quiet = true, removing = next)
+    }
+
     private fun checkStops(p: RouteTracker.Progress) {
         val next = stops.firstOrNull() ?: return
         val at = Geo.project(next.location, route.polyline)
@@ -1078,7 +1084,7 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
         recentFixes.removeAll { loc.timeMillis - it.timeMillis > 20_000 }
     }
 
-    private fun reroute(loc: Fix, quiet: Boolean = false, adding: Place? = null, parking: Place? = null) {
+    private fun reroute(loc: Fix, quiet: Boolean = false, adding: Place? = null, parking: Place? = null, removing: Place? = null) {
         Log.i("KiteTrace", "reroute from ${loc.lat},${loc.lng}")
         rerouting = true
         lastReroute = now()
@@ -1098,23 +1104,26 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
         rerouteRequest++
         val req = rerouteRequest
         val avoid = if (mode == TravelMode.DRIVE) this.avoid else emptyList()
+        val previousStops = stops
+        val waypoints = (if (removing != null) previousStops.drop(1) else previousStops).map { it.location }
         scope.launch {
             var r = runCatching {
-                Directions.routes(from, to, mode, avoidHighways, avoidTolls, !AppSettings.noGoogle, stops.map { it.location }, course,
+                Directions.routes(from, to, mode, avoidHighways, avoidTolls, !AppSettings.noGoogle, waypoints, course,
                     mapboxToken = AppSettings.activeMapboxToken)
             }.getOrNull()
             // The new way goes back along a road tapped away on the plan: the way round it instead,
             // when there is one (otherwise the usual route, rather than none at all).
             val first = r?.routes?.firstOrNull()
             if (avoid.isNotEmpty() && first != null && Directions.touches(first.polyline, avoid) && req == rerouteRequest) {
-                runCatching { Directions.avoiding(from, to, stops.map { it.location }, avoid) }.getOrNull()?.let { r = r?.copy(routes = listOf(it)) }
+                runCatching { Directions.avoiding(from, to, waypoints, avoid) }.getOrNull()?.let { r = r?.copy(routes = listOf(it)) }
             }
             if (stopped || req != rerouteRequest) return@launch
             rerouting = false
             // Parked at the destination while the new route was loading: the trip is over, keep it that way.
-            if (arrived) return@launch
+            if (arrived || removing != null && stops != previousStops) return@launch
             val fresh = r?.routes?.firstOrNull()
             if (fresh == null) {
+                if (removing != null) speak("Couldn't skip the next stop. Keeping your route.")
                 if (parking != null) {
                     parkingOfferDismissed = false
                     speak("Couldn't route to that parking area. Continuing to ${destination.name}.")
@@ -1134,6 +1143,10 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
                 destination = parking
                 parkingOfferDismissed = true
                 speak("Routing to ${parking.name}.")
+            }
+            if (removing != null) {
+                stops = previousStops.drop(1)
+                speak("Skipped ${removing.name}.")
             }
             adopt(fresh)
             if (!quiet) sayNewRoute()

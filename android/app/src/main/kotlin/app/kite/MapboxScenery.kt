@@ -83,6 +83,7 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
     private var watchdog: Job? = null
     private var styleRequest = 0
     private var submittedCamera: CameraPosition? = null
+    private var lastCameraCorrection = 0L
     private var cameraEase: com.mapbox.common.Cancelable? = null
     private var cameraEaseSync: Job? = null
     private var lastLampCell: Pair<Int, Int>? = null
@@ -123,12 +124,13 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
         fun show(id: String, enabled: Boolean) {
             st.setStyleLayerProperty(id, "visibility", Value.valueOf(if (enabled) "visible" else "none"))
         }
-        show(OpenMapStyle.POIS, s.openMapPlaces && model.nav == null && model.transitGuidance == null)
+        val groups = OpenMapStyle.visibleGroups(model)
+        show(OpenMapStyle.POIS, groups.isNotEmpty())
         show(OpenMapStyle.HIKING, s.hikingTrails)
         show(OpenMapStyle.CYCLING, s.bikeTrails)
         show(OpenMapStyle.WALK_PATHS, s.hikingTrails)
         show(OpenMapStyle.BIKE_PATHS, s.bikeTrails)
-        Value.fromJson(OpenMapStyle.filter(s.openPlaceGroups)).value?.let {
+        Value.fromJson(OpenMapStyle.filter(groups)).value?.let {
             st.setStyleLayerProperty(OpenMapStyle.POIS, "filter", it)
         }
     }
@@ -164,6 +166,15 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
         mapView.logo.enabled = false
         mapView.attribution.enabled = false
         idleSubscription = map.subscribeMapIdle {
+            val expected = model.glide.followingCamera
+            val center = expected?.target
+            val actual = map.cameraState
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (expected != null && center != null && now - lastCameraCorrection >= 350L &&
+                NavGlide.needsCameraCorrection(actual.center.kite(), center.kite(), actual.zoom, expected.zoom)) {
+                lastCameraCorrection = now
+                submitCamera(expected, force = true)
+            }
             if (movingFromTouch && model.mapNavigator?.following != true) {
                 copyCameraToKite(mapView)
                 val camera = mapView.mapboxMap.cameraState
@@ -196,7 +207,7 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
                 true
             } else if (!model.placingStop && !model.isGuiding && model.directions == null) {
                 val pixel = map.pixelForCoordinate(point)
-                map.queryRenderedFeatures(RenderedQueryGeometry(pixel), RenderedQueryOptions(listOf("kite-vela-selected", "kite-place-selection", "kite-search-hit", "kite-vela-results",
+                map.queryRenderedFeatures(RenderedQueryGeometry(pixel), RenderedQueryOptions(listOf("kite-vela-selected", "kite-search-hit", "kite-vela-results",
                     KiteMap.TRANSIT_STOPS, GOOGLE_PLACES, OpenMapStyle.POIS, KiteMap.GOOGLE_UNREVIEWED), null)) { result ->
                     val feature = result.value?.firstOrNull()?.queriedFeature?.feature
                     val loc = feature?.geometry() as? Point
@@ -588,10 +599,11 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
             .heatmapRadius(Expression.fromRaw("""["interpolate",["linear"],["zoom"],5,13,13,32,17,42]"""))
             .heatmapIntensity(1.3).heatmapOpacity(0.75)
             .heatmapColor(Expression.fromRaw("""["interpolate",["linear"],["heatmap-density"],0,"rgba(66,98,240,0)",0.2,"#5374F4",0.55,"#9259EC",1,"#EF76D9"]""")))
-        st.addLayer(line("kite-done", "vela-route-done", 0xFF68778E.toInt(), 7.0))
         st.addLayer(line("kite-alt", "vela-route-alt", 0xFF90BCD1.toInt(), 6.0))
         st.addLayer(line("kite-edge", "vela-route", 0xFF075964.toInt(), 13.0))
         st.addLayer(line("kite-route", "vela-route", 0xFF2DD4BF.toInt(), 8.0))
+        st.addLayer(line("kite-path-section-edge", "kite-path-section", Color.WHITE, 15.0))
+        st.addLayer(line("kite-path-section-fill", "kite-path-section", 0xFFE56C16.toInt(), 9.0))
         st.addLayer(SymbolLayer("kite-current-road-name", "vela-road-name").slot("top")
             .symbolPlacement(SymbolPlacement.LINE_CENTER).textField(Expression.get("label"))
             .textSize(16.0).textColor(Color.WHITE).textHaloColor(0xFF163242.toInt()).textHaloWidth(1.3))
@@ -705,10 +717,6 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
                 .circlePitchAlignment(CirclePitchAlignment.VIEWPORT).circleEmissiveStrength(1.0))
         }
         val selected = "vela-selected"
-        st.addLayer(CircleLayer("kite-place-selection", selected).slot("top").circleRadius(16.0)
-            .filter(Expression.fromRaw("""["==",["get","role"],"picked"]""")).circleColor(0xFFE8453C.toInt())
-            .circleOpacity(0.23).circleStrokeColor(0xFFE8453C.toInt()).circleStrokeWidth(2.0)
-            .circlePitchAlignment(CirclePitchAlignment.VIEWPORT).circleEmissiveStrength(1.0))
         st.addLayer(SymbolLayer("kite-vela-selected", selected).slot("top").iconImage(Expression.get("icon"))
             .iconAnchor(Expression.fromRaw("""["coalesce",["get","anchor"],"center"]"""))
             .iconSize(0.95).iconAllowOverlap(true).iconIgnorePlacement(true)
@@ -909,7 +917,7 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
         private const val LAMP_POST = "kite-lamp-post"
         private const val LAMP_LENS = "kite-lamp-lens"
         private const val LAMP_POOL = "kite-lamp-pool"
-        private val overlaySources = setOf(LOCATION, NavGlide.PUCK, "vela-route", "vela-route-done", "vela-route-alt",
+        private val overlaySources = setOf(LOCATION, NavGlide.PUCK, "vela-route", "vela-route-alt", "kite-path-section",
             "vela-route-traffic", "vela-turn-arrow", "vela-turn-head", "vela-transit", "vela-results", "vela-selected",
             "vela-road-name", "vela-mine", "vela-waze", "vela-waze-group", "vela-cameras", "vela-livecams", "vela-signals", "vela-waze-heat", "kite-google-places", "kite-measure", "vela-rail", KiteMap.TRANSIT_STOPS, KiteMap.RIDE_STOPS, KiteMap.TRANSIT_VEHICLES, KiteMap.STREET_VIEW, StopSearch.PINS)
     }

@@ -226,6 +226,8 @@ object SearchParser {
         "rating" to listOf(1, 4, 7),
         "reviewCount" to listOf(1, 4, 8),
         "priceText" to listOf(1, 4, 2),
+        "fuelPrice" to listOf(1, 88, 0),
+        "placeType" to listOf(1, 88, 1),
         "website" to listOf(1, 7, 0),
         "phone" to listOf(1, 178, 0, 0),
         "featureId" to listOf(1, 10),
@@ -280,6 +282,10 @@ object SearchParser {
         p.rating = gdbl(field(entry, "rating"))
         p.reviewCount = gint(field(entry, "reviewCount"))
         p.priceText = gstr(field(entry, "priceText"))
+        p.fuelStation = gstr(field(entry, "placeType")) == "SearchResult.TYPE_GAS_STATION"
+        if (FuelPrices.isStation(p)) {
+            p.fuelPrice = FuelPrices.googleLabel(gstr(field(entry, "fuelPrice")))
+        }
         p.website = gstr(field(entry, "website"))
         p.phone = gstr(field(entry, "phone"))
         val rich = gstr(field(entry, "statusRich"))

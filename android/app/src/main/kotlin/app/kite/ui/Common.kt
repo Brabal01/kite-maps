@@ -359,7 +359,7 @@ fun MapLookButton(look: MapLook, heading: Double = 0.0, size: Dp = 52.dp, onClic
 /** Home or Work: one tap for directions, or to set it. */
 @Composable
 fun PlaceTile(model: AppModel, icon: ImageVector, color: Color, title: String, place: Place?, modifier: Modifier = Modifier,
-              unset: () -> Unit, go: () -> Unit = {}) {
+              unset: () -> Unit, go: () -> Unit = {}, rename: (() -> Unit)? = null, remove: (() -> Unit)? = null) {
     val dark = LocalDark.current
     var menu by remember { mutableStateOf(false) }
     Box(modifier) {
@@ -376,13 +376,15 @@ fun PlaceTile(model: AppModel, icon: ImageVector, color: Color, title: String, p
             Column(Modifier.weight(1f)) {
                 Text(title, fontSize = 19.sp, fontWeight = FontWeight.Bold, color = primaryText, maxLines = 1)
                 val d = place?.let { p -> model.userLatLng?.distanceTo(p.location) }
-                Text(d?.let { Fmt.distance(it) } ?: if (place == null) "Tap to set" else "Tap to go",
+                Text(d?.let { Fmt.distance(it) } ?: if (place == null) "Tap to set" else place.address ?: "Tap to go",
                     fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Vela.muted(dark), maxLines = 1)
             }
         }
         DropdownMenu(menu, { menu = false }) {
-            DropdownMenuItem(text = { Text("Change ${title.lowercase()}") }, leadingIcon = { Icon(Icons.Filled.Edit, null) },
-                onClick = { menu = false; model.picking = if (title == "Home") PickKind.HOME else PickKind.WORK })
+            DropdownMenuItem(text = { Text(if (rename == null) "Change ${title.lowercase()}" else "Rename shortcut") },
+                leadingIcon = { Icon(Icons.Filled.Edit, null) }, onClick = { menu = false; (rename ?: unset)() })
+            if (remove != null) DropdownMenuItem(text = { Text("Remove shortcut") },
+                leadingIcon = { Icon(Icons.Filled.DeleteOutline, null) }, onClick = { menu = false; remove() })
         }
     }
 }
@@ -390,12 +392,61 @@ fun PlaceTile(model: AppModel, icon: ImageVector, color: Color, title: String, p
 /** Home and Work at the top of the search panel. */
 @Composable
 fun Shortcuts(model: AppModel, done: () -> Unit) {
-    Row(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        PlaceTile(model, Icons.Filled.Home, Vela.routeBlue, "Home", AppSettings.home, Modifier.weight(1f),
-            unset = { done(); model.picking = PickKind.HOME }, go = done)
-        PlaceTile(model, Icons.Filled.Work, Color(0xFF8B5CF6), "Work", AppSettings.work, Modifier.weight(1f),
-            unset = { done(); model.picking = PickKind.WORK }, go = done)
+    Column(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            PlaceTile(model, Icons.Filled.Home, Vela.routeBlue, "Home", AppSettings.home, Modifier.weight(1f),
+                unset = { done(); model.picking = PickKind.HOME }, go = done)
+            PlaceTile(model, Icons.Filled.Work, Color(0xFF8B5CF6), "Work", AppSettings.work, Modifier.weight(1f),
+                unset = { done(); model.picking = PickKind.WORK }, go = done)
+        }
+        CustomShortcuts(model, done)
     }
+}
+
+@Composable
+internal fun CustomShortcuts(model: AppModel, done: () -> Unit) {
+    val settings = model.settings
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
+        maxItemsInEachRow = 2, modifier = Modifier.fillMaxWidth()) {
+        for (place in settings.placeShortcuts) key(place.id) {
+            PlaceTile(model, Icons.Filled.Place, interfaceAccentText, place.name, place, Modifier.weight(1f),
+                unset = {}, go = { done(); model.tab = AppTab.MAP },
+                rename = { model.shortcutDraft = place },
+                remove = { settings.placeShortcuts = settings.placeShortcuts.filterNot { it.id == place.id } })
+        }
+    }
+    OutlinedButton(onClick = { done(); model.picking = PickKind.SHORTCUT }) {
+        Icon(Icons.Filled.Add, null, Modifier.size(19.dp))
+        Spacer(Modifier.width(6.dp))
+        Text("Add shortcut")
+    }
+}
+
+@Composable
+internal fun ShortcutNameDialog(model: AppModel, place: Place) {
+    val settings = model.settings
+    val existing = settings.placeShortcuts.any { it.id == place.id }
+    var name by remember(place.id) { mutableStateOf(place.name) }
+    fun close() { model.shortcutDraft = null }
+    AlertDialog(
+        onDismissRequest = ::close,
+        title = { Text(if (existing) "Rename shortcut" else "Name your shortcut") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                place.address?.let { Text(it, color = secondaryText) }
+                OutlinedTextField(name, { name = it }, singleLine = true, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val shortcut = place.copy(name = name.trim(), distanceMeters = null)
+                settings.placeShortcuts = if (existing) settings.placeShortcuts.map { if (it.id == place.id) shortcut else it }
+                    else settings.placeShortcuts + shortcut
+                close()
+            }, enabled = name.isNotBlank()) { Text("Save") }
+        },
+        dismissButton = { TextButton(::close) { Text("Cancel") } },
+    )
 }
 
 /** A simple row with an icon and text, for lists in panels. */

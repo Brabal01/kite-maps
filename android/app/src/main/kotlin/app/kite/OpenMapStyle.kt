@@ -70,6 +70,13 @@ object OpenMapStyle {
             16,${show(32, closeFacilities)},17,${show(68, closeFacilities)}]"""
     }
 
+    fun visibleGroups(model: AppModel): Set<OpenPlaceGroup> = when {
+        model.nav != null || model.cruise != null ->
+            if (AppSettings.navigationPlaces) AppSettings.navigationPlaceGroups else emptySet()
+        model.transitGuidance == null && AppSettings.openMapPlaces -> AppSettings.openPlaceGroups
+        else -> emptySet()
+    }
+
     fun title(name: String?, subclass: String?, klass: String?): String =
         name?.takeIf { it.isNotBlank() } ?: (subclass ?: klass ?: "place").replace('_', ' ').replaceFirstChar(Char::titlecase)
 }

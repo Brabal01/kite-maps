@@ -390,9 +390,7 @@ private fun PlaceActions(model: AppModel, place: Place, driveSeconds: Double?) {
                 else item("Set as home", Icons.Outlined.Home) { model.setHome(place) }()
                 if (model.settings.work?.id == place.id) item("Remove work", Icons.Filled.Work) { model.setWork(null) }()
                 else item("Set as work", Icons.Outlined.WorkOutline) { model.setWork(place) }()
-                item("Copy coordinates", Icons.Filled.ContentCopy) {
-                    ctx.copy(String.format(Locale.US, "%.6f, %.6f", place.location.lat, place.location.lng))
-                }()
+                item("Add shortcut", Icons.Filled.AddLocationAlt) { model.nameNewShortcut(place) }()
                 place.address?.let { a -> item("Copy address", Icons.Filled.ContentPaste) { ctx.copy("${place.name}, $a") }() }
                 HorizontalDivider()
                 Text("Open in", fontSize = KType.caption, color = secondaryText, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
@@ -416,17 +414,14 @@ private fun PlaceOverview(place: Place) {
     var hoursOpen by remember(place.id) { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         place.editorialSummary?.let { s -> Copyable(s) { Text(s, color = primaryText) } }
-        place.address?.let { a -> Copyable(a) { InfoRow(Icons.Outlined.Place, a) } }
+        place.address?.let { PlaceInfoCard(Icons.Outlined.Place, "Address", it) }
         if (isStop(place)) DepartureBoard(place)
         if (place.hours.isNotEmpty()) OpeningHoursCard(place, hoursOpen) { hoursOpen = !hoursOpen }
-        place.phone?.let { phone -> Copyable(phone, onClick = { telUrl(phone)?.let { ctx.open(it) } }) { InfoRow(Icons.Outlined.Phone, phone) } }
+        place.phone?.let { phone -> PlaceInfoCard(Icons.Outlined.Phone, "Phone", phone, telUrl(phone)?.let { url -> { ctx.open(url) } }) }
         place.website?.let { site ->
-            Copyable(site, onClick = { webUrl(site)?.let { ctx.open(it) } }) {
-                InfoRow(Icons.Filled.Language, site.removePrefix("https://").removePrefix("http://"))
-            }
+            PlaceInfoCard(Icons.Filled.Language, "Website", site.removePrefix("https://").removePrefix("http://"),
+                webUrl(site)?.let { url -> { ctx.open(url) } })
         }
-        val coords = String.format(Locale.US, "%.6f, %.6f", place.location.lat, place.location.lng)
-        Copyable(coords) { InfoRow(Icons.Filled.GpsFixed, coords) }
         place.featuredReview?.let { r ->
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("Review", fontSize = KType.headline, fontWeight = FontWeight.SemiBold, color = primaryText)
@@ -434,6 +429,29 @@ private fun PlaceOverview(place: Place) {
                     Icon(Icons.Filled.AccountCircle, null, tint = secondaryText, modifier = Modifier.size(28.dp))
                     Text("“$r”", fontSize = KType.subheadline, color = primaryText)
                 }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun PlaceInfoCard(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, value: String, open: (() -> Unit)? = null) {
+    val accent = MaterialTheme.colorScheme.primary
+    val context = LocalContext.current
+    Surface(color = interfaceGround, shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, secondaryText.copy(alpha = 0.16f))) {
+        Copyable(value, onClick = open ?: { context.copy(value) }) {
+            Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(38.dp).clip(RoundedCornerShape(12.dp)).background(accent.copy(alpha = 0.12f)),
+                    contentAlignment = Alignment.Center) {
+                    Icon(icon, null, tint = accent, modifier = Modifier.size(21.dp))
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(label, fontWeight = FontWeight.SemiBold, color = primaryText)
+                    Text(value, fontSize = KType.footnote, color = secondaryText, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                }
+                Icon(if (open == null) Icons.Filled.ContentCopy else Icons.Filled.OpenInNew,
+                    if (open == null) "Copy $label" else "Open $label", tint = secondaryText, modifier = Modifier.size(18.dp))
             }
         }
     }

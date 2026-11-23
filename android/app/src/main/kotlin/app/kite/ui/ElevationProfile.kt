@@ -1,6 +1,8 @@
 package app.kite.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
@@ -70,12 +72,13 @@ fun RouteElevation(route: Route) {
 fun RoutePathSections(route: Route, model: AppModel) {
     var expanded by remember(route.id) { mutableStateOf(false) }
     var sections by remember(route.id) { mutableStateOf<List<Valhalla.PathSection>?>(null) }
-    var selected by remember(route.id) { mutableStateOf<Valhalla.PathSection?>(null) }
+    val selected = model.pathSectionHighlight?.takeIf { it.first == route.id }?.second
     LaunchedEffect(route.id, expanded) {
         if (expanded && sections == null) sections = Valhalla.pathSections(route)
     }
     IconRow(Icons.Filled.Terrain, "Surface & path type", trailing = if (expanded) "Hide" else "Show") {
         expanded = !expanded
+        if (!expanded && selected != null) model.pathSectionHighlight = null
     }
     if (!expanded) return
     val known = sections
@@ -98,12 +101,17 @@ fun RoutePathSections(route: Route, model: AppModel) {
         "path", "grass" -> natural
         else -> unknown
     }
-    Canvas(Modifier.fillMaxWidth().height(9.dp)) {
+    Canvas(Modifier.fillMaxWidth().height(22.dp).pointerInput(known, total) {
+        detectTapGestures { point ->
+            val at = point.x / size.width.coerceAtLeast(1) * total
+            known.firstOrNull { at >= it.from && at <= it.to }?.let { model.framePathSection(route, it) }
+        }
+    }) {
         drawRect(unknown)
         for (section in known) {
             val start = (section.from / total).toFloat() * size.width
             val width = ((section.to - section.from) / total).toFloat() * size.width
-            drawRect(tint(section.surface),
+            drawRect(if (section == selected) androidx.compose.ui.graphics.Color(0xFFE56C16) else tint(section.surface),
                 topLeft = androidx.compose.ui.geometry.Offset(start, 0f),
                 size = androidx.compose.ui.geometry.Size(width, size.height))
         }
@@ -120,7 +128,6 @@ fun RoutePathSections(route: Route, model: AppModel) {
             } ?: "Surface unknown"
             val type = section.type?.let(::pathLabel) ?: "Path type unknown"
             Column(Modifier.fillMaxWidth().tap {
-                selected = section
                 model.framePathSection(route, section)
             }.padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text("$surface · $type", color = if (selected == section) paved else primaryText, fontSize = KType.subheadline)
