@@ -162,7 +162,7 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
         mapView.logo.enabled = false
         mapView.attribution.enabled = false
         idleSubscription = map.subscribeMapIdle {
-            if (movingFromTouch) {
+            if (movingFromTouch && model.mapNavigator?.following != true) {
                 copyCameraToKite(mapView)
                 val camera = mapView.mapboxMap.cameraState
                 model.noteSearchArea(camera.center.kite(), camera.zoom)
@@ -276,18 +276,39 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
         else style?.let { applyLook(it, previous) }
     }
 
-    fun syncFromKite(camera: CameraPosition, synchronize: Boolean = false) {
+    fun syncFromKite(camera: CameraPosition) {
+        if (model.mapNavigator?.following == true || cameraEase != null || movingFromTouch && model.glide.mapTouched) return
+        submitCamera(camera, force = false)
+    }
+
+    fun followCamera(camera: CameraPosition, takeover: Boolean) {
         val mapView = view ?: return
-        if (movingFromTouch && model.glide.mapTouched) return
-        if (synchronize) {
+        if (takeover || cameraEase != null) {
             cancelCameraEase()
             mapView.camera.cancelAllAnimators()
-        } else if (cameraEase != null) return
-        val map = mapView.mapboxMap
+        }
+        submitCamera(camera, force = takeover)
+        if (takeover) {
+            val guide = model.mapNavigator ?: return
+            // Check the applied position once the SDK has processed that frame.
+            mapView.postOnAnimation {
+                if (view !== mapView || model.mapNavigator !== guide || !guide.following) return@postOnAnimation
+                val expected = model.glide.followingCamera ?: return@postOnAnimation
+                val center = expected.target ?: return@postOnAnimation
+                val actual = mapView.mapboxMap.cameraState
+                if (NavGlide.needsCameraCorrection(actual.center.kite(), center.kite(), actual.zoom, expected.zoom)) {
+                    submitCamera(expected, force = true)
+                }
+            }
+        }
+    }
+
+    private fun submitCamera(camera: CameraPosition, force: Boolean) {
+        val map = view?.mapboxMap ?: return
         val at = camera.target ?: return
         val insets = camera.padding ?: DoubleArray(4)
         val previous = submittedCamera
-        if (previous != null && !synchronize) {
+        if (previous != null && !force) {
             val p = previous.padding ?: DoubleArray(4)
             if (abs(previous.zoom - camera.zoom) < 0.0007 && abs(previous.tilt - camera.tilt) < 0.05 &&
                 abs((previous.bearing - camera.bearing + 540) % 360 - 180) < 0.06 &&
@@ -309,6 +330,7 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
 
     fun animateCamera(position: CameraPosition, duration: Int): Boolean {
         val mapView = view ?: return false
+        if (model.mapNavigator?.following == true) return false
         val target = cameraOptions(position) ?: return false
         cancelCameraEase()
         model.map?.cancelTransitions()
@@ -318,7 +340,7 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
         cameraEaseSync = model.scope.launch {
             delay(duration + 32L)
             cameraEase = null
-            if (view === mapView) copyCameraToKite(mapView)
+            if (view === mapView && model.mapNavigator?.following != true) copyCameraToKite(mapView)
         }
         return true
     }
@@ -427,7 +449,8 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
                 val guidanceCamera = model.glide.followingCamera
                 val latestCamera = guidanceCamera ?: submittedCamera ?: model.map?.cameraPosition
                 submittedCamera = null
-                latestCamera?.let { syncFromKite(it, synchronize = guidanceCamera != null) }
+                if (guidanceCamera != null) followCamera(guidanceCamera, takeover = true)
+                else latestCamera?.let { submitCamera(it, force = true) }
                 LocationService.last?.let(::updatePosition)
                 ready = true
                 kite.refreshScenery()

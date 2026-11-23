@@ -1,0 +1,258 @@
+package app.kite.ui
+
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import app.kite.*
+import app.kite.core.RoadCamera
+import app.kite.core.Waze
+import app.kite.core.WazeAlert
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun LayersSheet(liveCount: Int? = null, close: () -> Unit) {
+    val s = AppSettings
+    val hasHeatmap = WazeAlert.Kind.POLICE in Waze.shares
+    ModalBottomSheet(
+        onDismissRequest = close,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = interfaceSheet,
+        contentColor = primaryText,
+        dragHandle = { BottomSheetDefaults.DragHandle(color = secondaryText.copy(alpha = 0.4f)) },
+    ) {
+        Column(Modifier.fillMaxHeight(0.90f).fillMaxWidth().padding(horizontal = 20.dp).navigationBarsPadding()) {
+            Row(Modifier.fillMaxWidth().padding(bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Layers", fontSize = 29.sp, fontWeight = FontWeight.ExtraBold, color = primaryText,
+                    modifier = Modifier.weight(1f))
+                CircleIconButton(Icons.Filled.Close, description = "Close layers", onClick = close)
+            }
+            Column(
+                Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(bottom = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(20.dp),
+            ) {
+                LayerSection("Map type") {
+                    Row(Modifier.fillMaxWidth().selectableGroup(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        BasemapCard("Default", satellite = false, selected = !s.satellite, modifier = Modifier.weight(1f)) { s.satellite = false }
+                        BasemapCard("Satellite", satellite = true, selected = s.satellite, modifier = Modifier.weight(1f)) { s.satellite = true }
+                    }
+                }
+                LayerSection("Appearance") {
+                    MapAppearance(s.mapStyleMode) { s.mapStyleMode = it }
+                }
+                LayerSection("Place icons") {
+                    LayerRow {
+                        if (!s.noGoogle) LayerToggle(Icons.Filled.Place, "Google Maps", s.googleMapPlaces) { s.googleMapPlaces = it }
+                        LayerToggle(Icons.Filled.Map, "OpenStreetMap", s.openMapPlaces) { s.openMapPlaces = it }
+                    }
+                }
+                LayerSection("Routes & terrain") {
+                    LayerRow {
+                        LayerToggle(Icons.Filled.Hiking, "Hiking", s.hikingTrails) { s.hikingTrails = it }
+                        LayerToggle(Icons.Filled.PedalBike, "Cycling", s.bikeTrails) { s.bikeTrails = it }
+                    }
+                    LayerRow {
+                        LayerToggle(Icons.Filled.Tram, "Transit", s.transitLines) { s.transitLines = it }
+                        LayerToggle(Icons.Filled.Landscape, "Hillshade", s.terrain) { s.terrain = it }
+                    }
+                    if (s.standardMap && s.activeMapboxToken != null) LayerRow {
+                        LayerToggle(Icons.Filled.Terrain, "3D terrain", s.terrain3D) { s.terrain3D = it }
+                    }
+                }
+                LayerSection("Road activity") {
+                    LayerRow {
+                        LayerToggle(Icons.Filled.Traffic, "Traffic", s.traffic) { s.traffic = it }
+                        LayerToggle("Road alerts", s.wazeOn && s.wazeOnMap, {
+                            WazeBadge(if (hasHeatmap) WazeAlert.Kind.POLICE else WazeAlert.Kind.CLOSURE, 25.dp)
+                        }) { enabled ->
+                            if (enabled) s.waze = true
+                            s.wazeOnMap = enabled
+                        }
+                    }
+                    LayerRow {
+                        LayerToggle("Speed cameras", s.speedCameras, { CameraBadge(RoadCamera.Kind.SPEED, 25.dp) }) {
+                            s.speedCameras = it
+                        }
+                        LayerToggle("Plate cameras", s.plateCameras, { CameraBadge(RoadCamera.Kind.PLATE, 25.dp) }) {
+                            s.plateCameras = it
+                        }
+                    }
+                    LayerRow {
+                        LayerToggle(Icons.Filled.Videocam, "Surveillance", s.surveillanceCameras) { s.surveillanceCameras = it }
+                        LayerToggle(Icons.Filled.LiveTv, "Live cameras", s.liveCams && (s.liveRoadCams || s.showsWebcams)) { enabled ->
+                            s.liveCams = enabled
+                            if (enabled) {
+                                s.liveRoadCams = true
+                                s.liveWebcams = true
+                            }
+                        }
+                    }
+                    if (hasHeatmap) LayerRow {
+                        LayerToggle(Icons.Filled.LocalFireDepartment, "Police heat map", s.wazeOn && s.wazeHeatmap) { enabled ->
+                            if (enabled) s.waze = true
+                            s.wazeHeatmap = enabled
+                        }
+                    }
+                    if (liveCount != null && s.wazeOn && (s.wazeOnMap || s.wazeHeatmap)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Box(Modifier.size(7.dp).clip(CircleShape).background(Vela.open))
+                            Text("$liveCount live Waze report${if (liveCount == 1) "" else "s"}",
+                                fontSize = KType.caption, color = secondaryText)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LayerSection(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(title, fontSize = KType.subheadline, fontWeight = FontWeight.Bold, color = primaryText)
+        content()
+    }
+}
+
+@Composable
+private fun LayerRow(content: @Composable RowScope.() -> Unit) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), content = content)
+}
+
+@Composable
+private fun BasemapCard(title: String, satellite: Boolean, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(17.dp)
+    val color = if (selected) interfaceAccent else secondaryText.copy(alpha = 0.18f)
+    Column(modifier.clip(shape).background(interfaceGround).border(if (selected) 1.5.dp else 1.dp, color, shape)
+        .selectable(selected, role = Role.RadioButton, onClick = onClick)) {
+        BasemapPreview(satellite, Modifier.fillMaxWidth().height(78.dp))
+        Row(Modifier.fillMaxWidth().heightIn(min = 45.dp).padding(horizontal = 12.dp, vertical = 7.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(title, color = primaryText, fontSize = KType.subheadline,
+                fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            LayerCheck(selected)
+        }
+    }
+}
+
+@Composable
+private fun BasemapPreview(satellite: Boolean, modifier: Modifier) {
+    val dark = LocalDark.current
+    val ground = when {
+        satellite -> Color(0xFF2D4237)
+        dark -> Color(0xFF202C3A)
+        else -> Color(0xFFE6EBE5)
+    }
+    val field = when {
+        satellite -> Color(0xFF667653)
+        dark -> Color(0xFF2A443B)
+        else -> Color(0xFFBFD8B7)
+    }
+    val water = if (satellite || dark) Color(0xFF2D5A69) else Color(0xFF9CCBDE)
+    val road = when {
+        satellite -> Color(0xFFADA590)
+        dark -> Color(0xFF718093)
+        else -> Color.White
+    }
+    Canvas(modifier) {
+        fun point(x: Float, y: Float) = Offset(size.width * x, size.height * y)
+        fun area(color: Color, vararg points: Pair<Float, Float>) {
+            val path = Path().apply {
+                val (firstX, firstY) = points.first()
+                moveTo(size.width * firstX, size.height * firstY)
+                for ((x, y) in points.drop(1)) lineTo(size.width * x, size.height * y)
+                close()
+            }
+            drawPath(path, color)
+        }
+        drawRect(ground)
+        area(field, 0f to 0f, .43f to 0f, .34f to .41f, .14f to .62f, 0f to .46f)
+        area(lerp(field, ground, .26f), .69f to .48f, 1f to .36f, 1f to 1f, .52f to 1f)
+        area(water, .58f to 0f, .68f to 0f, .72f to .28f, .57f to .64f, .52f to 1f,
+            .40f to 1f, .49f to .59f, .63f to .24f)
+        drawLine(road.copy(alpha = .8f), point(0f, .78f), point(1f, .18f), 3.dp.toPx(), StrokeCap.Round)
+        drawLine(road.copy(alpha = .65f), point(.23f, 0f), point(.51f, 1f), 1.5.dp.toPx())
+        drawLine(road.copy(alpha = .65f), point(.86f, 0f), point(.72f, 1f), 1.5.dp.toPx())
+        drawLine(road.copy(alpha = .55f), point(0f, .49f), point(.90f, .84f), 1.dp.toPx())
+    }
+}
+
+@Composable
+private fun MapAppearance(selected: MapStyleMode, choose: (MapStyleMode) -> Unit) {
+    val shape = RoundedCornerShape(16.dp)
+    Row(Modifier.fillMaxWidth().clip(shape).background(interfaceGround).selectableGroup().padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        for (mode in MapStyleMode.entries) {
+            val (icon, label) = when (mode) {
+                MapStyleMode.SYSTEM -> Icons.Filled.SettingsBrightness to "App"
+                MapStyleMode.LIGHT -> Icons.Filled.LightMode to "Light"
+                MapStyleMode.DARK -> Icons.Filled.DarkMode to "Dark"
+                MapStyleMode.SUN -> Icons.Filled.WbTwilight to "Sunrise"
+            }
+            val on = mode == selected
+            val tint = if (on) interfaceAccentText else secondaryText
+            Column(Modifier.weight(1f).heightIn(min = 54.dp).clip(RoundedCornerShape(12.dp))
+                .background(if (on) interfaceSurface else Color.Transparent)
+                .selectable(on, role = Role.RadioButton) { choose(mode) }.padding(vertical = 7.dp, horizontal = 2.dp),
+                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Icon(icon, if (mode == MapStyleMode.SUN) "Sunrise and sunset" else null, tint = tint, modifier = Modifier.size(19.dp))
+                Text(label, fontSize = KType.caption, fontWeight = if (on) FontWeight.Bold else FontWeight.Medium,
+                    color = if (on) primaryText else secondaryText, textAlign = TextAlign.Center)
+            }
+        }
+    }
+}
+
+@Composable
+private fun RowScope.LayerToggle(icon: ImageVector, title: String, enabled: Boolean, toggle: (Boolean) -> Unit) {
+    val tint = if (enabled) interfaceAccentText else secondaryText
+    LayerToggle(title, enabled, { Icon(icon, null, tint = tint, modifier = Modifier.size(22.dp)) }, toggle)
+}
+
+@Composable
+private fun RowScope.LayerToggle(title: String, enabled: Boolean, icon: @Composable () -> Unit, toggle: (Boolean) -> Unit) {
+    val shape = RoundedCornerShape(14.dp)
+    val background = if (enabled) lerp(interfaceGround, interfaceAccent, 0.10f) else interfaceGround
+    val borderColor = if (enabled) interfaceAccent.copy(alpha = 0.60f) else secondaryText.copy(alpha = 0.16f)
+    Row(Modifier.weight(1f).heightIn(min = 54.dp).clip(shape).background(background).border(1.dp, borderColor, shape)
+        .toggleable(enabled, role = Role.Switch, onValueChange = toggle).padding(horizontal = 9.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(25.dp), contentAlignment = Alignment.Center) { icon() }
+        Text(title, color = primaryText, fontSize = KType.caption, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+        LayerCheck(enabled)
+    }
+}
+
+@Composable
+private fun LayerCheck(on: Boolean) {
+    val outline = if (on) Color.Transparent else secondaryText.copy(alpha = 0.38f)
+    Box(Modifier.size(17.dp).clip(CircleShape).background(if (on) interfaceAccent else Color.Transparent)
+        .border(1.dp, outline, CircleShape), contentAlignment = Alignment.Center) {
+        if (on) Icon(Icons.Filled.Check, null, tint = interfaceOnAccent, modifier = Modifier.size(12.dp))
+    }
+}

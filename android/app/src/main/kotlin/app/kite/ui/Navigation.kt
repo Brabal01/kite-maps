@@ -145,9 +145,7 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean,
         val rightStrip = showRoadAhead && roadPosition == RoadStripPosition.RIGHT
         val sideStrip = leftStrip || rightStrip
         val compactSideStrip = sideStrip && (h < 620.dp || (mainAlert != null && h < 720.dp))
-        // The car, while the camera follows it: always at the same spot, pointing up the screen and
-        // lying flat on the tilted map.
-        // In 2D it lies round, and north up it moves up to the middle and turns the way you're going.
+        // Draw the vehicle over the camera's padded center with its heading relative to the map.
         if (model.glide.carOnScreen) {
             val marker = if (nav.route.mode == TravelMode.DRIVE) AppSettings.driveMarker else DriveMarker.ARROW
             val tilted = marker != DriveMarker.ARROW && AppSettings.driveLook == MapLook.TILTED

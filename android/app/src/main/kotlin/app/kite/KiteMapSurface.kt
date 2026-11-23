@@ -62,6 +62,13 @@ class KiteMapSurface(
         if (rendererChanged) model.glide.restoreFollowingCamera()
     }
 
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        if (w != 0 && h != 0) postOnAnimation {
+            if (!destroyed) model.glide.restoreFollowingCamera()
+        }
+    }
+
     private data class Hold(val id1: Int, val id2: Int, val p1: PointF, val p2: PointF, val downAt: Long)
     private var hold: Hold? = null
     private var measured = false

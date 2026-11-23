@@ -69,13 +69,13 @@ class KiteMap(private val model: AppModel, private val context: Context) {
     private var lastClassicCamera = 0L
 
     private fun driveCamera(camera: CameraPosition, synchronize: Boolean) {
-        val m = map ?: return
+        if (synchronize) map?.cancelTransitions()
         val native = scenery?.takeIf { it.ready }
         if (native == null) {
-            m.moveCamera(org.maplibre.android.camera.CameraUpdateFactory.newCameraPosition(camera))
+            syncFromScenery(camera)
             return
         }
-        native.syncFromKite(camera, synchronize)
+        native.followCamera(camera, synchronize)
         val time = android.os.SystemClock.elapsedRealtime()
         if (synchronize || time - lastClassicCamera >= 950L) {
             lastClassicCamera = time
@@ -239,7 +239,8 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             m.uiSettings.isLogoEnabled = false
             m.uiSettings.setAttributionMargins(24, 0, 0, 24)
             m.uiSettings.isAttributionEnabled = true
-            m.cameraPosition = CameraPosition.Builder().target(org.maplibre.android.geometry.LatLng(51.5074, -0.1278)).zoom(11.0).build()
+            if (model.glide.followingCamera != null) model.glide.restoreFollowingCamera()
+            else m.cameraPosition = CameraPosition.Builder().target(org.maplibre.android.geometry.LatLng(51.5074, -0.1278)).zoom(11.0).build()
             v.addOnDidFailLoadingMapListener {
                 if (loadingStyle?.token != null) {
                     Toast.makeText(context, "Mapbox map unavailable. Using OpenFreeMap.", Toast.LENGTH_LONG).show()
@@ -322,6 +323,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
     fun detach(v: MapView) {
         if (view !== v) return
         if (model.map === map) {
+            model.glide.cameraOutput = null
             model.nativeCamera = null
             model.map = null
         }

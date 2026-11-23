@@ -1439,6 +1439,7 @@ class AppModel {
     }
 
     private fun centerForNavigationStart(fix: Fix) {
+        if (mapNavigator?.following == true) return
         val m = map ?: return
         browseFollowing = false
         MapCam.animate(m, CameraPosition.Builder().target(fix.coord.ml())
@@ -1728,6 +1729,7 @@ class AppModel {
     }
 
     fun frame(points: List<LatLng>, bottomFraction: Float = 0.45f, top: Int = 130) {
+        if (mapNavigator?.following == true) return
         val m = map ?: return
         val first = points.firstOrNull() ?: return
         // Showing a place or a route: stop following, or the next fix would pull the map away.
