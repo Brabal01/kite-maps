@@ -190,29 +190,83 @@ public enum Transitous {
 
     public static func planURL(from: LatLng, to: LatLng, max: Int = 5, time: Date? = nil,
                                arriveBy: Bool = false, widerAccess: Bool = false) -> URL? {
-        var s = "\(base)/api/v2/plan?fromPlace=\(from.lat.plain),\(from.lng.plain)&toPlace=\(to.lat.plain),\(to.lng.plain)&numItineraries=\(max)&detailedTransfers=true&useRoutedTransfers=true"
-        if let time {
-            let f = ISO8601DateFormatter()
-            s += "&time=" + f.string(from: time)
-            if arriveBy { s += "&arriveBy=true" }
-        }
-        if widerAccess { s += "&maxPreTransitTime=1800&maxPostTransitTime=1800" }
-        return URL(string: s)
+        requestURL(server: base, from: from, to: to, max: max, time: time,
+                   arriveBy: arriveBy, widerAccess: widerAccess)
     }
 
-    /** Trips leaving now, or around [time] (arriving by it when [arriveBy]). Throws on a network error. */
+    /// Accept a MOTIS server base URL, optionally behind a reverse proxy path.
+    public static func requestURL(server: String, from: LatLng, to: LatLng, max: Int = 5,
+                                  time: Date? = nil, arriveBy: Bool = false, widerAccess: Bool = false) -> URL? {
+        guard MapLineGeometry.isValid(from), MapLineGeometry.isValid(to),
+              var url = URLComponents(string: server.trimmingCharacters(in: .whitespacesAndNewlines)),
+              url.scheme?.lowercased() == "https", let host = url.host, !host.isEmpty,
+              url.user == nil, url.password == nil, url.query == nil, url.fragment == nil else { return nil }
+        if url.path.hasSuffix("/") { url.path.removeLast() }
+        url.path += "/api/v2/plan"
+        var query = [
+            URLQueryItem(name: "fromPlace", value: "\(from.lat.plain),\(from.lng.plain)"),
+            URLQueryItem(name: "toPlace", value: "\(to.lat.plain),\(to.lng.plain)"),
+            URLQueryItem(name: "numItineraries", value: String(max)),
+            URLQueryItem(name: "detailedTransfers", value: "true"),
+            URLQueryItem(name: "useRoutedTransfers", value: "true")
+        ]
+        if let time {
+            query.append(URLQueryItem(name: "time", value: ISO8601DateFormatter().string(from: time)))
+            if arriveBy { query.append(URLQueryItem(name: "arriveBy", value: "true")) }
+        }
+        if widerAccess {
+            query.append(URLQueryItem(name: "maxPreTransitTime", value: "1800"))
+            query.append(URLQueryItem(name: "maxPostTransitTime", value: "1800"))
+        }
+        url.queryItems = query
+        return url.url
+    }
+
     public static func plan(from: LatLng, to: LatLng, time: Date? = nil, arriveBy: Bool = false) async throws -> [TransitTrip] {
         guard let url = planURL(from: from, to: to, time: time, arriveBy: arriveBy) else { return [] }
         let first = try await fetchPlan(url)
-        guard first.isEmpty, !Task.isCancelled,
-              let expanded = planURL(from: from, to: to, time: time, arriveBy: arriveBy, widerAccess: true) else { return first }
-        return (try? await fetchPlan(expanded)) ?? []
+        guard first.isEmpty else { return first }
+        try Task.checkCancellation()
+        guard let expanded = planURL(from: from, to: to, time: time, arriveBy: arriveBy, widerAccess: true) else { return first }
+        do {
+            return try await fetchPlan(expanded)
+        } catch {
+            try Task.checkCancellation()
+            // An expansion failure doesn't erase the first valid, empty result.
+            return first
+        }
     }
 
-    private static func fetchPlan(_ url: URL) async throws -> [TransitTrip] {
+    public struct PlanResult: Sendable {
+        public let trips: [TransitTrip]
+        public let provider: String
+    }
+
+    /// Use the alternate timetable after a primary outage or an empty primary result.
+    public static func planWithFallback(from: LatLng, to: LatLng, time: Date? = nil, arriveBy: Bool = false,
+                                        fallbackServer: String) async throws -> PlanResult {
+        let fallback = requestURL(server: fallbackServer, from: from, to: to, time: time, arriveBy: arriveBy)
+        let primary: [TransitTrip]
+        do {
+            primary = try await plan(from: from, to: to, time: time, arriveBy: arriveBy)
+        } catch {
+            try Task.checkCancellation()
+            guard let fallback, let host = fallback.host, host != URL(string: base)?.host else { throw error }
+            return PlanResult(trips: try await fetchPlan(fallback, provider: host), provider: host)
+        }
+        try Task.checkCancellation()
+        if primary.isEmpty, let fallback, let host = fallback.host, host != URL(string: base)?.host {
+            return PlanResult(trips: try await fetchPlan(fallback, provider: host), provider: host)
+        }
+        return PlanResult(trips: primary, provider: "Transitous")
+    }
+
+    private static func fetchPlan(_ url: URL, provider: String = "transitous.org") async throws -> [TransitTrip] {
         let (data, resp) = try await session.data(from: url)
-        guard (resp as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
-        return parse(data)
+        guard (resp as? HTTPURLResponse)?.statusCode == 200,
+              let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              root["itineraries"] is [[String: Any]] else { throw URLError(.badServerResponse) }
+        return parse(data, provider: provider)
     }
 
     /** One upcoming departure at a stop. */
@@ -339,15 +393,6 @@ public enum Transitous {
             let precision = min(7, max(5, (enc["precision"] as? Int) ?? 6))
             let points = Geo.decodePolyline(pts, precision: pow(10, Double(precision)))
             guard points.count >= 2 else { continue }
-            let length = Geo.length(points)
-            // A feed without shapes draws straight chords between distant stops: leave those out.
-            let anyMetro = rs.contains {
-                let m = TransitMode(mode: $0["mode"] as? String ?? "")
-                return m == .metro || m == .subway
-            }
-            // A two-point "shape" is a straight chord between stops, not a real alignment.
-            if !anyMetro, points.count == 2, length > 700 { continue }
-
             // One entry per distinct line on this geometry.
             var seen = Set<String>()
             var lines: [(mode: TransitMode, color: UInt32, name: String, key: String)] = []
@@ -365,19 +410,30 @@ public enum Transitous {
             guard !lines.isEmpty else { continue }
             let n = lines.count
             for (i, line) in lines.enumerated() {
-                out.append(Line(points: points, color: line.color, metro: line.mode == .metro || line.mode == .subway,
-                                names: [line.name], mode: line.mode,
-                                offset: n > 1 ? (Double(i) - Double(n - 1) / 2) * 2.2 : 0,
-                                routeKey: line.key))
+                // Some feeds draw straight chords across missing street shapes, even in
+                // polylines with several points. Regional rail and ferries can be much sparser.
+                let limit: Double?
+                switch line.mode {
+                case .tram, .lightRail: limit = 800
+                case .bus, .trolleybus: limit = 1_000
+                case .metro, .subway, .monorail: limit = 4_000
+                default: limit = points.count == 2 && line.mode != .ferry ? 700 : nil
+                }
+                for segment in MapLineGeometry.segments(points, maximumEdgeMeters: limit) {
+                    out.append(Line(points: segment, color: line.color, metro: line.mode == .metro || line.mode == .subway,
+                                    names: [line.name], mode: line.mode,
+                                    offset: n > 1 ? (Double(i) - Double(n - 1) / 2) * 2.2 : 0,
+                                    routeKey: line.key))
+                }
             }
         }
         return out
     }
 
-    public static func parse(_ data: Data) -> [TransitTrip] {
+    public static func parse(_ data: Data, provider: String = "transitous.org") -> [TransitTrip] {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let its = root["itineraries"] as? [[String: Any]] else { return [] }
-        let trips = its.compactMap(itinerary)
+        let trips = its.compactMap { itinerary($0, provider: provider) }
         // The planner can repeat a trip; keep the first of each line-up and time.
         var seen = Set<String>()
         return trips.filter { t in
@@ -386,9 +442,9 @@ public enum Transitous {
         }
     }
 
-    private static func itinerary(_ it: [String: Any]) -> TransitTrip? {
+    private static func itinerary(_ it: [String: Any], provider: String) -> TransitTrip? {
         guard let rawLegs = it["legs"] as? [[String: Any]] else { return nil }
-        let legs = rawLegs.map(leg)
+        let legs = rawLegs.map { leg($0, provider: provider) }
         guard legs.contains(where: { !$0.isWalk }) else { return nil } // a walk-only answer isn't transit
         let start = date(it["startTime"]), end = date(it["endTime"])
         let dur = number(it["duration"]) ?? (start.flatMap { s in end.map { $0.timeIntervalSince(s) } } ?? 0)
@@ -396,7 +452,7 @@ public enum Transitous {
         return TransitTrip(depart: start, arrive: end, durationSeconds: dur, transfers: transfers, legs: legs)
     }
 
-    private static func leg(_ l: [String: Any]) -> TransitLeg {
+    private static func leg(_ l: [String: Any], provider: String) -> TransitLeg {
         let mode = l["mode"] as? String ?? ""
         let from = l["from"] as? [String: Any] ?? [:], to = l["to"] as? [String: Any] ?? [:]
         let start = date(l["startTime"]), end = date(l["endTime"])
@@ -440,7 +496,7 @@ public enum Transitous {
             // The planner's own real-time answer has no separate timestamp here; show it as live
             // until an extra GTFS-Realtime feed refines the freshness.
             out.liveFreshness = .live
-            out.liveProvider = out.liveProvider ?? "transitous.org"
+            out.liveProvider = provider
         }
         out.serviceAlerts = alerts([l, from, to])
         let intermediate = l["intermediateStops"] as? [[String: Any]] ?? []
@@ -455,7 +511,7 @@ public enum Transitous {
             shortName: out.line, longName: string(l["routeLongName"]), headsign: out.headsign,
             mode: TransitMode(gtfsRouteType: routeType ?? -1) ?? TransitMode(mode: mode),
             routeType: routeType, officialColor: out.color, officialTextColor: out.textColor,
-            provider: "transitous.org", feedID: string(l["feedId"]) ?? string(l["source"]),
+            provider: provider, feedID: string(l["feedId"]) ?? string(l["source"]),
             agencyID: out.agencyId, routeID: out.routeId, operatorName: out.agency,
             source: .provider, freshness: out.liveFreshness)
         out.stops = intermediate.count + 1
