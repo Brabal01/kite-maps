@@ -105,6 +105,11 @@ data class DirectionsState(
         if (reversed) listOf(destination) + stops.asReversed() + listOf(null)
         else listOf(start) + stops + destination
 
+    fun replacingDestination(place: Place): DirectionsState =
+        copy(destination = place, start = if (reversed) destination else start,
+            stops = if (reversed) stops.asReversed() else stops, reversed = false,
+            original = null, endNote = null, startRequested = false)
+
     val missingOrigin: Boolean get() = start == null && !useCurrentOrigin && !reversed
 
     fun endpoints(current: LatLng?): Pair<LatLng?, LatLng?> =
@@ -238,6 +243,54 @@ class AppModel {
     var browseFollowing by mutableStateOf(false)
     /** Street View opened from a place. */
     var streetView by mutableStateOf<StreetViewRequest?>(null)
+        private set
+    var streetViewMapExpanded by mutableStateOf(false)
+    var streetViewFrame by mutableStateOf<StreetViewFrame?>(null)
+        private set
+    var streetViewTap by mutableStateOf<Pair<LatLng, Long>?>(null)
+        private set
+    private var beforeStreetView: CameraPosition? = null
+    private var streetViewTapNumber = 0L
+
+    fun openStreetView(request: StreetViewRequest) {
+        if (streetView == null) beforeStreetView = visibleCamera?.invoke() ?: map?.cameraPosition
+        browseFollowing = false
+        streetView = request
+    }
+
+    fun closeStreetView() {
+        streetView = null
+        streetViewFrame = null
+        streetViewTap = null
+        streetViewMapExpanded = false
+        val camera = beforeStreetView
+        beforeStreetView = null
+        if (camera != null) scope.launch {
+            // Let the shared map regain its full viewport before restoring the camera.
+            delay(65)
+            if (streetView == null) map?.let { MapCam.animate(it, camera, ms = 0, native = nativeCamera, keepPadding = true) }
+        }
+    }
+
+    fun streetViewMapTapped(point: LatLng): Boolean {
+        if (streetView == null) return false
+        streetViewTap = point to ++streetViewTapNumber
+        return true
+    }
+
+    fun updateStreetViewFrame(pano: StreetView.Panorama, heading: Double) {
+        if (streetView == null) return
+        streetViewFrame = StreetViewFrame(pano.location, (heading / 2.0).roundToInt() * 2, pano.links.map { it.at })
+    }
+
+    fun centerStreetView(at: LatLng, keepZoom: Boolean = true) {
+        if (streetView == null) return
+        val m = map ?: return
+        val current = visibleCamera?.invoke() ?: m.cameraPosition
+        val zoom = if (keepZoom) current.zoom.coerceAtLeast(16.0) else 17.4
+        MapCam.animate(m, CameraPosition.Builder().target(at.ml()).zoom(zoom).tilt(0.0).bearing(0.0).build(),
+            ms = 200, native = nativeCamera)
+    }
     /** The driving view with no route, switched to by itself when you set off (null when not driving). */
     var cruise by mutableStateOf<Cruise?>(null)
     /** When fast driving with no route began, for switching to the driving view after a few seconds. */
@@ -990,6 +1043,13 @@ class AppModel {
     var avoidBusy by mutableStateOf(false)
     private var avoidJob: Job? = null
     var pickingOrigin by mutableStateOf(false)
+    var pickingDestination by mutableStateOf(false)
+
+    fun setDestination(place: Place) {
+        val plan = directions ?: return
+        directions = plan.replacingDestination(place)
+        reloadRoutes()
+    }
     /** Waze reports found along the route being planned, shown as icons on it before you go. */
     var routeReports by mutableStateOf<List<WazeAlert>>(emptyList())
     /** The place whose Reviews tab to open (its stars were tapped). */
@@ -1197,7 +1257,7 @@ class AppModel {
         transitClockJob = scope.launch {
             while (transitGuidance === session && session.phase != TransitGuidance.Phase.COMPLETE) {
                 delay(5_000)
-                session.tick(System.currentTimeMillis())
+                session.tick(System.currentTimeMillis(), transitLive[session.leg?.tripId])
             }
         }
         session.prepareLeg()
@@ -1513,9 +1573,11 @@ class AppModel {
     fun previewNavTurn(turn: Maneuver) {
         val n = mapNavigator ?: return
         val m = map ?: return
+        val current = visibleCamera?.invoke() ?: m.cameraPosition
         n.following = false
-        MapCam.animate(m, CameraPosition.Builder().target(turn.location.ml()).zoom(16.8).tilt(24.0)
-            .padding(0.0, 0.0, 0.0, 0.0).build(), ms = 380)
+        val preview = CameraPosition.Builder(current).target(turn.location.ml()).zoom(16.8)
+            .tilt(if (settings.driveLook == MapLook.TILTED) 24.0 else 0.0).build()
+        MapCam.animate(m, preview, padding = intArrayOf(0, 100, 0, 45), ms = 260, native = nativeCamera)
     }
 
     /** Show the whole remaining trip; the camera stops following until re-centered. */
@@ -1779,3 +1841,4 @@ data class StopSearch(
 
 /** Street View asked for from a place: where, and what to call it. */
 data class StreetViewRequest(val name: String, val pano: StreetView.Panorama, val heading: Double)
+data class StreetViewFrame(val at: LatLng, val heading: Int, val links: List<LatLng>)

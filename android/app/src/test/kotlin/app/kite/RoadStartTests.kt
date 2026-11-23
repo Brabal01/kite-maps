@@ -56,4 +56,12 @@ class RoadStartTests {
         assertEquals(here, remote.copy(useCurrentOrigin = true).endpoints(here).first)
     }
 
+    @Test fun changingDestinationKeepsTheOriginAndStopOrder() {
+        val replacement = Place("new", "New destination", here, "osm")
+        val plan = DirectionsState(end, start = start, stops = listOf(via), mode = TravelMode.DRIVE)
+        assertEquals(listOf(start, via, replacement), plan.replacingDestination(replacement).orderedPlaces())
+        val reversed = plan.copy(start = null, reversed = true, stops = listOf(via, start))
+        assertEquals(listOf(end, start, via, replacement), reversed.replacingDestination(replacement).orderedPlaces())
+    }
+
 }

@@ -66,6 +66,8 @@ fun LayersSheet(liveCount: Int? = null, close: () -> Unit) {
                 }
                 LayerSection("Appearance") {
                     MapAppearance(s.mapStyleMode) { s.mapStyleMode = it }
+                    Text("App appearance", fontSize = KType.caption, fontWeight = FontWeight.SemiBold, color = secondaryText)
+                    Segmented(ThemeMode.entries.toList(), s.theme, { it.label }) { s.theme = it }
                     FilledTonalButton({ editColors = !editColors }, modifier = Modifier.fillMaxWidth()) {
                         Icon(Icons.Filled.Palette, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))

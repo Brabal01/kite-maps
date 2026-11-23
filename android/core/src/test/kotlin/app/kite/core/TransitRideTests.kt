@@ -39,6 +39,26 @@ class TransitRideTests {
         assertEquals("2", legs.last().calls.first().platform)
     }
 
+    @Test fun metroUsesOperatorColorAndLiveIntermediateStopsWithoutGps() {
+        val data = """{"legs":[{"mode":"SUBWAY","routeColor":"#00A562","tripId":"metro-1","realTime":true,
+          "from":{"stopId":"a","name":"Board","lat":50.0,"lon":14.0,"departure":"2026-11-23T12:00:00Z"},
+          "intermediateStops":[{"stopId":"b","name":"Next","lat":50.005,"lon":14.0,
+            "arrival":"2026-11-23T12:07:00Z","scheduledArrival":"2026-11-23T12:03:00Z","arrivalTimestampReason":"PREDICTED"}],
+          "to":{"stopId":"c","name":"Exit","lat":50.01,"lon":14.0,"arrival":"2026-11-23T12:12:00Z"}
+          }]}"""
+        val scheduled = data.replace("12:07:00Z", "12:03:00Z").replace("PREDICTED", "NO_RT_DATA")
+        val plan = Transitous.parse("""{"itineraries":[$scheduled]}""".toByteArray()).single().rides.single()
+        val now = checkNotNull(Transitous.date("2026-11-23T12:05:00Z"))
+        val live = assertNotNull(Transitous.parseLive(data.toByteArray(), plan, now))
+        val ride = TransitRide(plan)
+        assertEquals(0x00A562L, plan.mapColor)
+        assertEquals("c", ride.scheduledNext(now)?.stopId)
+        val next = assertNotNull(ride.scheduledNext(now, live))
+        assertEquals("b", next.stopId)
+        assertEquals(4, live.matchCall(next)?.arrivalDelay)
+        assertNull(live.exit?.arrivalDelay)
+    }
+
     @Test fun projectsSignalsButNotDistantSideRoads() {
         val line = listOf(LatLng(50.0, 14.0), LatLng(50.02, 14.0))
         val raw = """{"elements":[

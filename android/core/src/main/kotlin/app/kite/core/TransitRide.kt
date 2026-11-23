@@ -50,8 +50,11 @@ class TransitRide(private val leg: TransitLeg) {
         return Advance(nextChanged = previous != nextIndex, exitApproach = exitApproach)
     }
 
-    fun scheduledNext(time: Long): TransitCall? =
-        leg.calls.drop(nextIndex).firstOrNull { (it.departure ?: it.arrival ?: Long.MAX_VALUE) >= time }
+    fun scheduledNext(time: Long, live: TransitLive? = null): TransitCall? =
+        leg.calls.asSequence().drop(nextIndex).firstOrNull { planned ->
+            val call = live?.matchCall(planned) ?: planned
+            !call.cancelled && (call.departure ?: call.arrival ?: Long.MAX_VALUE) >= time
+        }
             ?: leg.calls.lastOrNull().takeIf { next != null }
 
     data class Advance(val nextChanged: Boolean = false, val exitApproach: Boolean = false)

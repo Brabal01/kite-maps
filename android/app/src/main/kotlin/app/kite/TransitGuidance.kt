@@ -96,11 +96,11 @@ class TransitGuidance(val trip: TransitTrip, val destination: Place) {
         return departureMotion?.observe(f.coord, f.accuracy, f.speed, f.course, f.timeMillis, liveDeparture?.time ?: leg?.depart) == true
     }
 
-    fun scheduledNext(time: Long) = tracker?.scheduledNext(time)
+    fun scheduledNext(time: Long, live: TransitLive? = null) = tracker?.scheduledNext(time, live)
 
-    fun tick(now: Long) {
+    fun tick(now: Long, live: TransitLive?) {
         if (phase == Phase.RIDE && now - (lastAlongAt ?: boardedAt) > 25_000)
-            sayNext(scheduledNext(now), scheduled = true)
+            sayNext(scheduledNext(now, live), scheduled = true)
     }
 
     private fun sayNext(call: TransitCall?, scheduled: Boolean) {

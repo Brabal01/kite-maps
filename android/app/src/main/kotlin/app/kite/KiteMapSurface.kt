@@ -97,7 +97,7 @@ class KiteMapSurface(
             MotionEvent.ACTION_DOWN -> measured = false
             MotionEvent.ACTION_POINTER_DOWN -> {
                 cancelHold()
-                if (event.pointerCount == 2 && !measured && !model.placingStop) {
+                if (event.pointerCount == 2 && !measured && !model.placingStop && model.streetView == null) {
                     hold = Hold(event.getPointerId(0), event.getPointerId(1),
                         PointF(event.getX(0), event.getY(0)), PointF(event.getX(1), event.getY(1)), event.downTime)
                     postDelayed(finishHold, 550L)

@@ -63,6 +63,7 @@ fun BottomSheet(
     peekHeight: Dp = 230.dp,
     /** Room kept clear above the sheet at full height (the directions from/to card). */
     topClearance: Dp = 0.dp,
+    opaque: Boolean = false,
     header: @Composable ColumnScope.() -> Unit,
     content: @Composable ColumnScope.() -> Unit,
 ) {
@@ -134,7 +135,7 @@ fun BottomSheet(
             .height(with(density) { current.toDp() })
             .shadow(14.dp, shape)
             .clip(shape)
-            .background(interfaceSheet.copy(alpha = 0.97f))
+            .background(interfaceSheet.copy(alpha = if (opaque) 1f else 0.97f))
             .border(0.75.dp, Color.White.copy(alpha = if (dark) 0.12f else 0.5f), shape)
             .nestedScroll(connection)
     ) {

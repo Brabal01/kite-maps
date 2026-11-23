@@ -7,6 +7,7 @@ import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.util.UUID
+import kotlin.math.abs
 import kotlin.math.pow
 import kotlin.math.roundToInt
 
@@ -22,7 +23,22 @@ data class TransitLive(
     val board: TransitCall?, val exit: TransitCall?, val cancelled: Boolean,
     val notices: List<TransitNotice>, val position: LatLng? = null, val gps: Boolean = false,
     val occupancy: String? = null,
-)
+    val calls: List<TransitCall> = emptyList(),
+) {
+    fun matchCall(call: TransitCall): TransitCall? =
+        matchTransitCall(calls, call.stopId, call.departure ?: call.arrival) { it.departure ?: it.arrival }
+}
+
+private fun matchTransitCall(
+    calls: List<TransitCall>, id: String?, time: Long?, event: (TransitCall) -> Long?,
+): TransitCall? {
+    if (id == null) return null
+    // A circular line can visit the same stop twice.
+    return calls.asSequence().filter { it.stopId == id }.minByOrNull {
+        val expected = event(it)
+        if (time == null || expected == null) Long.MAX_VALUE else abs(expected - time)
+    }
+}
 
 /** One part of a transit trip: a walk, or a ride on one line between two stops. Times are epoch millis. */
 data class TransitLeg(
@@ -48,7 +64,7 @@ data class TransitLeg(
     var cancelled: Boolean = false,
 ) {
     val vehicle: Vehicle get() = Vehicle.of(mode)
-    val mapColor: Long get() = when (vehicle) {
+    val mapColor: Long get() = color ?: when (vehicle) {
         Vehicle.WALK -> 0x64748B
         Vehicle.BUS -> 0x1B58B8
         Vehicle.TRAM -> 0xB52B45
@@ -132,18 +148,11 @@ object Transitous {
     internal fun parseLive(data: ByteArray, selected: TransitLeg, now: Long): TransitLive? {
         val raw = Json.obj(data)?.get("legs").asMaps()?.firstOrNull { it["tripId"] == selected.tripId } ?: return null
         val current = leg(raw)
-        val first = selected.calls.firstOrNull()?.stopId
-        val last = selected.calls.lastOrNull()?.stopId
-        // Some loops visit the same stop twice. Match the events nearest the originally selected times.
-        fun match(id: String?, time: Long?, event: (TransitCall) -> Long?): TransitCall? =
-            id?.let { stop -> current.calls.filter { it.stopId == stop }.minByOrNull {
-                kotlin.math.abs((event(it) ?: 0L) - (time ?: 0L))
-            } }
-        val board = match(first, selected.depart, TransitCall::departure)
-        val exit = match(last, selected.arrive, TransitCall::arrival)
+        val board = matchTransitCall(current.calls, selected.calls.firstOrNull()?.stopId, selected.depart, TransitCall::departure)
+        val exit = matchTransitCall(current.calls, selected.calls.lastOrNull()?.stopId, selected.arrive, TransitCall::arrival)
         val cancelled = current.cancelled || board?.cancelled == true || exit?.cancelled == true
         val position = if (raw["realTime"] == true && !cancelled) estimateVehicle(current, now) else null
-        return TransitLive(board, exit, cancelled, current.notices, position)
+        return TransitLive(board, exit, cancelled, current.notices, position, calls = current.calls)
     }
 
     private fun estimateVehicle(leg: TransitLeg, now: Long): LatLng? {

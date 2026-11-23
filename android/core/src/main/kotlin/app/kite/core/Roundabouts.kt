@@ -44,7 +44,7 @@ object Roundabouts {
                 }
                 continue
             }
-            val leave = leaving(ways, m.location, route.polyline, cum, m.alongMeters) ?: wayOff(r.maneuvers, i)
+            val leave = wayOff(r.maneuvers, i) ?: leaving(ways, m.location, route.polyline, cum, m.alongMeters)
             val out = exitAngle(route.polyline, cum, m.alongMeters, leave)
             val s = shape(ways, m.location, route.polyline, cum, m.alongMeters, clockwise, m.exit)
             val sketch = m.roundabout

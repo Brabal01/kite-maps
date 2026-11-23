@@ -22,11 +22,11 @@ object MapCam {
 
     /** [padding] is left, top, right, bottom in dp. */
     fun animate(m: MapLibreMap, pos: CameraPosition, padding: IntArray? = null, ms: Int = 500,
-                native: ((CameraPosition, Int) -> Boolean)? = null) {
+                native: ((CameraPosition, Int) -> Boolean)? = null, keepPadding: Boolean = false) {
         val p = if (padding != null) {
             val d = density()
             CameraPosition.Builder(pos).padding(padding[0] * d.toDouble(), padding[1] * d.toDouble(), padding[2] * d.toDouble(), padding[3] * d.toDouble()).build()
-        } else CameraPosition.Builder(pos).padding(0.0, 0.0, 0.0, 0.0).build()
+        } else if (keepPadding) pos else CameraPosition.Builder(pos).padding(0.0, 0.0, 0.0, 0.0).build()
         if (native?.invoke(p, ms) == true) return
         if (ms <= 0) m.moveCamera(CameraUpdateFactory.newCameraPosition(p))
         else m.animateCamera(CameraUpdateFactory.newCameraPosition(p), ms)

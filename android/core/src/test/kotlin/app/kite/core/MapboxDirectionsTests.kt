@@ -70,6 +70,20 @@ class MapboxDirectionsTests {
         assertEquals(167.0, controls.first().along, 0.3)
     }
 
+    @Test fun usesTheExplicitExitNumberOnTheRoundaboutEntryAndExit() {
+        val route = MapboxDirections.parse(fixture
+            .replace(""""type": "turn", "modifier": "left", "location": [0, 0.002], "instruction": "Bear left onto Second Road"""",
+                """"type": "roundabout", "location": [0, 0.002]""")
+            .replace("""{"distance": 0, "maneuver": {"type": "arrive", "location": [0, 0.003]}}""",
+                """{"exit": 3, "distance": 0, "maneuver": {"type": "exit roundabout", "location": [0, 0.0029]}},
+                   {"distance": 0, "maneuver": {"type": "arrive", "location": [0, 0.003]}}""")
+            .toByteArray()).single()
+        val circle = route.maneuvers.filter { it.type == ManeuverType.ROUNDABOUT }
+        assertEquals(listOf(3, 3), circle.map { it.exit })
+        assertTrue(circle.first().instruction.contains("3rd exit"))
+        assertTrue(circle.last().leavesRoundabout)
+    }
+
     @Test fun ignoresAnnotationsThatCannotBeAlignedToTheRoute() {
         val route = MapboxDirections.parse(fixture.replace("\"heavy\", \"heavy\"", "\"heavy\"")
             .replace(", {\"unknown\": true}", "").toByteArray()).single()

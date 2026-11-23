@@ -20,6 +20,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.kite.*
 import app.kite.core.Place
+import app.kite.core.TransitCall
 import app.kite.core.TransitLeg
 import app.kite.core.TransitLive
 import androidx.compose.ui.platform.LocalContext
@@ -64,13 +65,14 @@ fun TransitNavigationOverlay(model: AppModel, journey: TransitGuidance, showMapb
                 TransitGuidance.Phase.COMPLETE -> "You reached ${journey.destination.name}"
             }
             val rideColor = leg?.takeUnless { it.isWalk }?.let { Color(0xFF000000 or it.mapColor) }
+            val rideInk = if (leg != null && !leg.isWalk) transitInk(leg) else primaryText
             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
                 .background(rideColor ?: interfaceGround).padding(horizontal = 10.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (leg != null && !leg.isWalk) LineChip(leg)
-                Text(label, color = if (rideColor != null) Color.White else primaryText, fontSize = KType.headline, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Text(label, color = rideInk, fontSize = KType.headline, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                 if (phase != TransitGuidance.Phase.COMPLETE && (!journey.following || walking?.following == false))
-                    IconButton(model::followTransit) { Icon(Icons.Filled.MyLocation, "Re-centre", tint = if (rideColor != null) Color.White else primaryText) }
+                    IconButton(model::followTransit) { Icon(Icons.Filled.MyLocation, "Re-centre", tint = rideInk) }
             }
             when (phase) {
                 TransitGuidance.Phase.WALK -> {
@@ -109,9 +111,12 @@ fun TransitNavigationOverlay(model: AppModel, journey: TransitGuidance, showMapb
                 TransitGuidance.Phase.RIDE -> {
                     val positionAt = journey.lastAlongAt
                     val gps = positionAt != null && now - positionAt <= 20_000
-                    val next = if (gps) journey.nextStop else journey.scheduledNext(now)
+                    val next = if (gps) journey.nextStop else journey.scheduledNext(now, status)
                     next?.let {
-                        Text(if (gps) "Next stop" else "Scheduled next stop", fontSize = KType.caption, color = secondaryText)
+                        val updated = status?.matchCall(it) ?: it
+                        val time = (updated.arrival ?: updated.departure)?.let { event -> Fmt.time(Date(event)) }
+                        val label = if (gps || updated.arrivalDelay != null || updated.departureDelay != null) "Next stop" else "Scheduled next stop"
+                        Text(listOfNotNull(label, time).joinToString(" · "), fontSize = KType.caption, color = secondaryText)
                         Text(it.name, color = primaryText, fontSize = KType.headline, fontWeight = FontWeight.Bold)
                     }
                     val followingLeg = journey.trip.legs.drop(journey.legIndex + 1).firstOrNull { !it.isWalk }
@@ -120,7 +125,7 @@ fun TransitNavigationOverlay(model: AppModel, journey: TransitGuidance, showMapb
                         LineChip(followingLeg)
                         followingLeg.headsign?.let { Text(it, color = secondaryText, maxLines = 1) }
                     }
-                    if (leg != null) TransitStatus(leg, status, arrival = true)
+                    if (leg != null) TransitStatus(leg, status, arrival = true, next = next, departureDelay = journey.liveDeparture?.delayMinutes)
                     val exit = listOfNotNull(leg?.toName, (status?.exit?.arrival ?: leg?.arrive)?.let { Fmt.time(Date(it)) })
                     if (exit.isNotEmpty()) Text("Get off · ${exit.joinToString(" · ")}", color = secondaryText)
                     if (!gps) Text("Waiting for a position along the route", color = secondaryText, fontSize = KType.caption)
@@ -189,15 +194,34 @@ internal fun transitDelay(minutes: Int): String = when {
 }
 
 @Composable
-internal fun TransitStatus(leg: TransitLeg, live: TransitLive?, arrival: Boolean = false, departureDelay: Int? = null) {
+internal fun TransitStatus(
+    leg: TransitLeg, live: TransitLive?, arrival: Boolean = false, next: TransitCall? = null, departureDelay: Int? = null,
+) {
     val context = LocalContext.current
-    val delay = if (arrival) live?.exit?.arrivalDelay ?: leg.calls.lastOrNull()?.arrivalDelay
-        else live?.board?.departureDelay ?: departureDelay ?: leg.delayMinutes
+    val boardingDelay = live?.board?.departureDelay ?: departureDelay ?: leg.delayMinutes
+    val nextStop = next?.let { live?.matchCall(it) ?: it }
+    val nextDelay = nextStop?.let { it.arrivalDelay ?: it.departureDelay }
+    val exitDelay = live?.exit?.arrivalDelay ?: leg.calls.lastOrNull()?.arrivalDelay
+    val delay = if (arrival) nextDelay ?: exitDelay ?: boardingDelay else boardingDelay
     if (live?.cancelled == true || leg.cancelled) {
         Text("Service cancelled or stop skipped", color = Vela.closed, fontSize = KType.caption)
     } else {
-        Text(delay?.let(::transitDelay) ?: "Scheduled time", fontSize = KType.caption,
-            color = if (delay != null && delay > 0) Vela.closed else secondaryText)
+        val prefix = when {
+            !arrival || nextDelay != null || delay == null -> ""
+            exitDelay != null -> "Exit stop · "
+            else -> "Boarding update · "
+        }
+        val ink = when {
+            delay == null -> secondaryText
+            delay > 0 -> Vela.closed
+            else -> interfaceAccentText
+        }
+        if (arrival && delay != null) {
+            Surface(color = ink.copy(alpha = 0.12f), shape = RoundedCornerShape(8.dp)) {
+                Text(prefix + transitDelay(delay), Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    fontSize = KType.subheadline, fontWeight = FontWeight.SemiBold, color = ink)
+            }
+        } else Text(delay?.let(::transitDelay) ?: "Live delay unavailable · timetable", fontSize = KType.caption, color = ink)
         live?.position?.let {
             Text(if (live.gps) "Live vehicle position on map" else "Estimated vehicle position on map",
                 fontSize = KType.caption, color = secondaryText)

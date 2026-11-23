@@ -166,8 +166,12 @@ object OSRM {
                     val at = loc(m["location"]) ?: Geo.point(line, along, cum)
                     val mt = maneuverType(type, modifier, Geo.drivesOnLeft(at))
                     val signs = Signs(step["destinations"] as? String, step["exits"] as? String, maneuvers.lastOrNull()?.road)
-                    val exit = m["exit"].int()
-                    val text = (m["instruction"] as? String)?.takeIf { source == "mapbox" && it.isNotBlank() }
+                    val supplied = (m["instruction"] as? String)?.takeIf { source == "mapbox" && it.isNotBlank() }
+                    val exit = if (roundaboutStep) {
+                        (m["exit"].int() ?: step["exit"].int())?.takeIf { it > 0 }
+                            ?: supplied?.let(DirectionsParser::exitNumber)
+                    } else null
+                    val text = supplied
                         ?: instruction(type, modifier, stepRoad, exit, mode, signs)
                     val man = Maneuver(mt, text, at,
                         min(along, cum.last()), dist, stepRoad)
@@ -179,14 +183,21 @@ object OSRM {
                                 man.lanes = approachLanes(it, at, modifier, Geo.drivesOnLeft(at))
                             }
                         }
-                        man.roundabout = roundaboutSketch(step, steps.getOrNull(si + 1), Geo.drivesOnLeft(at))
+                        val exitStep = steps.getOrNull(si + 1)?.takeIf {
+                            it["maneuver"].asMap()?.get("type") in setOf("exit roundabout", "exit rotary")
+                        }
+                        man.roundabout = roundaboutSketch(step, exitStep, Geo.drivesOnLeft(at))
                     }
                     if (type == "exit roundabout" || type == "exit rotary") {
                         man.leavesRoundabout = true
                         man.lanes = emptyList()
                         val prev = maneuvers.lastOrNull()
-                        if (prev != null && prev.type == ManeuverType.ROUNDABOUT) {
-                            man.exit = man.exit ?: prev.exit
+                        if (prev != null && prev.type == ManeuverType.ROUNDABOUT && !prev.leavesRoundabout) {
+                            if (prev.exit == null && man.exit != null) {
+                                prev.exit = man.exit
+                                prev.instruction = instruction("roundabout", null, prev.road ?: stepRoad, prev.exit, mode)
+                            }
+                            man.exit = prev.exit
                             man.roundabout = prev.roundabout
                         }
                     }
@@ -233,15 +244,17 @@ object OSRM {
                 if (k < entries.size && entries[k]) passed.add(p) else inOnly.add(p)
             }
         }
-        val ring = listOf(entry) + passed + inOnly + listOf(out)
+        val exitsBefore = passed.distinct().filter { it != out && it != entry }
+        val entriesOnly = inOnly.distinct().filter { it !in exitsBefore && it != out && it != entry }
+        val ring = listOf(entry, out) + exitsBefore + entriesOnly
         val center = fitCircle(ring) ?: return null
         val e = Geo.bearing(center, entry)
         fun rel(p: LatLng): Double {
             val a = Geo.bearing(center, p) - e + 180
             return ((a % 360) + 360) % 360
         }
-        val exits = passed.map { rel(it) } + listOf(rel(out))
-        return RoundaboutShape(exits, exits.size - 1, inOnly.map { rel(it) }, clockwise, false)
+        val exits = exitsBefore.map { rel(it) } + listOf(rel(out))
+        return RoundaboutShape(exits, exits.size - 1, entriesOnly.map { rel(it) }, clockwise, false)
     }
 
     /** The middle of the circle best through [pts] (least squares), or null when they don't make one. */
@@ -427,9 +440,9 @@ object OSRM {
             }
             type == "roundabout" || type == "rotary" || type == "roundabout turn" -> {
                 if (road != null && road.lowercase().contains("roundabout")) {
-                    exit?.let { "At $road, take the ${ordinal(it)} exit" } ?: "Go straight through $road"
+                    exit?.let { "At $road, take the ${ordinal(it)} exit" } ?: "Follow $road"
                 } else {
-                    val n = exit?.let { "take the ${ordinal(it)} exit" } ?: "go straight through"
+                    val n = exit?.let { "take the ${ordinal(it)} exit" } ?: "follow the roundabout"
                     "At the roundabout, $n$onto"
                 }
             }
@@ -660,8 +673,14 @@ object StepMerge {
         for (i in steps.indices) {
             val s = steps[i]
             if (s.type != ManeuverType.ROUNDABOUT || s.leavesRoundabout) continue
-            val g = google.filter { it.type == ManeuverType.ROUNDABOUT && it.exit != null && abs(it.alongMeters - s.alongMeters) < 120 }
-                .minByOrNull { abs(it.alongMeters - s.alongMeters) } ?: continue
+            val g = google.filter {
+                it.type == ManeuverType.ROUNDABOUT && !it.leavesRoundabout && it.exit != null &&
+                    abs(it.alongMeters - s.alongMeters) <= 45 && it.location.distanceTo(s.location) <= 35
+            }.minByOrNull { abs(it.alongMeters - s.alongMeters) } ?: continue
+            if (steps.any {
+                it !== s && it.type == ManeuverType.ROUNDABOUT && !it.leavesRoundabout &&
+                    abs(it.alongMeters - g.alongMeters) <= abs(s.alongMeters - g.alongMeters)
+            }) continue
             val n = g.exit ?: continue
             if (n == s.exit) continue
             s.exit = n

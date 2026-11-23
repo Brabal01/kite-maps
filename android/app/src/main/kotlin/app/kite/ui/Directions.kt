@@ -141,7 +141,7 @@ fun EndpointsCard(model: AppModel, state: DirectionsState) {
                     modifier = Modifier.fillMaxWidth().tap { edit = true }.padding(start = 30.dp, bottom = 5.dp))
             }
             HorizontalDivider(Modifier.padding(start = 30.dp))
-            Box(Modifier.fillMaxWidth().tap { edit = true }) {
+            Box(Modifier.fillMaxWidth().tap { model.pickingDestination = true }) {
                 Endpoint(Icons.Filled.Place, Vela.closed, points.last().waypointName())
             }
             if (!state.transit && state.stops.size < 8) TextButton({ model.addingStop = true }) {
@@ -248,7 +248,11 @@ private fun RouteEditor(model: AppModel, state: DirectionsState, close: () -> Un
                             }, contentAlignment = Alignment.Center) {
                                 Icon(Icons.Filled.DragHandle, null, tint = secondaryText, modifier = Modifier.size(24.dp))
                             }
-                            Column(Modifier.weight(1f).padding(vertical = 6.dp)) {
+                            val endpoint = index == points.lastIndex || index == 0 && !state.reversed
+                            Column(Modifier.weight(1f).then(if (endpoint) Modifier.tap {
+                                close()
+                                if (index == points.lastIndex) model.pickingDestination = true else model.pickingOrigin = true
+                            } else Modifier).padding(vertical = 6.dp)) {
                                 Text(when (index) {
                                     0 -> "Start"
                                     points.lastIndex -> "Destination"
@@ -256,8 +260,7 @@ private fun RouteEditor(model: AppModel, state: DirectionsState, close: () -> Un
                                 }, color = secondaryText, fontSize = KType.caption)
                                 Text(if (index == 0 && state.missingOrigin) "Choose starting point" else place.waypointName(),
                                     color = if (index == 0 && state.missingOrigin) interfaceAccentText else primaryText,
-                                    fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                                    modifier = if (index == 0 && !state.reversed) Modifier.tap { close(); model.pickingOrigin = true } else Modifier)
+                                    fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                             }
                             IconButton({ model.moveWaypoint(index, -1) }, enabled = canMove && index > 0) {
                                 Icon(Icons.Filled.KeyboardArrowUp, "Move up")
@@ -267,7 +270,11 @@ private fun RouteEditor(model: AppModel, state: DirectionsState, close: () -> Un
                             }
                             if (index in 1 until points.lastIndex) IconButton({ model.removeStop(index - 1) }) {
                                 Icon(Icons.Filled.Close, "Remove stop")
-                            } else Spacer(Modifier.width(48.dp))
+                            } else if (endpoint) IconButton({
+                                close()
+                                if (index == points.lastIndex) model.pickingDestination = true else model.pickingOrigin = true
+                            }) { Icon(Icons.Filled.Edit, if (index == points.lastIndex) "Change destination" else "Change start") }
+                            else Spacer(Modifier.width(48.dp))
                         }
                     }
                 }
@@ -850,7 +857,7 @@ fun TransitSteps(trip: TransitTrip, activeLeg: Int? = null, live: Map<String, Tr
                             pathEffect = if (leg.isWalk) androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(5f, 6f)) else null)
                     }
                     Box(Modifier.padding(top = 7.dp).size(27.dp).clip(CircleShape).background(accent), contentAlignment = Alignment.Center) {
-                        Icon(vehicleIcon(leg.vehicle), null, Modifier.size(15.dp), tint = Color.White)
+                        Icon(vehicleIcon(leg.vehicle), null, Modifier.size(15.dp), tint = transitInk(leg))
                     }
                 }
                 Column(Modifier.weight(1f).padding(bottom = 9.dp).clip(RoundedCornerShape(13.dp))
@@ -880,7 +887,11 @@ fun TransitSteps(trip: TransitTrip, activeLeg: Int? = null, live: Map<String, Tr
                                 Icon(if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, null)
                             }
                             if (expanded) intermediate.forEach { call ->
-                                Text(times(call.arrival ?: call.departure, call.name), fontSize = KType.caption, color = secondaryText)
+                                val updated = status?.matchCall(call) ?: call
+                                val delay = (updated.arrivalDelay ?: updated.departureDelay)?.let(::transitDelay)
+                                val name = if (updated.cancelled) call.name + " · Stop skipped"
+                                    else listOfNotNull(call.name, delay).joinToString(" · ")
+                                Text(times(updated.arrival ?: updated.departure, name), fontSize = KType.caption, color = secondaryText)
                             }
                         } else Text(Fmt.duration(leg.durationSeconds), fontSize = KType.caption, color = secondaryText)
                         Text(times(status?.exit?.arrival ?: leg.arrive, "Get off at ${leg.toName}"), fontSize = KType.subheadline, color = primaryText)
@@ -1009,13 +1020,16 @@ fun ArrivalRows(model: AppModel, state: DirectionsState) {
 
 /** Search for a place to stop at on the way. Home, work and saved places are one tap. */
 @Composable
-fun OriginPicker(model: AppModel) {
+fun EndpointPicker(model: AppModel, destination: Boolean = false) {
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<Place>>(emptyList()) }
     var searching by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     var job by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
-    fun close() { job?.cancel(); model.pickingOrigin = false }
+    fun close() {
+        job?.cancel()
+        if (destination) model.pickingDestination = false else model.pickingOrigin = false
+    }
     fun search() {
         val text = query.trim()
         if (text.isEmpty()) return
@@ -1027,13 +1041,16 @@ fun OriginPicker(model: AppModel) {
             searching = false
         }
     }
-    PickerPage("Start from", ::close) {
-        PickerSearchField(query, { query = it }, "Search for a starting point", ::search)
+    PickerPage(if (destination) "Change destination" else "Start from", ::close) {
+        PickerSearchField(query, { query = it }, if (destination) "Search for a destination" else "Search for a starting point", ::search)
         LazyColumn {
             if (searching) item { Text("Searching…", Modifier.padding(16.dp), color = secondaryText) }
-            item { IconRow(Icons.Filled.MyLocation, "Your location") { model.setOrigin(null); close() } }
+            if (!destination) item { IconRow(Icons.Filled.MyLocation, "Your location") { model.setOrigin(null); close() } }
             items(results, key = { it.id }) { place ->
-                IconRow(Icons.Filled.Place, place.name, place.address) { model.setOrigin(place); close() }
+                IconRow(Icons.Filled.Place, place.name, place.address) {
+                    if (destination) model.setDestination(place) else model.setOrigin(place)
+                    close()
+                }
             }
         }
     }

@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -417,25 +418,7 @@ private fun PlaceOverview(place: Place) {
         place.editorialSummary?.let { s -> Copyable(s) { Text(s, color = primaryText) } }
         place.address?.let { a -> Copyable(a) { InfoRow(Icons.Outlined.Place, a) } }
         if (isStop(place)) DepartureBoard(place)
-        if (place.hours.isNotEmpty()) Copyable(place.hours.joinToString("\n"), onClick = { hoursOpen = !hoursOpen }) {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.Top) {
-                    Icon(Icons.Outlined.Schedule, null, tint = secondaryText, modifier = Modifier.size(22.dp))
-                    Column(Modifier.weight(1f)) {
-                        StatusText(place)
-                        if (!hoursOpen) place.hours.firstOrNull()?.let { Text(it, fontSize = KType.subheadline, color = secondaryText) }
-                    }
-                    Icon(if (hoursOpen) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown, null, tint = secondaryText)
-                }
-                if (hoursOpen) for (h in place.hours) {
-                    val parts = h.split(":", limit = 2)
-                    Row(Modifier.padding(start = 36.dp)) {
-                        Text(parts.first(), fontSize = KType.subheadline, color = primaryText, modifier = Modifier.width(110.dp))
-                        Text(if (parts.size > 1) parts[1].trim() else "", fontSize = KType.subheadline, color = primaryText)
-                    }
-                }
-            }
-        }
+        if (place.hours.isNotEmpty()) OpeningHoursCard(place, hoursOpen) { hoursOpen = !hoursOpen }
         place.phone?.let { phone -> Copyable(phone, onClick = { telUrl(phone)?.let { ctx.open(it) } }) { InfoRow(Icons.Outlined.Phone, phone) } }
         place.website?.let { site ->
             Copyable(site, onClick = { webUrl(site)?.let { ctx.open(it) } }) {
@@ -450,6 +433,46 @@ private fun PlaceOverview(place: Place) {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Icon(Icons.Filled.AccountCircle, null, tint = secondaryText, modifier = Modifier.size(28.dp))
                     Text("“$r”", fontSize = KType.subheadline, color = primaryText)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun OpeningHoursCard(place: Place, expanded: Boolean, toggle: () -> Unit) {
+    val accent = MaterialTheme.colorScheme.primary
+    Surface(color = interfaceGround, shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, secondaryText.copy(alpha = 0.16f))) {
+        Column(Modifier.fillMaxWidth()) {
+            Copyable(place.hours.joinToString("\n"), onClick = toggle) {
+                Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(38.dp).clip(RoundedCornerShape(12.dp)).background(accent.copy(alpha = 0.12f)),
+                        contentAlignment = Alignment.Center) {
+                        Icon(Icons.Outlined.Schedule, null, tint = accent, modifier = Modifier.size(21.dp))
+                    }
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("Opening hours", fontWeight = FontWeight.SemiBold, color = primaryText)
+                        StatusText(place)
+                    }
+                    Icon(if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                        if (expanded) "Collapse hours" else "Expand hours", tint = secondaryText)
+                }
+            }
+            if (expanded) Column(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 8.dp)) {
+                for (hours in place.hours) {
+                    val separator = hours.indexOf(": ")
+                    val day = hours.substringBefore(": ").takeIf { separator > 0 && it.none(Char::isDigit) }
+                    HorizontalDivider(color = secondaryText.copy(alpha = 0.16f))
+                    Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        if (day == null) Text(hours, fontSize = KType.subheadline, color = primaryText)
+                        else {
+                            Text(day, fontSize = KType.subheadline, fontWeight = FontWeight.Medium,
+                                color = primaryText, modifier = Modifier.weight(1f))
+                            Text(hours.substring(separator + 2), fontSize = KType.subheadline, color = secondaryText,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.End, modifier = Modifier.weight(1.7f))
+                        }
+                    }
                 }
             }
         }
@@ -586,14 +609,14 @@ fun StreetViewTile(model: AppModel, place: Place, height: Dp) {
         pano = resolved
         loaded = true
         if (resolved != null && DemoScript.step == "streetview") {
-            model.streetView = StreetViewRequest(place.name, resolved, heading(resolved))
+            model.openStreetView(StreetViewRequest(place.name, resolved, heading(resolved)))
         }
     }
     val p = pano
     if (p != null) {
         val heading = heading(p)
         Box(Modifier.size(height * 1.4f, height).clip(RoundedCornerShape(10.dp))
-            .clickable { model.streetView = StreetViewRequest(place.name, p, heading) }) {
+            .clickable { model.openStreetView(StreetViewRequest(place.name, p, heading)) }) {
             val thumbnail = ImageRequest.Builder(ctx).data(StreetView.thumbnailUrl(p, heading)).apply {
                 StreetView.imageHeaders.forEach { (name, value) -> addHeader(name, value) }
             }.build()
@@ -615,11 +638,22 @@ fun StreetViewTile(model: AppModel, place: Place, height: Dp) {
     }
 }
 
+internal fun transitInk(leg: TransitLeg): Color {
+    val background = Color(0xFF000000 or leg.mapColor).luminance()
+    leg.textColor?.let {
+        val ink = Color(0xFF000000 or it)
+        val luminance = ink.luminance()
+        val contrast = (maxOf(background, luminance) + 0.05f) / (minOf(background, luminance) + 0.05f)
+        if (contrast >= 4.5f) return ink
+    }
+    return if (background > 0.179f) Color.Black else Color.White
+}
+
 /** A transit line's badge in its own colors. */
 @Composable
 fun LineChip(leg: TransitLeg) {
     val bg = Color(0xFF000000 or leg.mapColor)
-    val fg = Color.White
+    val fg = transitInk(leg)
     Row(Modifier.heightIn(min = 26.dp).clip(RoundedCornerShape(8.dp)).background(bg).padding(horizontal = 8.dp, vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
         Icon(vehicleIcon(leg.vehicle), null, tint = fg, modifier = Modifier.size(12.dp))

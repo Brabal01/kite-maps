@@ -487,7 +487,7 @@ private fun DrivingBanner(
             val size = if (small) 46.dp else 66.dp
             Box(Modifier.size(size).clip(RoundedCornerShape(12.dp)).background(drivePanelInset), contentAlignment = Alignment.Center) {
                 if (maneuver?.type == ManeuverType.ROUNDABOUT && maneuver.exit != null) {
-                    RoundaboutDiagram(maneuver.roundabout, maneuver.exit ?: 1, leftTraffic, Modifier.size(size - 8.dp),
+                    RoundaboutDiagram(maneuver.roundabout, maneuver.exit, leftTraffic, Modifier.size(size - 8.dp),
                         inkColor = Color.White, routeColor = drivePanelAccent)
                 } else {
                     Icon(maneuverIcon(maneuver?.type ?: ManeuverType.STRAIGHT), null,
@@ -565,7 +565,7 @@ fun InstructionBanner(nav: Navigator) {
     val lanes = if (m != null && p != null && p.distanceToNext < 1_500) LaneGuide.lanes(m, leftTraffic) else null
     Column(Modifier.fillMaxWidth().glass(RoundedCornerShape(28.dp)).padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (m?.type == ManeuverType.ROUNDABOUT) RoundaboutDiagram(m.roundabout, m.exit ?: 1, leftTraffic, Modifier.size(76.dp))
+            if (m?.type == ManeuverType.ROUNDABOUT) RoundaboutDiagram(m.roundabout, m.exit, leftTraffic, Modifier.size(76.dp))
             else Box(Modifier.size(64.dp, 72.dp), contentAlignment = Alignment.Center) {
                 Icon(maneuverIcon(if (approaching) ManeuverType.STRAIGHT else m?.type ?: ManeuverType.STRAIGHT), null, tint = Vela.accentText(dark), modifier = Modifier.size(58.dp))
             }
@@ -1285,13 +1285,18 @@ fun laneIcon(indication: String): ImageVector = when (indication) {
  */
 @Composable
 fun RoundaboutDiagram(
-    shape: RoundaboutShape?, exit: Int, clockwise: Boolean, modifier: Modifier = Modifier,
+    shape: RoundaboutShape?, exit: Int?, clockwise: Boolean, modifier: Modifier = Modifier,
     inkColor: Color = Color.Unspecified, routeColor: Color = Color.Unspecified,
 ) {
+    if (exit == null && (shape == null || shape.taken !in shape.exits.indices)) {
+        Icon(Icons.Filled.Autorenew, "Roundabout", modifier = modifier,
+            tint = if (routeColor != Color.Unspecified) routeColor else interfaceAccentText)
+        return
+    }
     val l = remember(shape, exit, clockwise) {
         if (shape != null && shape.taken in shape.exits.indices) shape else {
             // Evenly spread up to yours, a little short of the full circle.
-            val n = max(exit, 1)
+            val n = (exit ?: 1).coerceIn(1, 24)
             val step = min(90.0, 300.0 / (n + 1))
             val sign = if (clockwise) 1 else -1
             RoundaboutShape(exits = (1..n).map { k -> ((180 + sign * k * step) + 360) % 360 }, taken = n - 1, clockwise = clockwise, complete = false)
@@ -1345,10 +1350,11 @@ fun RoundaboutDiagram(
             close()
         }
         drawPath(head, lit)
-        // The exit number in the middle, as well as "6th exit" beside the picture.
-        val t = measurer.measure("$exit", androidx.compose.ui.text.TextStyle(color = ink, fontWeight = FontWeight.ExtraBold, fontFamily = font,
-            fontSize = (w * (if (exit >= 10) 0.17f else 0.22f) / density).sp))
-        drawText(t, topLeft = Offset(c.x - t.size.width / 2, c.y - t.size.height / 2))
+        if (exit != null) {
+            val t = measurer.measure("$exit", TextStyle(color = ink, fontWeight = FontWeight.ExtraBold, fontFamily = font,
+                fontSize = (w * (if (exit >= 10) 0.17f else 0.22f) / density).sp))
+            drawText(t, topLeft = Offset(c.x - t.size.width / 2, c.y - t.size.height / 2))
+        }
     }
 }
 

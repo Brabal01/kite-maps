@@ -14,6 +14,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -34,174 +36,123 @@ import java.nio.ByteOrder
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
 import kotlin.math.ceil
+import kotlin.math.roundToInt
 
-/** The panorama and the map share the same position and compass heading. */
+/** Street View shares Kite's map, including its provider, layers, and touch controls. */
 @Composable
-fun StreetViewScreen(req: StreetViewRequest, close: () -> Unit) {
+fun StreetViewScreen(model: AppModel, req: StreetViewRequest, mapHeight: androidx.compose.ui.unit.Dp, showMapbox: Boolean) {
     val context = LocalContext.current
     var pano by remember(req.pano.id) { mutableStateOf(req.pano) }
     var heading by remember(req.pano.id) { mutableDoubleStateOf(req.heading) }
     var changing by remember { mutableStateOf(false) }
     var failedStep by remember { mutableStateOf(false) }
-    var visited by remember(req.pano.id) { mutableStateOf<Map<String, StreetView.Panorama>>(mapOf(req.pano.id to req.pano)) }
+    var pending by remember { mutableStateOf<Job?>(null) }
+    val visited = remember(req.pano.id) { linkedMapOf(req.pano.id to req.pano) }
     val scope = rememberCoroutineScope()
     val renderer = remember(pano.id) { PanoRenderer(pano, heading) }
-    fun step(link: StreetView.Link) {
-        if (changing) return
+
+    fun move(around: LatLng, link: StreetView.Link? = null) {
+        pending?.cancel()
         changing = true
         failedStep = false
-        scope.launch {
-            val next = visited[link.id] ?: run {
-                val nearby = StreetView.find(link.at, 12)
-                if (nearby?.id == link.id) nearby else StreetView.byId(link.id)
-                    ?: nearby?.takeIf { it.id != pano.id && it.location.distanceTo(link.at) < 14 }
-            }
-            if (next != null) {
-                visited = (visited + (next.id to next)).entries.toList().takeLast(14).associate { it.toPair() }
-                heading = link.bearing
-                pano = next
+        pending = scope.launch {
+            val result = if (link != null) {
+                visited[link.id] ?: run {
+                    val nearby = StreetView.find(link.at, 12)
+                    if (nearby?.id == link.id) nearby else StreetView.byId(link.id)
+                        ?: nearby?.takeIf { it.location.distanceTo(link.at) < 14 }
+                }
+            } else StreetView.find(around, 55)?.takeIf { it.location.distanceTo(around) <= 90 }
+            if (result != null) {
+                visited[result.id] = result
+                if (visited.size > 14) visited.remove(visited.keys.first())
+                if (result.id != pano.id) {
+                    heading = link?.bearing ?: Geo.bearing(pano.location, result.location)
+                    pano = result
+                } else model.centerStreetView(pano.location)
             } else failedStep = true
             changing = false
         }
     }
 
-    androidx.activity.compose.BackHandler(onBack = close)
-    Box(Modifier.fillMaxSize().background(Color.Black).pointerInput(Unit) { }) {
-        key(pano.id) {
-            AndroidView(modifier = Modifier.fillMaxSize(), factory = { c ->
-                GLSurfaceView(c).apply {
-                    setEGLContextClientVersion(2)
-                    setRenderer(renderer)
-                    renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
-                    renderer.view = this
-                }
-            }, onReset = null, onRelease = { it.onPause() })
-            Box(Modifier.fillMaxSize().pointerInput(renderer) {
-                detectTransformGestures { _, pan, zoom, _ ->
-                    heading = renderer.gesture(pan.x, pan.y, zoom, size.width.toFloat())
-                }
-            })
-            DisposableEffect(renderer) { onDispose { renderer.dispose() } }
-        }
-        if (!renderer.ready || changing) Box(Modifier.align(Alignment.Center).padding(30.dp), contentAlignment = Alignment.Center) {
-            if (renderer.loading || changing) CircularProgressIndicator(color = Color.White)
-            else Text("Panorama unavailable", color = Color.White)
-        }
-        Row(Modifier.statusBarsPadding().padding(horizontal = 12.dp).padding(top = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(42.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.68f)).tap(close),
-                contentAlignment = Alignment.Center) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Close Street View", tint = Color.White, modifier = Modifier.size(22.dp))
+    LaunchedEffect(model.streetViewTap) {
+        val pick = model.streetViewTap?.first ?: return@LaunchedEffect
+        val link = pano.links.minByOrNull { it.at.distanceTo(pick) }?.takeIf { it.at.distanceTo(pick) < 12 }
+        move(pick, link)
+    }
+    LaunchedEffect(pano.id) {
+        delay(65)
+        model.centerStreetView(pano.location, keepZoom = pano.id != req.pano.id)
+    }
+    val frameHeading = (heading / 2.0).roundToInt() * 2
+    LaunchedEffect(pano.id, frameHeading) { model.updateStreetViewFrame(pano, frameHeading.toDouble()) }
+
+    androidx.activity.compose.BackHandler(onBack = model::closeStreetView)
+    Column(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxWidth().weight(1f).background(Color.Black)) {
+            key(pano.id) {
+                AndroidView(modifier = Modifier.fillMaxSize(), factory = { c ->
+                    GLSurfaceView(c).apply {
+                        setEGLContextClientVersion(2)
+                        preserveEGLContextOnPause = true
+                        setRenderer(renderer)
+                        renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
+                        renderer.view = this
+                    }
+                }, onReset = null, onRelease = { it.onPause() })
+                Box(Modifier.fillMaxSize().pointerInput(renderer) {
+                    detectTransformGestures { _, pan, zoom, _ ->
+                        heading = renderer.gesture(pan.x, pan.y, zoom, size.width.toFloat())
+                    }
+                })
+                DisposableEffect(renderer) { onDispose { renderer.dispose() } }
             }
-            Column(Modifier.weight(1f, fill = false).clip(RoundedCornerShape(18.dp))
-                .background(Color.Black.copy(alpha = 0.68f)).padding(horizontal = 12.dp, vertical = 7.dp)) {
-                Text(req.name, fontSize = KType.subheadline, fontWeight = FontWeight.SemiBold, color = Color.White,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(pano.credit?.takeIf(String::isNotBlank) ?: "Street View · Google", fontSize = KType.caption,
-                    color = Color.White.copy(alpha = 0.82f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (!renderer.ready || changing) Box(Modifier.align(Alignment.Center), contentAlignment = Alignment.Center) {
+                if (renderer.loading || changing) CircularProgressIndicator(color = Color.White)
+                else Text("Panorama unavailable", color = Color.White)
             }
-        }
-        Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            if (failedStep) Text("This step is unavailable", color = Color.White,
-                modifier = Modifier.clip(CircleShape).background(Color.Black.copy(alpha = 0.75f)).padding(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                val fronts = listOf(0.0 to "Forward", -90.0 to "Left", 90.0 to "Right", 180.0 to "Back")
-                val shown = fronts.mapNotNull { (delta, label) ->
+            Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 12.dp).padding(top = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                FilledTonalIconButton(model::closeStreetView) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, "Close Street View")
+                }
+                Column(Modifier.weight(1f).clip(RoundedCornerShape(16.dp))
+                    .background(Color.Black.copy(alpha = 0.72f)).padding(horizontal = 12.dp, vertical = 7.dp)) {
+                    Text(req.name, fontSize = KType.subheadline, fontWeight = FontWeight.SemiBold, color = Color.White,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(pano.credit?.takeIf(String::isNotBlank) ?: "Street View · Google", fontSize = KType.caption,
+                        color = Color.White.copy(alpha = 0.85f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                FilledTonalIconButton({
+                    context.open("https://www.google.com/maps/@?api=1&map_action=pano&pano=${pano.id}&heading=${heading.toInt()}")
+                }) { Icon(Icons.AutoMirrored.Filled.OpenInNew, "Open in Google Maps") }
+            }
+            Row(Modifier.align(Alignment.BottomCenter).padding(8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                val shown = listOf(0.0 to "Forward", -90.0 to "Left", 90.0 to "Right", 180.0 to "Back").mapNotNull { (delta, label) ->
                     val turn = (heading + delta + 360) % 360
                     pano.links.minByOrNull { Geo.diff(it.bearing, turn) }
                         ?.takeIf { Geo.diff(it.bearing, turn) <= 48 }?.let { label to it }
                 }.distinctBy { it.second.id }
-                for ((label, link) in shown) FilledTonalButton({ step(link) }, enabled = !changing,
-                    contentPadding = PaddingValues(horizontal = 11.dp)) { Text(label) }
+                for ((label, link) in shown) FilledTonalButton({ move(link.at, link) }, enabled = !changing,
+                    contentPadding = PaddingValues(horizontal = 10.dp)) { Text(label) }
             }
-            PanoMap(pano, heading, Modifier.fillMaxWidth().height(126.dp).clip(RoundedCornerShape(18.dp))) { step(it) }
-            TextButton({
-                context.open("https://www.google.com/maps/@?api=1&map_action=pano&pano=${pano.id}&heading=${heading.toInt()}")
-            }, colors = ButtonDefaults.textButtonColors(contentColor = Color.White),
-                modifier = Modifier.clip(CircleShape).background(Color.Black.copy(alpha = 0.66f))) { Text("Open Google Maps") }
         }
-    }
-}
-
-@Composable
-private fun PanoMap(pano: StreetView.Panorama, heading: Double, modifier: Modifier, step: (StreetView.Link) -> Unit) {
-    val lifecycle = androidx.compose.ui.platform.LocalLifecycleOwner.current.lifecycle
-    var mini by remember { mutableStateOf<org.maplibre.android.maps.MapView?>(null) }
-    var map by remember { mutableStateOf<org.maplibre.android.maps.MapLibreMap?>(null) }
-    var markers by remember { mutableStateOf<List<android.graphics.PointF>>(emptyList()) }
-    val position by rememberUpdatedState(pano)
-    val choose by rememberUpdatedState(step)
-    Box(modifier.background(interfaceGround)) {
-        AndroidView(modifier = Modifier.fillMaxSize(), factory = { context ->
-            val options = org.maplibre.android.maps.MapLibreMapOptions.createFromAttributes(context).textureMode(true)
-            org.maplibre.android.maps.MapView(context, options).also { view ->
-                view.onCreate(null)
-                mini = view
-                view.getMapAsync { engine ->
-                    if (mini !== view) return@getMapAsync
-                    map = engine
-                    engine.uiSettings.setAllGesturesEnabled(false)
-                    engine.uiSettings.isLogoEnabled = false
-                    engine.uiSettings.isCompassEnabled = false
-                    engine.uiSettings.isAttributionEnabled = false
-                    engine.setStyle(KiteMap.STYLE_URL)
-                    engine.addOnCameraIdleListener {
-                        if (mini === view) markers = position.links.map { engine.projection.toScreenLocation(it.at.ml()) }
-                    }
-                    engine.addOnMapClickListener { point ->
-                        position.links.minByOrNull { it.at.distanceTo(point.kite()) }
-                            ?.takeIf { it.at.distanceTo(point.kite()) < 11 }?.let(choose)
-                        true
-                    }
+        // Only these controls consume touches. The map underneath gets pan, pinch, and tap.
+        Box(Modifier.fillMaxWidth().height(mapHeight)) {
+            Row(Modifier.align(Alignment.TopEnd).padding(8.dp), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                FilledTonalIconButton({ model.centerStreetView(pano.location) }) {
+                    Icon(Icons.Filled.MyLocation, "Center panorama on map")
+                }
+                FilledTonalIconButton({ model.streetViewMapExpanded = !model.streetViewMapExpanded }) {
+                    Icon(if (model.streetViewMapExpanded) Icons.Filled.CloseFullscreen else Icons.Filled.OpenInFull,
+                        if (model.streetViewMapExpanded) "Shrink map" else "Enlarge map")
                 }
             }
-        }, onReset = null, onRelease = {
-            if (mini === it) {
-                mini = null
-                map = null
-            }
-        })
-        DisposableEffect(mini, lifecycle) {
-            val view = mini ?: return@DisposableEffect onDispose { }
-            val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-                when (event) {
-                    androidx.lifecycle.Lifecycle.Event.ON_START -> view.onStart()
-                    androidx.lifecycle.Lifecycle.Event.ON_RESUME -> view.onResume()
-                    androidx.lifecycle.Lifecycle.Event.ON_PAUSE -> view.onPause()
-                    androidx.lifecycle.Lifecycle.Event.ON_STOP -> view.onStop()
-                    else -> Unit
-                }
-            }
-            lifecycle.addObserver(observer)
-            onDispose {
-                lifecycle.removeObserver(observer)
-                if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) view.onPause()
-                if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) view.onStop()
-                view.onDestroy()
-            }
+            if (failedStep) Text("No Street View nearby", color = primaryText,
+                modifier = Modifier.align(Alignment.TopStart).padding(10.dp).clip(CircleShape).background(interfaceSheet)
+                    .padding(horizontal = 10.dp, vertical = 6.dp))
+            if (showMapbox) MapboxAttribution(Modifier.align(Alignment.BottomStart).navigationBarsPadding().padding(8.dp))
         }
-        LaunchedEffect(map, pano.id) {
-            val engine = map ?: return@LaunchedEffect
-            engine.moveCamera(org.maplibre.android.camera.CameraUpdateFactory.newLatLngZoom(pano.location.ml(), 17.6))
-            markers = pano.links.map { engine.projection.toScreenLocation(it.at.ml()) }
-        }
-        val tint = interfaceAccent
-        androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
-            val aim = heading.toFloat() - 90
-            val reach = 33.dp.toPx()
-            val frame = androidx.compose.ui.geometry.Size(reach * 2, reach * 2)
-            drawArc(tint.copy(alpha = 0.46f), aim - 29, 58f, true, center - androidx.compose.ui.geometry.Offset(reach, reach), frame)
-            for (p in markers) {
-                val at = androidx.compose.ui.geometry.Offset(p.x, p.y)
-                drawCircle(Color.White, 4.dp.toPx(), at)
-                drawCircle(tint, 2.5.dp.toPx(), at)
-            }
-            drawCircle(Color.White, 7.dp.toPx())
-            drawCircle(tint, 5.dp.toPx())
-        }
-        Text("© OpenStreetMap · OpenFreeMap", color = Color.White, fontSize = KType.caption2,
-            modifier = Modifier.align(Alignment.BottomEnd).background(Color.Black.copy(alpha = 0.64f)).padding(4.dp))
     }
 }
 

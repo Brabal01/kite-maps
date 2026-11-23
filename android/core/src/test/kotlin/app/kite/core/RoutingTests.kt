@@ -234,7 +234,7 @@ class RoutingTests {
 
     @Test fun namedRoundaboutWording() {
         val d = TravelMode.DRIVE
-        assertEquals("Go straight through Millbrook Roundabout", OSRM.instruction("roundabout", null, "Millbrook Roundabout", null, d))
+        assertEquals("Follow Millbrook Roundabout", OSRM.instruction("roundabout", null, "Millbrook Roundabout", null, d))
         assertEquals("At Redbridge Roundabout, take the 2nd exit", OSRM.instruction("roundabout", null, "Redbridge Roundabout", 2, d))
         assertEquals("At the roundabout, take the 3rd exit onto A33", OSRM.instruction("roundabout", null, "A33", 3, d))
     }
@@ -296,6 +296,14 @@ class RoutingTests {
         assertEquals(2, steps[0].exit)
         assertEquals("At Millbrook Roundabout, take the 2nd exit", steps[0].instruction)
         assertEquals(2, steps[1].exit)
+    }
+
+    @Test fun rejectsAnExitNumberFromAnAdjacentRoundabout() {
+        val a = man(ManeuverType.ROUNDABOUT, "Follow the roundabout", ll(50.0, 14.0), 100.0, 30.0)
+        val nearby = man(ManeuverType.ROUNDABOUT, "Take the 2nd exit", ll(50.0008, 14.0), 125.0, 30.0)
+            .also { it.exit = 2 }
+        StepMerge.addGoogleExits(mutableListOf(a), listOf(nearby))
+        assertNull(a.exit)
     }
 
     @Test fun destinationSide() {

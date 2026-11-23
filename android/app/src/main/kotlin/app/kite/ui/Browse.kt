@@ -106,7 +106,7 @@ fun BrowseOverlay(model: AppModel, showMapbox: Boolean) {
             val place = model.selected
             if (place != null) {
                 key(place.id) {
-                    BottomSheet(model.detent, { model.detent = it }, full, 230.dp,
+                    BottomSheet(model.detent, { model.detent = it }, full, 230.dp, opaque = true,
                         header = { PlaceHeader(model, place) }, content = { PlaceBody(model, place) })
                 }
             } else {

@@ -39,6 +39,7 @@ import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
 import org.maplibre.geojson.LineString
 import org.maplibre.geojson.Point
+import org.maplibre.geojson.Polygon
 import kotlin.math.*
 
 /**
@@ -48,6 +49,7 @@ import kotlin.math.*
  */
 class KiteMap(private val model: AppModel, private val context: Context) {
     companion object {
+        const val STREET_VIEW = "kite-street-view"
         const val STYLE_URL = "https://tiles.openfreemap.org/styles/liberty"
         /** How see-through cameras and reports off your route are while driving. */
         const val OFF_ROUTE_OPACITY = 0.3
@@ -93,6 +95,21 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         } finally { syncingClassic = false }
     }
 
+    fun refreshStreetView() {
+        val style = map?.style?.takeIf { styleReady }
+        val frame = model.streetViewFrame
+        val features = if (frame == null) emptyList() else buildList {
+            val sweep = (-30..30 step 10).map { angle ->
+                Geo.destination(frame.at, frame.heading + angle.toDouble(), 38.0)
+            }
+            val ring = (listOf(frame.at) + sweep + frame.at).map { Point.fromLngLat(it.lng, it.lat) }
+            add(Feature.fromGeometry(Polygon.fromLngLats(listOf(ring))))
+            add(point(frame.at, mapOf("role" to "position")))
+            frame.links.forEach { add(point(it, mapOf("role" to "link"))) }
+        }
+        setShape(style, STREET_VIEW, features)
+    }
+
     fun pointAt(x: Float, y: Float): LatLng? = map?.projection?.fromScreenLocation(PointF(x, y))?.kite()
     fun centerPoint(): LatLng? = view?.let { pointAt(it.width / 2f, it.height / 2f) }
 
@@ -122,6 +139,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         shownTransitStops = null
         map?.let(::loadGooglePlaces)
         map?.style?.let { setShape(it, "vela-rail", railFeatures) }
+        if (model.streetViewFrame != null) refreshStreetView()
         render()
     }
 
@@ -391,6 +409,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         if (showingMapbox) addMapboxLayers(style)
         addVelaLayers(style)
         styleReady = true
+        if (model.streetViewFrame != null) refreshStreetView()
         applyPinSizes(style)
         heatTiles.styleReloaded()
         styledDriving = null
@@ -459,7 +478,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         val m = map ?: return
         if (movedToUser) return
         movedToUser = true
-        if (model.isGuiding || model.results.isNotEmpty() || model.selected != null || model.directions != null) return
+        if (model.streetView != null || model.isGuiding || model.results.isNotEmpty() || model.selected != null || model.directions != null) return
         m.moveCamera(org.maplibre.android.camera.CameraUpdateFactory.newLatLngZoom(f.coord.ml(), 15.0))
     }
 
@@ -891,7 +910,16 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             textField(toString(get("rank"))), textFont(overlayFont), textSize(12f), textColor(Color.WHITE),
             textAllowOverlap(true), textIgnorePlacement(true)))
 
+        src(STREET_VIEW)
+        style.addLayer(FillLayer("$STREET_VIEW-cone", STREET_VIEW).withProperties(
+            fillColor(c(0x0EA5A4)), fillOpacity(0.35f), fillOutlineColor(c(0x15807C))))
+        style.addLayer(CircleLayer("$STREET_VIEW-walk", STREET_VIEW).withFilter(eq(get("role"), literal("link"))).withProperties(
+            circleRadius(5f), circleColor(c(0x0EA5A4)), circleStrokeColor(Color.WHITE), circleStrokeWidth(1.7f)))
+        style.addLayer(CircleLayer("$STREET_VIEW-position", STREET_VIEW).withFilter(eq(get("role"), literal("position"))).withProperties(
+            circleRadius(8f), circleColor(c(0x127A79)), circleStrokeColor(Color.WHITE), circleStrokeWidth(2.4f)))
         src("vela-selected")
+        style.addLayer(CircleLayer("kite-place-selection", "vela-selected").withFilter(eq(get("role"), literal("picked"))).withProperties(
+            circleRadius(16f), circleColor(c(0xE8453C, 0.21f)), circleStrokeColor(c(0xE8453C)), circleStrokeWidth(2f)))
         style.addLayer(SymbolLayer("vela-selected", "vela-selected").withProperties(
             iconImage(get("icon")), iconAnchor(get("anchor")), iconAllowOverlap(true), textAllowOverlap(false),
             textField(get("label")), textFont(overlayFont), textSize(13f), textAnchor(Property.TEXT_ANCHOR_TOP),
@@ -1400,19 +1428,21 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         val destination = target?.location ?: here.takeIf { plan != null }
         val origin = plan?.let { it.first()?.location ?: here.takeUnless { directions.missingOrigin } }
         val stops = model.nav?.stops ?: plan?.drop(1)?.dropLast(1)?.filterNotNull().orEmpty()
-        val searchSelection = target != null && list.any { it.id == target.id }
+        val pickedPlace = plan == null && !model.isGuiding && target != null && target.id == model.selected?.id
         fun cell(at: LatLng?) = at?.let { "${(it.lat * 7000).toInt()},${(it.lng * 7000).toInt()}" }
-        val destinationKey = "${target?.id}:${cell(destination)}"
-        val key = "${list.joinToString(",") { it.id }}|$destinationKey|${cell(origin)}|${stops.joinToString(",") { it.id }}"
+        val destinationKey = "${target?.id}:${cell(destination)}:$pickedPlace"
+        val key = "${list.joinToString(",") { it.id }}|$destinationKey|${model.streetView != null}|${cell(origin)}|${stops.joinToString(",") { it.id }}"
         if (key == lastResultsKey) return
         lastResultsKey = key
-        setShape(style, "vela-results", list.mapIndexed { i, p ->
+        setShape(style, "vela-results", list.mapIndexedNotNull { i, p ->
+            if (pickedPlace && model.streetView == null && p.id == target.id) return@mapIndexedNotNull null
             val rating = p.rating?.let { String.format(java.util.Locale.US, "%.1f", it) }
             point(p.location, mapOf("id" to p.id, "icon" to MapIcons.searchName(p), "label" to listOfNotNull(p.name, rating).joinToString("\n"), "rank" to i))
         })
         val sel = mutableListOf<Feature>()
-        if (destination != null && !searchSelection ) {
-            sel.add(point(destination, mapOf("id" to (target?.id ?: "destination"), "icon" to "pin-selected", "anchor" to "bottom", "label" to (target?.name ?: "Your location"))))
+        if (destination != null && model.streetView == null) {
+            sel.add(point(destination, mapOf("id" to (target?.id ?: "destination"), "icon" to "pin-selected",
+                "anchor" to "bottom", "label" to (target?.name ?: "Your location"), "role" to if (pickedPlace) "picked" else "destination")))
         }
         stops.forEachIndexed { i, stop -> sel.add(point(stop.location, mapOf("id" to "stop$i", "icon" to "pin-stop", "anchor" to "center", "label" to stop.name))) }
         origin?.let { sel.add(point(it, mapOf("id" to "origin", "icon" to "pin-origin", "anchor" to "center", "label" to ""))) }
@@ -1613,6 +1643,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
     private fun str(f: Feature, k: String): String? = f.getProperty(k)?.takeIf { it.isJsonPrimitive }?.asString
 
     private fun tapped(m: MapLibreMap, at: org.maplibre.android.geometry.LatLng): Boolean {
+        if (model.streetViewMapTapped(at.kite())) return true
         if (model.stopSearch != null) {
             val pin = m.queryRenderedFeatures(box(m, at), StopSearch.PINS).firstOrNull()
             model.selectStopPin(pin?.let { str(it, "id") })
@@ -1673,6 +1704,9 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             val id = str(f, "id")
             model.results.firstOrNull { it.id == id }?.let { model.select(it); return true }
         }
+        val selectedId = model.selected?.id
+        if (selectedId != null && m.queryRenderedFeatures(box, "kite-place-selection", "vela-selected")
+                .any { str(it, "id") == selectedId }) return true
         val transitHit = m.queryRenderedFeatures(box, TRANSIT_STOPS).firstOrNull()
         if (transitHit != null && openOutdoorPlace(str(transitHit, "id"))) return true
         val googleHit = m.queryRenderedFeatures(box, "kite-google-places", GOOGLE_UNREVIEWED).firstOrNull()
@@ -1683,7 +1717,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             val g = poi.geometry() as? Point
             model.select(Place("osm:${g?.latitude()},${g?.longitude()}:$name", name,
                 g?.let { LatLng(it.latitude(), it.longitude()) } ?: at.kite(), "osm",
-                category = str(poi, "subclass") ?: str(poi, "class")), focus = false)
+                category = str(poi, "subclass") ?: str(poi, "class")))
             return true
         }
         if (model.selected != null) model.closePlace()
@@ -1692,7 +1726,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
     }
 
     private fun pressed(m: MapLibreMap, at: org.maplibre.android.geometry.LatLng) {
-        if (model.stopSearch != null || model.placingStop) return
+        if (model.streetView != null || model.stopSearch != null || model.placingStop) return
         pinDroppedAt = now()
         if (model.isGuiding || model.directions != null) return
         view?.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
