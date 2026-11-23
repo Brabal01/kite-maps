@@ -13,6 +13,7 @@ import androidx.compose.animation.*
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -27,6 +28,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -58,6 +60,7 @@ fun BrowseOverlay(model: AppModel, showMapbox: Boolean) {
     val ctx = LocalContext.current
     val s = AppSettings
     var focused by remember { mutableStateOf(false) }
+    var showCategories by rememberSaveable { mutableStateOf(true) }
     val focus = LocalFocusManager.current
     val hasSheet = model.selected != null || model.results.isNotEmpty()
     val idle = !hasSheet && !focused
@@ -99,7 +102,7 @@ fun BrowseOverlay(model: AppModel, showMapbox: Boolean) {
             }
         }
 
-        AnimatedVisibility(hasSheet, Modifier.align(Alignment.BottomCenter), enter = slideInVertically { it }, exit = slideOutVertically { it }) {
+        AnimatedVisibility(hasSheet, Modifier.align(Alignment.BottomCenter), enter = slideInVertically(androidx.compose.animation.core.tween(170)) { it }, exit = slideOutVertically(androidx.compose.animation.core.tween(140)) { it }) {
             val place = model.selected
             if (place != null) {
                 key(place.id) {
@@ -118,6 +121,26 @@ fun BrowseOverlay(model: AppModel, showMapbox: Boolean) {
 
         Column(Modifier.fillMaxWidth().statusBarsPadding().padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             SearchBar(model, focused, { focused = it }, unfocus = { focus.clearFocus(); focused = false })
+            if (idle) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp).horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    AssistChip({ showCategories = !showCategories }, { Text("Places") },
+                        trailingIcon = { Icon(if (showCategories) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, null) },
+                        colors = AssistChipDefaults.assistChipColors(containerColor = interfaceSurface))
+                    if (showCategories) Category.all.take(6).forEach { category ->
+                        AssistChip({ model.search(category.query, category.label) }, { Text(category.label) },
+                            leadingIcon = { Icon(category.icon, null, Modifier.size(16.dp)) },
+                            colors = AssistChipDefaults.assistChipColors(containerColor = interfaceSurface))
+                    }
+                }
+            }
+            if (!focused && model.selected == null && model.canSearchHere && !model.searching) {
+                Button(onClick = model::searchHere, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+                    Icon(Icons.Filled.Search, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Search here")
+                }
+            }
             if (showMapbox && !focused) MapboxAttribution(Modifier.padding(start = 16.dp))
             if (focused) SuggestionsPanel(model) { focus.clearFocus(); focused = false }
             val n = model.notice

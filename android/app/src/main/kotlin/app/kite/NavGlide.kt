@@ -133,7 +133,7 @@ class NavGlide : Choreographer.FrameCallback {
             cum = Geo.cumulative(poly)
             shownAlong = null
         }
-        onRoute = p?.let { !it.offRoute && it.offsetMeters < 40 } ?: false
+        onRoute = p?.let { !it.offRoute && it.offsetMeters < if (n.route.mode == TravelMode.WALK) 14 else 40 } ?: false
         fixAt = System.nanoTime()
         fixAlong = p?.alongMeters ?: 0.0
         fixCoord = loc.coord
@@ -191,7 +191,11 @@ class NavGlide : Choreographer.FrameCallback {
         val dt = if (lastFrame == 0L) 0.0 else min(0.1, (frameTimeNanos - lastFrame) / 1e9)
         lastFrame = frameTimeNanos
         step(dt)
-        if (running) Choreographer.getInstance().postFrameCallback(this)
+        if (running) {
+            val stationary = fixSpeed <= 0.5 && cameraEntry == null
+            val delayMs = if (mapTouched || stationary || nav?.following == false) 48L else 14L
+            Choreographer.getInstance().postFrameCallbackDelayed(this, delayMs)
+        }
     }
 
     private fun step(dt: Double) {

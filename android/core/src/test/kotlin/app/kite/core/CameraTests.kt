@@ -41,6 +41,22 @@ class CameraTests {
         assertEquals(listOf(3L), Overpass.parse(b(json))!!.map { it.id })
     }
 
+    @Test fun routeControlsExcludeOppositeDirectionAndParallelCrossings() {
+        val line = listOf(ll(0.0, 0.0), ll(0.01, 0.0))
+        val direct = Overpass.RoadsideNode(Overpass.ControlKind.STOP, ll(0.003, 0.0), "N")
+        val opposite = Overpass.RoadsideNode(Overpass.ControlKind.STOP, ll(0.004, 0.0), "S")
+        val crossing = Overpass.RoadsideNode(Overpass.ControlKind.CROSSING, ll(0.005, 0.0))
+        val parallel = Overpass.RoadsideNode(Overpass.ControlKind.RAIL, ll(0.006, 0.00015))
+        val controls = Overpass.projectControls(listOf(direct, opposite, crossing, parallel), line)
+        assertEquals(listOf(direct.at, crossing.at), controls.map { it.at })
+    }
+
+    @Test fun missingSpeedAnnotationsDoNotExtendTheLastLimit() {
+        val legs = listOf(mapOf("annotation" to mapOf("maxspeed" to listOf(mapOf("speed" to 70, "unit" to "km/h")))))
+        val limits = OSRM.speedLimits(legs, doubleArrayOf(0.0, 100.0, 200.0))
+        assertEquals(listOf(SpeedLimit(0.0, 70.0), SpeedLimit(100.0, null)), limits)
+    }
+
     @Test fun query() {
         assertEquals("[out:json][timeout:25];(node[\"highway\"=\"speed_camera\"](1,2,3,4););out body 4000;",
             Overpass.query("(1,2,3,4)", speed = true, plate = false))

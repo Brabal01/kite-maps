@@ -99,6 +99,7 @@ object AppSettings {
     var aheadSignals by bool("aheadSignals", true)
     var aheadStops by bool("aheadStops", true)
     var aheadRail by bool("aheadRail", true)
+    var aheadCrossings by bool("aheadCrossings", true)
     var aheadWaze by bool("aheadWaze", true)
     var aheadCameras by bool("aheadCameras", true)
     var aheadTraffic by bool("aheadTraffic", true)
@@ -107,6 +108,7 @@ object AppSettings {
         Overpass.ControlKind.SIGNAL -> aheadSignals
         Overpass.ControlKind.STOP -> aheadStops
         Overpass.ControlKind.RAIL -> aheadRail
+        Overpass.ControlKind.CROSSING -> aheadCrossings
     }
     var mapboxPublicToken by Pref("mapboxPublicToken", { it.getString("mapboxPublicToken", "").orEmpty() },
         { e, token -> e.putString("mapboxPublicToken", token) })

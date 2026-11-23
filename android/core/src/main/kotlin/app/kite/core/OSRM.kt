@@ -129,9 +129,18 @@ object OSRM {
             val roads = LinkedHashMap<String, Double>()
             var leftMotorway: String? = null
             val legs = r["legs"].asMaps() ?: emptyList()
+            val controls = mutableListOf<Overpass.RoadsideNode>()
             for ((li, leg) in legs.withIndex()) {
                 val steps = leg["steps"].asMaps() ?: emptyList()
                 for ((si, step) in steps.withIndex()) {
+                    if (source == "mapbox") {
+                        for (intersection in step["intersections"].asMaps().orEmpty()) {
+                            val at = loc(intersection["location"]) ?: continue
+                            if (intersection["traffic_signal"] == true) controls += Overpass.RoadsideNode(Overpass.ControlKind.SIGNAL, at)
+                            if (intersection["stop_sign"] == true) controls += Overpass.RoadsideNode(Overpass.ControlKind.STOP, at)
+                            if (intersection["railway_crossing"] == true) controls += Overpass.RoadsideNode(Overpass.ControlKind.RAIL, at)
+                        }
+                    }
                     val m = step["maneuver"].asMap() ?: emptyMap()
                     val type = m["type"] as? String ?: ""
                     val dist = step["distance"].num() ?: 0.0
@@ -200,7 +209,7 @@ object OSRM {
             val annotationCount = legs.sumOf { it["annotation"].asMap()?.get("maxspeed").asList()?.size ?: 0 }
             if (source != "mapbox" || annotationCount == cum.lastIndex) route.speedLimits = speedLimits(legs, cum)
             if (source == "mapbox") route.trafficSpans = MapboxDirections.trafficSpans(legs, cum)
-            route
+            if (controls.isEmpty()) route else route.copy(roadControls = Overpass.projectControls(controls.distinct(), line))
         }
     }
 
@@ -352,6 +361,7 @@ object OSRM {
                 seg++
             }
         }
+        if (seg < cum.lastIndex && out.lastOrNull()?.kmh != null) out.add(SpeedLimit(cum[seg], null))
         return if (out.any { it.kmh != null }) out else emptyList()
     }
 
@@ -502,8 +512,16 @@ object Directions {
                 it.polyline.firstOrNull()?.distanceTo(a)?.let { d -> d <= 180 } == true &&
                     it.polyline.last().distanceTo(b) <= 180
             }
-            walk.forEach { StepMerge.tidy(it.maneuvers) }
-            return@withContext Result(walk, if (walk.isEmpty()) "No walking route found in OpenStreetMap." else null)
+            val fallback = if (walk.isEmpty() && useGoogle) try {
+                GoogleClient.shared.directions(a, b, mode, avoidHighways, avoidTolls, via).filter { reaches(it.polyline, a, b) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                emptyList()
+            } else emptyList()
+            val found = walk.ifEmpty { fallback }
+            found.forEach { StepMerge.tidy(it.maneuvers) }
+            return@withContext Result(found, if (found.isEmpty()) "No walking route found." else null)
         }
         var err: String? = null
         if (useGoogle) {

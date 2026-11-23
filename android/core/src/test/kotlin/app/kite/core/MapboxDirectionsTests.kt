@@ -56,6 +56,20 @@ class MapboxDirectionsTests {
         assertEquals(222.4, span.lengthMeters, 1.0)
     }
 
+    @Test fun startsWithRoadControlsFromTheChosenRoute() {
+        val marked = fixture.replace(
+            """"intersections": [{"lanes":""",
+            """"intersections": [
+                {"location": [0, 0.0015], "traffic_signal": true, "railway_crossing": true},
+                {"location": [0, 0.0025], "stop_sign": true},
+                {"lanes":"""
+        )
+        val controls = MapboxDirections.parse(marked.toByteArray()).single().roadControls
+        assertEquals(listOf(Overpass.ControlKind.SIGNAL, Overpass.ControlKind.RAIL, Overpass.ControlKind.STOP),
+            controls.map { it.kind })
+        assertEquals(167.0, controls.first().along, 0.3)
+    }
+
     @Test fun ignoresAnnotationsThatCannotBeAlignedToTheRoute() {
         val route = MapboxDirections.parse(fixture.replace("\"heavy\", \"heavy\"", "\"heavy\"")
             .replace(", {\"unknown\": true}", "").toByteArray()).single()

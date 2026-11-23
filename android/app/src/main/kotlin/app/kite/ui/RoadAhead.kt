@@ -10,6 +10,8 @@ import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.StopCircle
 import androidx.compose.material.icons.filled.Traffic
 import androidx.compose.material.icons.filled.Train
+import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
+import app.kite.core.TravelMode
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -44,7 +46,8 @@ fun RoadAheadStrip(nav: Navigator, modifier: Modifier = Modifier, showLabels: Bo
     val progress = nav.progress
     if (progress?.offRoute == true || (progress?.remainingMeters ?: nav.route.distanceMeters) <= 0) return
     val start = progress?.alongMeters ?: 0.0
-    val range = (progress?.remainingMeters ?: nav.route.distanceMeters).coerceIn(1.0, 3_000.0)
+    val walking = nav.route.mode == TravelMode.WALK
+    val range = (progress?.remainingMeters ?: nav.route.distanceMeters).coerceIn(1.0, if (walking) 600.0 else 3_000.0)
     val end = start + range
     val dark = LocalDark.current
     val traffic = nav.roadTraffic.filter { it.startMeters < end && it.startMeters + it.lengthMeters > start }
@@ -55,6 +58,8 @@ fun RoadAheadStrip(nav: Navigator, modifier: Modifier = Modifier, showLabels: Bo
                 if (dark) Color(0xFFA8CBFF) else Color(0xFF29558C))
             Overpass.ControlKind.STOP -> AheadMarker(distance, "Stop sign", Icons.Filled.StopCircle,
                 if (dark) Color(0xFFFF8D88) else Color(0xFFB11F32))
+            Overpass.ControlKind.CROSSING -> AheadMarker(distance, "Pedestrian crossing", Icons.AutoMirrored.Filled.DirectionsWalk,
+                if (dark) Color(0xFF98D9F0) else Color(0xFF126782))
             Overpass.ControlKind.RAIL -> AheadMarker(distance, "Railroad crossing", Icons.Filled.Train,
                 if (dark) Color(0xFFFFCD80) else Color(0xFF835021))
         }
@@ -66,6 +71,22 @@ fun RoadAheadStrip(nav: Navigator, modifier: Modifier = Modifier, showLabels: Bo
     }.map { AheadMarker(it.along - start, it.alert.title, MapIcons.wazeIcon(it.alert.kind),
         Color(0xFF000000 or MapIcons.wazeColor(it.alert.kind)), it.alert) }
     val markers = (reports + controls + cameras).sortedBy { it.distance }.toList()
+
+    if (walking && verticalHeight != null) {
+        if (markers.isEmpty()) return
+        val count = ((verticalHeight.value - 12) / 53).toInt().coerceIn(1, 3)
+        Column(modifier.width(66.dp).glass(RoundedCornerShape(17.dp), solid = true).padding(vertical = 6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally) {
+            for (marker in markers.take(count)) {
+                Column(Modifier.fillMaxWidth().height(53.dp), horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center) {
+                    Icon(marker.icon, marker.name, Modifier.size(23.dp), tint = marker.color)
+                    Text(Fmt.distance(marker.distance), fontSize = KType.caption2, fontWeight = FontWeight.SemiBold, color = primaryText)
+                }
+            }
+        }
+        return
+    }
 
     val vertical = verticalHeight != null
     val railColor = if (dark) Color(0xFF667994) else Color(0xFF90A6BC)

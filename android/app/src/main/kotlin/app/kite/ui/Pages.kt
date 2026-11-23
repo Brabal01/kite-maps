@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.*
@@ -572,7 +573,7 @@ private fun MapSettings() {
         PickRow("Road ahead position", Icons.Filled.SwapVert, 0x0F766E,
             s.roadStripPosition, RoadStripPosition.entries.toList(), { it.label }) { s.roadStripPosition = it }
     }
-    SettingsGroup(header = "Road ahead and map", footer = "Choose which events appear in the road strip and on the driving map.") {
+    SettingsGroup(header = "Road ahead and map", footer = "Choose which events appear on your route during navigation.") {
         ToggleRow("Traffic and jams", Icons.Filled.Traffic, 0xAD362C, s.aheadTraffic) { s.aheadTraffic = it }
         RowDivider()
         ToggleRow("Traffic lights", Icons.Filled.Traffic, 0x1D4ED8, s.aheadSignals) { s.aheadSignals = it }
@@ -580,6 +581,8 @@ private fun MapSettings() {
         ToggleRow("Stop signs", Icons.Filled.StopCircle, 0xB91C1C, s.aheadStops) { s.aheadStops = it }
         RowDivider()
         ToggleRow("Railroad crossings", Icons.Filled.Train, 0x92400E, s.aheadRail) { s.aheadRail = it }
+        RowDivider()
+        ToggleRow("Pedestrian crossings", Icons.AutoMirrored.Filled.DirectionsWalk, 0x126782, s.aheadCrossings) { s.aheadCrossings = it }
         RowDivider()
         ToggleRow("Waze road reports", Icons.Filled.Warning, 0x0F766E, s.aheadWaze) { s.aheadWaze = it }
         RowDivider()

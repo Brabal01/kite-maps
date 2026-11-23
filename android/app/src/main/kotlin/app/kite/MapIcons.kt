@@ -3,6 +3,7 @@ package app.kite
 import android.graphics.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
 import androidx.compose.ui.graphics.asAndroidPath
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
@@ -151,6 +152,7 @@ object MapIcons {
             add("traffic-light", trafficLight())
             add("road-stop", dot(Icons.Filled.StopCircle, c(0xC32E43)))
             add("road-crossing", dot(Icons.Filled.Train, c(0x91602C)))
+            add("pedestrian-crossing", dot(Icons.AutoMirrored.Filled.DirectionsWalk, c(0x126782)))
             add("osm-drinking_water", dot(Icons.Filled.WaterDrop, c(0x227FA8)))
             add("osm-toilets", dot(Icons.Filled.Wc, c(0x546294)))
             add("osm-transit", dot(Icons.Filled.Tram, c(0x4D66BB)))

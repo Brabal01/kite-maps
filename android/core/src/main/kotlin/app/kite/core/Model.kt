@@ -125,6 +125,7 @@ data class Route(
     /** False when Google left steps out (it folds long motorway stretches away), so the turns can't be placed. */
     var stepsComplete: Boolean = true,
     val id: String = UUID.randomUUID().toString(),
+    val roadControls: List<Overpass.RoadControl> = emptyList(),
 ) {
     val durationSeconds: Double get() = trafficSeconds ?: typicalSeconds
 

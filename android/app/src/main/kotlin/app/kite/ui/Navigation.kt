@@ -3,6 +3,7 @@
 package app.kite.ui
 
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
 
 import kotlinx.coroutines.async
 
@@ -75,7 +76,8 @@ private fun hex(v: Long) = Color(0xFF000000 or v)
 
 /** Turn-by-turn: the see-through turn strip, map buttons, and the slim trip bar. */
 @Composable
-fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
+fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean,
+                      transitWalk: TransitGuidance? = null, onTransitTrip: (() -> Unit)? = null) {
     val dark = LocalDark.current
     val ctx = LocalContext.current
     var showSteps by remember { mutableStateOf(false) }
@@ -130,9 +132,14 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val h = maxHeight
         val w = maxWidth
-        val showRoadAhead = AppSettings.roadAheadStrip && nav.route.mode == TravelMode.DRIVE &&
+        val walking = nav.route.mode == TravelMode.WALK
+        val showRoadAhead = AppSettings.roadAheadStrip && (nav.route.mode == TravelMode.DRIVE || walking) &&
             !nav.arrived && !confirmEnd && (h >= 480.dp || mainAlert == null)
-        val roadPosition = AppSettings.roadStripPosition
+        val roadPosition = when {
+            !walking -> AppSettings.roadStripPosition
+            AppSettings.roadStripPosition == RoadStripPosition.RIGHT -> RoadStripPosition.RIGHT
+            else -> RoadStripPosition.LEFT
+        }
         val bottomStrip = showRoadAhead && roadPosition == RoadStripPosition.BOTTOM
         val leftStrip = showRoadAhead && roadPosition == RoadStripPosition.LEFT
         val rightStrip = showRoadAhead && roadPosition == RoadStripPosition.RIGHT
@@ -157,8 +164,19 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
         }
         // One column, so however many warnings are up, they push the map buttons down rather than cover them.
         Column(Modifier.fillMaxSize().systemBarsPadding(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Column(Modifier.padding(horizontal = 12.dp).padding(top = 4.dp).animateContentSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.padding(horizontal = 12.dp).padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (showMapbox) MapboxAttribution()
+                if (transitWalk != null) {
+                    val nextRide = transitWalk.trip.legs.getOrNull(transitWalk.legIndex + 1)?.takeUnless { it.isWalk }
+                    Row(Modifier.fillMaxWidth().glass(RoundedCornerShape(16.dp), solid = true).padding(start = 12.dp, end = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Icon(Icons.AutoMirrored.Filled.DirectionsWalk, null, tint = interfaceAccentText, modifier = Modifier.size(19.dp))
+                        Text(nextRide?.fromName?.let { "Walk to $it" } ?: "Walk to destination",
+                            color = primaryText, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                        if (nextRide != null) LineChip(nextRide)
+                        TextButton(model::advanceTransitLeg) { Text(if (nextRide != null) "At the stop" else "Arrived") }
+                    }
+                }
                 if (nav.arrived) {
                     ArrivedCard(nav.destination.name, if (nav.route.mode == TravelMode.DRIVE) ({ model.saveParking() }) else null,
                         note = if (nav.wazeWarned > 0) "Waze drivers warned you about ${nav.wazeWarned} report${if (nav.wazeWarned == 1) "" else "s"} on the way" else null) {
@@ -171,7 +189,7 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
                             model.openDirections(destination, TravelMode.WALK)
                         }, Modifier.align(Alignment.CenterHorizontally)) { Text("Walk to ${destination.name}") }
                     }
-                } else if (nav.route.mode == TravelMode.DRIVE) {
+                } else {
                     DrivingTurns(nav, compact = h < 480.dp, previewing = turnPreview,
                         onTurn = { turn ->
                             if (turn != null) {
@@ -181,8 +199,8 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
                                 turnPreview = false
                                 model.recenterNav()
                             }
-                        }, onSteps = { showSteps = true })
-                } else InstructionBanner(nav)
+                        }, onSteps = { if (onTransitTrip != null) onTransitTrip() else showSteps = true })
+                }
                 // One warning at a time; the others wait in the pill under it.
                 when (mainAlert) {
                     NavAlert.CAMERA -> nav.cameraAhead?.let { CameraCard(it, nav.speedMps * 3.6, nav.speedLimitKmh) }
@@ -247,14 +265,14 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
                         // The same when the next speed limit is up: on a short phone the column would reach the cards.
                         val limitDrop = nav.limitDropAhead
                         if (risk != null && showRiskChip && !((mainAlert != null || limitDrop != null) && h < 700.dp)) PoliceRiskChip(risk)
-                        if (nav.route.mode == TravelMode.DRIVE && !nav.arrived) {
+                        if (!nav.arrived) {
                             Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                                 MapFab(Icons.Filled.Remove, size = 48.dp,
                                     modifier = Modifier.semantics { contentDescription = "Zoom out" }) { model.zoomNavigation(-1) }
                                 MapFab(Icons.Filled.Add, size = 48.dp,
                                     modifier = Modifier.semantics { contentDescription = "Zoom in" }) { model.zoomNavigation(1) }
                             }
-                            MapFab(Icons.Filled.AddLocationAlt, modifier = Modifier.semantics { contentDescription = "Add stop" }) {
+                            if (nav.route.mode == TravelMode.DRIVE) MapFab(Icons.Filled.AddLocationAlt, modifier = Modifier.semantics { contentDescription = "Add stop" }) {
                                 model.addingStop = true
                             }
                         }
@@ -286,7 +304,8 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
                                 Text(detail, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Color.White)
                             }
                         }
-                        SpeedBadge(nav.speedMps, nav.speedLimitKmh, nav.limitDropAhead)
+                        if (nav.route.mode == TravelMode.DRIVE || walking) SpeedBadge(
+                            nav.speedMps, nav.speedLimitKmh, nav.limitDropAhead, reliable = !nav.gpsLost)
 
                     }
                 }
@@ -332,7 +351,8 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean) {
             AnimatedContent(if (offer != null) 2 else if (confirmEnd && !nav.arrived) 1 else 0, label = "tripbar") { showing ->
                 if (showing == 2) (offer ?: nav.fasterOffer)?.let { FasterRouteCard(it, onKeep = { nav.keepRoute() }, onTake = { nav.takeFaster() }) }
                 else if (showing == 1) EndTripCard(nav.destination.name, onKeep = { confirmEnd = false }, onEnd = { model.endNavigation() })
-                else TripBar(nav, onEnd = { if (nav.arrived) model.endNavigation() else confirmEnd = true }, onSteps = { showSteps = true })
+                else TripBar(nav, onEnd = { if (nav.arrived) model.endNavigation() else confirmEnd = true },
+                    onSteps = { if (onTransitTrip != null) onTransitTrip() else showSteps = true })
             }
         }
     }
@@ -604,12 +624,12 @@ private fun ThenView(nav: Navigator) {
  * when you're over, so that's the only loud thing about it.
  */
 @Composable
-fun SpeedBadge(mps: Double, limitKmh: Double?, coming: LimitDrop? = null) {
+fun SpeedBadge(mps: Double, limitKmh: Double?, coming: LimitDrop? = null, reliable: Boolean = true) {
     val dark = LocalDark.current
     val metric = Fmt.metric
     val v = (mps * (if (metric) 3.6 else 2.23694)).roundToInt()
     // Red once more than a little over the limit.
-    val over = limitKmh?.let { mps * 3.6 > it + 5 } ?: false
+    val over = reliable && (limitKmh?.let { mps * 3.6 > it + 5 } ?: false)
     val tile = RoundedCornerShape(20.dp)
     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         // The next limit sits in the same column as the signs, never out toward the arrow.
@@ -621,7 +641,7 @@ fun SpeedBadge(mps: Double, limitKmh: Double?, coming: LimitDrop? = null) {
         if (limitKmh != null) SpeedLimitSign(limitKmh, 66.dp)
         Column(Modifier.size(68.dp, 62.dp).glass(tile).background(if (over) Vela.closed else Color.Transparent),
             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-            Text("$v", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = if (over) Color.White else primaryText, lineHeight = 32.sp)
+            Text(if (reliable) "$v" else "–", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = if (over) Color.White else primaryText, lineHeight = 32.sp)
             Text(if (metric) "km/h" else "mph", fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
                 color = if (over) Color.White.copy(alpha = 0.85f) else Vela.muted(dark), lineHeight = 13.sp)
         }

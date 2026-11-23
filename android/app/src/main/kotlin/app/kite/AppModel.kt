@@ -142,6 +142,22 @@ class AppModel {
     private var suggestedQuery: String? = null
     var results by mutableStateOf<List<Place>>(emptyList())
     var resultsTitle by mutableStateOf("")
+    var canSearchHere by mutableStateOf(false)
+        private set
+    private var submittedSearch: Pair<String, String?>? = null
+    private var searchCenter: LatLng? = null
+    private var searchZoom: Double? = null
+
+    fun noteSearchArea(center: LatLng, zoom: Double) {
+        val previous = searchCenter ?: return
+        val changedZoom = searchZoom?.let { abs(it - zoom) >= 1.0 } == true
+        canSearchHere = submittedSearch != null && (previous.distanceTo(center) >= 300 || changedZoom)
+    }
+
+    fun searchHere() {
+        val (text, title) = submittedSearch ?: return
+        search(text, title, fromMap = true)
+    }
     var selected by mutableStateOf<Place?>(null)
     var searching by mutableStateOf(false)
     var notice by mutableStateOf<String?>(null)
@@ -234,6 +250,19 @@ class AppModel {
     /** Moves the nav arrow and camera every frame between GPS fixes. */
     val glide = NavGlide()
     private var routePlanJob: Job? = null
+    private var preparedRoadControls: Pair<String, Deferred<List<Overpass.RoadControl>?>>? = null
+
+    fun prepareRoadControls(route: Route?) {
+        val old = preparedRoadControls
+        if (route?.id == old?.first) return
+        old?.second?.cancel()
+        preparedRoadControls = null
+        if (route == null || route.mode == TravelMode.BIKE) return
+        preparedRoadControls = route.id to scope.async(Dispatchers.Default) {
+            val walking = route.mode == TravelMode.WALK
+            Overpass.controlsOnRoute(Geo.slice(route.polyline, 0.0, if (walking) 850.0 else 3_600.0), walking)
+        }
+    }
     private var transitPlanJob: Job? = null
     private var transitLoadedAt = 0L
     private var searchTask: Job? = null
@@ -290,20 +319,20 @@ class AppModel {
             }
         }
 
-    val viewport: Pair<LatLng, Double?>
-        get() {
-            val m = map ?: return Pair(userLatLng ?: LatLng(51.5074, -0.1278), null)
-            val c = m.cameraPosition.target ?: return Pair(userLatLng ?: LatLng(51.5074, -0.1278), null)
-            val b = m.projection.visibleRegion.latLngBounds
-            val span = LatLng(b.latitudeSouth, b.longitudeWest).distanceTo(LatLng(b.latitudeNorth, b.longitudeEast)) / 1.4
-            val center = LatLng(c.latitude, c.longitude)
-            // A world view provides little local context for addresses or nearby businesses.
-            val here = userLatLng
-            if (here != null && (span > 120_000 || center == LatLng(51.5074, -0.1278))) return Pair(here, 20_000.0)
-            return Pair(center, span.takeIf { it.isFinite() && it > 0 }?.coerceIn(1_500.0, 120_000.0))
-        }
+    val viewport: Pair<LatLng, Double?> get() = searchViewport()
+    private fun searchViewport(fromMap: Boolean = false): Pair<LatLng, Double?> {
+        val m = map ?: return Pair(userLatLng ?: LatLng(51.5074, -0.1278), null)
+        val c = m.cameraPosition.target ?: return Pair(userLatLng ?: LatLng(51.5074, -0.1278), null)
+        val b = m.projection.visibleRegion.latLngBounds
+        val span = LatLng(b.latitudeSouth, b.longitudeWest).distanceTo(LatLng(b.latitudeNorth, b.longitudeEast)) / 1.4
+        val center = c.kite()
+        // A world view provides little local context for addresses or nearby businesses.
+        val here = userLatLng
+        if (!fromMap && here != null && (span > 120_000 || center == LatLng(51.5074, -0.1278))) return Pair(here, 20_000.0)
+        return Pair(center, span.takeIf { it.isFinite() && it > 0 }?.coerceIn(1_500.0, 120_000.0))
+    }
 
-    fun search(text: String? = null, title: String? = null) {
+    fun search(text: String? = null, title: String? = null, fromMap: Boolean = false) {
         val q = (text ?: query).trim()
         if (q.isEmpty()) return
         if (title == null && MapLinks.looksLikeLink(q)) { openLink(q); return }
@@ -315,13 +344,19 @@ class AppModel {
         directions = null
         searching = true
         notice = null
-        openNowOnly = false
-        rating4Only = false
-        sort = SortMode.RELEVANCE
-        val vp = viewport
+        if (!fromMap) {
+            openNowOnly = false
+            rating4Only = false
+            sort = SortMode.RELEVANCE
+        }
+        val vp = searchViewport(fromMap)
+        submittedSearch = q to title
+        searchCenter = vp.first
+        searchZoom = map?.cameraPosition?.zoom
+        canSearchHere = false
         val osmOnly = settings.osmOnlySearch || settings.noGoogle
         val user = userLatLng
-        val sameQuery = suggestedQuery == Place.fold(q)
+        val sameQuery = !fromMap && suggestedQuery == Place.fold(q)
         val pendingSuggestions = suggestTask.takeIf { sameQuery }
         val visibleSuggestions = suggestions.places.takeIf { sameQuery }.orEmpty()
         searchTask = scope.launch {
@@ -360,7 +395,7 @@ class AppModel {
                 notice = "Google didn't answer, so these results are from OpenStreetMap."
             }
             detent = SheetDetent.HALF
-            if (places.isNotEmpty()) {
+            if (places.isNotEmpty() && !fromMap) {
                 val nearest = places.first().location
                 frame(places.take(8).filter { nearest.distanceTo(it.location) <= 35_000 }.map { it.location })
             }
@@ -468,6 +503,10 @@ class AppModel {
     }
 
     fun clearSearch() {
+        submittedSearch = null
+        searchCenter = null
+        searchZoom = null
+        canSearchHere = false
         searchTask?.cancel()
         suggestTask?.cancel()
         suggestedQuery = null
@@ -480,7 +519,11 @@ class AppModel {
         notice = null
     }
 
-    fun select(place: Place, focus: Boolean = true) {
+    var selectedAmbientOsmId: String? = null
+        private set
+
+    fun select(place: Place, focus: Boolean = true, ambientOsm: Boolean = false) {
+        selectedAmbientOsmId = place.id.takeIf { ambientOsm }
         var p = place
         settings.addRecentPlace(place)
         if (p.distanceMeters == null) userLatLng?.let { p = p.copy(distanceMeters = it.distanceTo(p.location)) }
@@ -1215,7 +1258,7 @@ class AppModel {
             val route = if (leg.walkSteps.isNotEmpty() && leg.path.size >= 2 && origin.distanceTo(leg.path.first()) < 50) {
                 Route(TravelMode.WALK, leg.path, leg.distanceMeters, leg.durationSeconds, null, null,
                     leg.walkSteps.map { it.copy() }.toMutableList(), source = "transitous")
-            } else Directions.routes(origin, destination, TravelMode.WALK, useGoogle = false).routes.firstOrNull()
+            } else Directions.routes(origin, destination, TravelMode.WALK, useGoogle = !settings.noGoogle).routes.firstOrNull()
             if (transitGuidance !== session || session.legIndex != index) return@launch
             if (route == null) {
                 session.walkingError = true
@@ -1224,7 +1267,7 @@ class AppModel {
             }
             val walking = Navigator(route, end, emptyList(), scope, transitWalk = true)
             session.walking = walking
-            location.last?.let { now ->
+            navigationFix?.let { now ->
                 walking.handle(now)
                 if (walking.arrived) { advanceTransitLeg(); return@launch }
                 followCamera(walking, now)
@@ -1366,6 +1409,10 @@ class AppModel {
         directions = null
         browseFollowing = false
         val n = Navigator(route, d.destination, d.stops, scope)
+        preparedRoadControls?.let { (id, controls) ->
+            if (id == route.id) n.usePreparedControls(controls) else controls.cancel()
+        }
+        preparedRoadControls = null
         if (d.mode == TravelMode.DRIVE) n.avoid = d.avoid
         navZoomSteps = 0
         nav = n
@@ -1426,6 +1473,7 @@ class AppModel {
     }
 
     fun recenterNav() {
+        if (transitGuidance?.walking != null) { followTransit(); return }
         val n = nav ?: return
         if (!n.following) glide.easeFromCurrentCamera()
         n.following = true
@@ -1433,7 +1481,7 @@ class AppModel {
     }
 
     fun zoomNavigation(step: Int) {
-        val n = nav ?: return
+        val n = mapNavigator ?: return
         val m = map ?: return
         if (n.following) {
             navZoomSteps = (navZoomSteps + step).coerceIn(-4, 10)
@@ -1446,7 +1494,7 @@ class AppModel {
     }
 
     fun previewNavTurn(turn: Maneuver) {
-        val n = nav ?: return
+        val n = mapNavigator ?: return
         val m = map ?: return
         n.following = false
         MapCam.animate(m, CameraPosition.Builder().target(turn.location.ml()).zoom(16.8).tilt(24.0)
@@ -1584,16 +1632,17 @@ class AppModel {
         val p = n.progress
         // Further out on long stretches, closer in and flatter just before a turn (see NavZoom).
         // Then the zoom setting (Closer, Normal, Wider) and the 3D, 2D or north-up button.
-        val view = NavZoom.view(f.speed, p?.distanceToNext, n.nextManeuver?.type, n.route.mode == TravelMode.DRIVE)
-            .applying(settings.mapZoom, settings.driveLook)
-        glide.look = if (n.transitWalk) MapLook.NORTH else settings.driveLook
-        glide.fix(n, f, view.across / 1.36.pow(navZoomSteps), if (n.transitWalk) 0.0 else view.pitch)
+        val rawView = if (n.route.mode == TravelMode.WALK) NavZoom.View(135.0, 40.0)
+            else NavZoom.view(f.speed, p?.distanceToNext, n.nextManeuver?.type, n.route.mode == TravelMode.DRIVE)
+        val view = rawView.applying(settings.mapZoom, settings.driveLook)
+        glide.look = settings.driveLook
+        glide.fix(n, f, view.across / 1.36.pow(navZoomSteps), view.pitch)
     }
 
     /** The map button while driving: 3D, then 2D, then north up. Kept for the next drive. */
     fun cycleDriveLook() {
         settings.driveLook = settings.driveLook.next
-        val n = nav ?: return
+        val n = mapNavigator ?: return
         n.following = true
         location.last?.let { followCamera(n, it) }
     }

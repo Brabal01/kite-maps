@@ -9,7 +9,9 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -30,6 +32,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -87,7 +90,17 @@ fun DirectionsOverlay(model: AppModel, showMapbox: Boolean) {
         }
         if (d != null) {
             Box(Modifier.statusBarsPadding().padding(top = 6.dp).onSizeChanged { cardHeight = with(density) { it.height.toDp() } }) {
-                EndpointsCard(model, d)
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    EndpointsCard(model, d)
+                    d.pickedTrip?.takeIf { it.path.isNotEmpty() }?.let { trip ->
+                        AssistChip(onClick = {
+                            model.detent = SheetDetent.PEEK
+                            model.frame(trip.path, bottomFraction = 0.30f, top = 170)
+                        }, label = { Text("Show trip on map") },
+                            leadingIcon = { Icon(Icons.Filled.Map, null, Modifier.size(17.dp)) },
+                            colors = AssistChipDefaults.assistChipColors(containerColor = interfaceSurface))
+                    }
+                }
             }
             Box(Modifier.statusBarsPadding().padding(top = 6.dp + cardHeight + 14.dp).padding(horizontal = 16.dp).fillMaxWidth(),
                 contentAlignment = Alignment.TopCenter) {
@@ -103,7 +116,18 @@ fun EndpointsCard(model: AppModel, state: DirectionsState) {
     val dark = LocalDark.current
     val points = state.orderedPlaces()
     var edit by remember { mutableStateOf(false) }
-    Row(Modifier.padding(horizontal = 16.dp).fillMaxWidth().glass(RoundedCornerShape(24.dp)).padding(8.dp),
+    var compact by rememberSaveable { mutableStateOf(false) }
+    if (compact) {
+        Row(Modifier.padding(horizontal = 16.dp).fillMaxWidth().glass(CircleShape, solid = true).padding(end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            IconButton(model::closeDirections) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+            Text("${points.first().waypointName()} → ${points.last().waypointName()}", color = primaryText,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).tap { compact = false })
+            IconButton({ compact = false }) { Icon(Icons.Filled.ExpandMore, "Expand route places") }
+        }
+        return
+    }
+    Row(Modifier.padding(horizontal = 16.dp).fillMaxWidth().glass(RoundedCornerShape(24.dp), solid = true).padding(8.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         IconButton(model::closeDirections) {
             Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = primaryText)
@@ -117,14 +141,17 @@ fun EndpointsCard(model: AppModel, state: DirectionsState) {
                     modifier = Modifier.fillMaxWidth().tap { edit = true }.padding(start = 30.dp, bottom = 5.dp))
             }
             HorizontalDivider(Modifier.padding(start = 30.dp))
-            Endpoint(Icons.Filled.Place, Vela.closed, points.last().waypointName())
+            Box(Modifier.fillMaxWidth().tap { edit = true }) {
+                Endpoint(Icons.Filled.Place, Vela.closed, points.last().waypointName())
+            }
             if (!state.transit && state.stops.size < 8) TextButton({ model.addingStop = true }) {
                 Icon(Icons.Filled.Add, null)
                 Text("Add stop")
             }
         }
-        Box(Modifier.size(48.dp).clip(CircleShape).background(Vela.chip(dark)).tap { edit = true }, contentAlignment = Alignment.Center) {
-            Icon(Icons.Filled.Reorder, "Edit route", tint = primaryText)
+        Column {
+            IconButton({ edit = true }) { Icon(Icons.Filled.Reorder, "Edit route", tint = primaryText) }
+            IconButton({ compact = true }) { Icon(Icons.Filled.ExpandLess, "Collapse route places", tint = primaryText) }
         }
     }
     if (edit) RouteEditor(model, state) { edit = false }
@@ -430,7 +457,11 @@ fun TripHeader(model: AppModel) {
     Column(Modifier.padding(horizontal = 18.dp).padding(bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (!d.transit && (d.route != null || d.startRequested && !d.waitingForLocation)) GoButton(model, d.startRequested)
         if (d.transit && d.pickedTrip != null)
-            Button(model::startTransitNavigation, Modifier.fillMaxWidth()) { Text("Start transit navigation") }
+            Button(model::startTransitNavigation, Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
+                Icon(Icons.Filled.DirectionsTransit, null, Modifier.size(21.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Start transit navigation", fontWeight = FontWeight.Bold)
+            }
         Row(verticalAlignment = Alignment.Top) {
             Box(Modifier.weight(1f)) {
                 val r = d.route
@@ -703,35 +734,46 @@ fun TransitBody(model: AppModel, state: DirectionsState) {
     val trips = state.trips
     when {
         trips != null && trips.isNotEmpty() -> {
-            Column {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 trips.forEachIndexed { i, t ->
-                    Box(Modifier.tap { model.selectTrip(i) }) { TripRow(t, t.id == state.pickedTrip?.id) }
-                    HorizontalDivider()
+                    val picked = t.id == state.pickedTrip?.id
+                    Column {
+                        Box(Modifier.tap { model.selectTrip(i) }) { TripRow(t, picked) }
+                        if (picked) TransitSteps(t)
+                    }
                 }
-            }
-            state.pickedTrip?.let { t ->
-                Text("Steps", fontSize = KType.headline, fontWeight = FontWeight.SemiBold, color = primaryText, modifier = Modifier.padding(top = 6.dp))
-                TransitSteps(t)
             }
             Text("Timetables from Transitous", fontSize = KType.caption, color = secondaryText, modifier = Modifier.padding(top = 4.dp))
         }
         trips == null -> Row(Modifier.padding(vertical = 20.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
             CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp); Text("Finding transit…", color = secondaryText)
         }
-        else -> Text(state.tripsError ?: "No transit trips found.", color = secondaryText, modifier = Modifier.padding(vertical = 20.dp))
+        else -> Column(Modifier.padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(state.tripsError ?: "No transit trips found.", color = secondaryText)
+            val (from, to) = state.endpoints(model.userLatLng)
+            if (!AppSettings.noGoogle && from != null && to != null && state.stops.isEmpty()) {
+                OutlinedButton({
+                    fun coords(p: LatLng) = urlEnc("${p.lat.plain()},${p.lng.plain()}")
+                    ctx.open("https://www.google.com/maps/dir/?api=1&origin=${coords(from)}&destination=${coords(to)}&travelmode=transit")
+                }) { Text("Check transit in Google Maps") }
+            }
+        }
     }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun TripRow(trip: TransitTrip, picked: Boolean) {
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(if (picked) secondaryText.copy(alpha = 0.14f) else Color.Transparent)
-        .padding(vertical = 10.dp, horizontal = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    val shape = RoundedCornerShape(18.dp)
+    Column(Modifier.fillMaxWidth().clip(shape).background(interfaceGround)
+        .border(1.dp, if (picked) interfaceAccent else secondaryText.copy(alpha = 0.25f), shape)
+        .padding(vertical = 13.dp, horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             val a = trip.depart; val b = trip.arrive
             if (a != null && b != null) Text("${clock(a)} – ${clock(b)}", fontSize = KType.subheadline, fontWeight = FontWeight.SemiBold, color = primaryText)
             Spacer(Modifier.weight(1f))
-            Text(Fmt.duration(trip.durationSeconds), fontSize = KType.headline, fontWeight = FontWeight.SemiBold, color = primaryText)
+            Text(Fmt.duration(trip.durationSeconds), fontSize = KType.headline, fontWeight = FontWeight.Bold,
+                color = if (picked) interfaceAccentText else primaryText)
         }
         // Wraps onto more lines for trips with many changes, like Google Maps does.
         FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -745,6 +787,8 @@ fun TripRow(trip: TransitTrip, picked: Boolean) {
                 }
             }
         }
+        val transfers = when (trip.transfers) { 0 -> "Direct"; 1 -> "1 transfer"; else -> "${trip.transfers} transfers" }
+        Text("$transfers · ${Fmt.duration(trip.walkSeconds)} walking", fontSize = KType.caption, color = secondaryText)
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             val first = trip.rides.firstOrNull()
             first?.depart?.let { Text("${clock(it)} from ${first.fromName}", fontSize = KType.caption, color = secondaryText, maxLines = 1,
@@ -758,29 +802,56 @@ fun TripRow(trip: TransitTrip, picked: Boolean) {
 }
 
 @Composable
-fun TransitSteps(trip: TransitTrip) {
+fun TransitSteps(trip: TransitTrip, activeLeg: Int? = null) {
     fun times(t: Long?, text: String) = t?.let { "${clock(it)}  $text" } ?: text
-    Column {
-        trip.legs.forEach { leg ->
-            Row(Modifier.fillMaxWidth().padding(vertical = 9.dp), verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                Icon(vehicleIcon(leg.vehicle), null, modifier = Modifier.size(26.dp),
-                    tint = if (leg.isWalk) secondaryText else leg.color?.let { Color(0xFF000000 or it) } ?: Vela.routeBlue)
-                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+    Column(Modifier.padding(top = 5.dp)) {
+        trip.legs.forEachIndexed { index, leg ->
+            val accent = Color(0xFF000000 or leg.mapColor)
+            val transfer = index > 0 && !leg.isWalk && trip.legs.take(index).any { !it.isWalk }
+            var expanded by rememberSaveable(trip.id, index) { mutableStateOf(false) }
+            Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Box(Modifier.width(28.dp).fillMaxHeight(), contentAlignment = Alignment.TopCenter) {
+                    Canvas(Modifier.fillMaxSize()) {
+                        val x = size.width / 2
+                        drawLine(accent.copy(alpha = 0.55f), androidx.compose.ui.geometry.Offset(x, 12.dp.toPx()),
+                            androidx.compose.ui.geometry.Offset(x, size.height), strokeWidth = 3.dp.toPx(),
+                            pathEffect = if (leg.isWalk) androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(5f, 6f)) else null)
+                    }
+                    Box(Modifier.padding(top = 7.dp).size(27.dp).clip(CircleShape).background(accent), contentAlignment = Alignment.Center) {
+                        Icon(vehicleIcon(leg.vehicle), null, Modifier.size(15.dp), tint = Color.White)
+                    }
+                }
+                Column(Modifier.weight(1f).padding(bottom = 9.dp).clip(RoundedCornerShape(13.dp))
+                    .background(if (index == activeLeg) interfaceGround else Color.Transparent).padding(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (index == activeLeg) Text("Current leg", fontSize = KType.caption, color = interfaceAccentText)
                     if (leg.isWalk) {
-                        Text(if (leg.toName.isEmpty() || leg.toName == "END") "Walk to the destination" else "Walk to ${leg.toName}", fontSize = KType.subheadline, color = primaryText)
-                        Text("${Fmt.duration(leg.durationSeconds)} · ${Fmt.distance(leg.distanceMeters)}", fontSize = KType.caption, color = secondaryText)
+                        val to = leg.toName.takeUnless { it.isBlank() || it == "END" } ?: "the destination"
+                        Text("Walk to $to", fontSize = KType.subheadline, fontWeight = FontWeight.Bold, color = primaryText)
+                        Text("${Fmt.duration(leg.durationSeconds)} · ${Fmt.distance(leg.distanceMeters)}",
+                            fontSize = KType.caption, color = secondaryText)
                     } else {
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (transfer) Text("Transfer", fontSize = KType.caption, color = interfaceAccentText, fontWeight = FontWeight.Bold)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                             LineChip(leg)
-                            leg.headsign?.let { Text("to $it", fontSize = KType.subheadline, color = primaryText, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                            leg.headsign?.let { Text("Toward $it", fontSize = KType.subheadline, color = primaryText, modifier = Modifier.weight(1f)) }
                         }
-                        Text(times(leg.depart, leg.fromName), fontSize = KType.subheadline, color = primaryText)
-                        Text("Ride ${leg.stops} stop${if (leg.stops == 1) "" else "s"} · ${Fmt.duration(leg.durationSeconds)}", fontSize = KType.caption, color = secondaryText)
-                        Text(times(leg.arrive, "Get off at ${leg.toName}"), fontSize = KType.caption, color = secondaryText)
+                        val platform = leg.calls.firstOrNull()?.platform?.takeIf(String::isNotBlank)?.let { " · Platform $it" }.orEmpty()
+                        Text(times(leg.depart, "Board at ${leg.fromName}") + platform, fontSize = KType.subheadline, color = primaryText)
+                        val intermediate = leg.calls.drop(1).dropLast(1)
+                        if (intermediate.isNotEmpty()) {
+                            TextButton({ expanded = !expanded }, contentPadding = PaddingValues(horizontal = 4.dp)) {
+                                Text("${intermediate.size} intermediate stops")
+                                Icon(if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, null)
+                            }
+                            if (expanded) intermediate.forEach { call ->
+                                Text(times(call.arrival ?: call.departure, call.name), fontSize = KType.caption, color = secondaryText)
+                            }
+                        } else Text(Fmt.duration(leg.durationSeconds), fontSize = KType.caption, color = secondaryText)
+                        Text(times(leg.arrive, "Get off at ${leg.toName}"), fontSize = KType.subheadline, color = primaryText)
                     }
                 }
             }
-            HorizontalDivider(Modifier.padding(start = 40.dp))
         }
     }
 }

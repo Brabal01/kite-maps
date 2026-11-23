@@ -39,7 +39,15 @@ import com.mapbox.maps.plugin.attribution.attribution
 import com.mapbox.maps.plugin.gestures.addOnMapClickListener
 import com.mapbox.maps.plugin.gestures.addOnMapLongClickListener
 import com.mapbox.maps.plugin.logo.logo
+import com.mapbox.common.NetworkRestriction
+import com.mapbox.common.TileRegionLoadOptions
+import com.mapbox.common.TileStore
+import com.mapbox.geojson.LineString
+import com.mapbox.maps.OfflineManager
+import com.mapbox.maps.TilesetDescriptorOptions
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
@@ -65,6 +73,11 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
     private var downY = 0f
     private var destroying = false
     private var lampJob: Job? = null
+    private val lampRequests = mutableMapOf<Pair<Int, Int>, Deferred<LampArea?>>()
+    private var routeTileKey: Pair<String, Int>? = null
+    private var routeTileLoad: com.mapbox.common.Cancelable? = null
+    private val tileStore by lazy { TileStore.create() }
+    private var routeTileDescriptor: com.mapbox.common.TilesetDescriptor? = null
     private var watchdog: Job? = null
     private var styleRequest = 0
     private var submittedCamera: CameraPosition? = null
@@ -138,13 +151,17 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
         MapboxOptions.accessToken = token
         val mapView = MapView(context, MapInitOptions(context, textureView = true, styleUri = null))
         view = mapView
+        mapView.setMaximumFps(45)
         attributionDialog = AttributionDialogManagerImpl(context)
         val map = mapView.mapboxMap
+        map.setPrefetchZoomDelta(2)
         mapView.logo.enabled = false
         mapView.attribution.enabled = false
         idleSubscription = map.subscribeMapIdle {
             if (movingFromTouch) {
                 copyCameraToKite(mapView)
+                val camera = mapView.mapboxMap.cameraState
+                model.noteSearchArea(camera.center.kite(), camera.zoom)
                 movingFromTouch = false
             }
             refreshLamps()
@@ -184,7 +201,7 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
                             val klass = str("class")
                             val name = OpenMapStyle.title(str("name"), subclass, klass)
                             model.select(Place("osm:${loc.latitude()},${loc.longitude()}:$name", name, loc.kite(), "osm",
-                                category = subclass ?: klass), focus = false)
+                                category = subclass ?: klass), focus = false, ambientOsm = true)
                         }
                     }
                 }
@@ -225,7 +242,11 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 model.glide.mapTouched = false
-                if (movingFromTouch) view?.let(::copyCameraToKite)
+                if (movingFromTouch) view?.let { active ->
+                    copyCameraToKite(active)
+                    val camera = active.mapboxMap.cameraState
+                    model.noteSearchArea(camera.center.kite(), camera.zoom)
+                }
             }
         }
     }
@@ -323,6 +344,10 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
         overlayJob?.cancel()
         pendingOverlays.clear()
         overlayData.clear()
+        prepareRoute(null, 0)
+        lampRequests.values.forEach { it.cancel() }
+        lampRequests.clear()
+        routeTileDescriptor = null
     }
 
     private fun load() {
@@ -448,6 +473,8 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
             st.setStyleLayerProperty(LAMP_LENS, "model-emissive-strength", Value.valueOf(if (look.dark) 1.0 else 0.15))
             if (!look.lamps) {
                 lampJob?.cancel()
+                lampRequests.values.toList().forEach { it.cancel() }
+                lampRequests.clear()
                 lastLampCell = null
                 lastLampCenter = null
                 lampRequestAt = 0L
@@ -487,7 +514,11 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
         st.addLayer(SymbolLayer("kite-current-road-name", "vela-road-name").slot("top")
             .symbolPlacement(SymbolPlacement.LINE_CENTER).textField(Expression.get("label"))
             .textSize(16.0).textColor(Color.WHITE).textHaloColor(0xFF163242.toInt()).textHaloWidth(1.3))
-        st.addLayer(line("kite-transit", "vela-transit", 0xFF377BE7.toInt(), 6.0).lineColor(Expression.toColor(Expression.get("color"))))
+        st.addLayer(line("kite-transit", "vela-transit", 0xFF377BE7.toInt(), 7.0)
+            .lineColor(Expression.toColor(Expression.get("color")))
+            .filter(Expression.fromRaw("""["==",["get","walk"],0]""")))
+        st.addLayer(line("kite-transit-walk", "vela-transit", 0xFF64748B.toInt(), 5.0)
+            .lineDasharray(listOf(0.4, 1.5)).filter(Expression.fromRaw("""["==",["get","walk"],1]""")))
         st.addLayer(line("kite-traffic-route", "vela-route-traffic", Color.RED, 8.0)
             .lineColor(Expression.fromRaw("""["match",["get","level"],1,"#F59E0B",2,"#EF4444",3,"#B91C1C","#EF4444"]""")))
         st.addLayer(line("kite-measure", "kite-measure", 0xFF8C61EF.toInt(), 3.3)
@@ -499,7 +530,7 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
             .lineColor(Expression.toColor(Expression.get("color"))).minZoom(10.0)
             .visibility(if (AppSettings.transitLines && model.nav == null) Visibility.VISIBLE else Visibility.NONE))
         st.addLayer(CircleLayer(KiteMap.RIDE_STOPS, KiteMap.RIDE_STOPS).slot("top").circleRadius(5.5)
-            .circleColor("#3659B0").circleStrokeColor(Color.WHITE).circleStrokeWidth(2.0).circleEmissiveStrength(1.0))
+            .circleColor(Expression.toColor(Expression.get("color"))).circleStrokeColor(Color.WHITE).circleStrokeWidth(2.0).circleEmissiveStrength(1.0))
         st.addLayer(line("kite-turn-arrow", "vela-turn-arrow", Color.WHITE, 4.0))
         st.addLayer(CircleLayer("kite-search-hit", "vela-results").slot("top").circleRadius(14.0)
             .circleColor("#164B9F").circleOpacity(0.12).circleEmissiveStrength(1.0)
@@ -592,6 +623,62 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
         }
     }
 
+    /** Keep one small Mapbox tile region and the nearest lamp cells ready ahead of the driver. */
+    fun prepareRoute(route: Route?, section: Int) {
+        val mapView = view
+        if (route == null || route.mode != TravelMode.DRIVE || mapView == null || !ready || look.satellite) {
+            if (routeTileKey != null) {
+                routeTileLoad?.cancel()
+                routeTileLoad = null
+                routeTileKey = null
+                runCatching { tileStore.removeTileRegion(ROUTE_TILE_REGION) }
+            }
+            return
+        }
+        val from = section * 1_800.0
+        if (look.lamps) requestLampArea(lampCell(Geo.point(route.polyline, from + 720.0)))
+        val key = route.id to section
+        if (key == routeTileKey) return
+        val corridor = Geo.slice(route.polyline, from, from + 2_250.0)
+        if (corridor.size < 2) return
+        routeTileLoad?.cancel()
+        routeTileKey = key
+        runCatching {
+            val descriptor = routeTileDescriptor ?: OfflineManager().createTilesetDescriptor(
+                TilesetDescriptorOptions.Builder().styleURI(Style.STANDARD).minZoom(15).maxZoom(17)
+                    .pixelRatio(mapView.resources.displayMetrics.density).build()
+            ).also { routeTileDescriptor = it }
+            routeTileLoad = tileStore.loadTileRegion(ROUTE_TILE_REGION, TileRegionLoadOptions.Builder()
+                .geometry(LineString.fromLngLats(corridor.map { Point.fromLngLat(it.lng, it.lat) }))
+                .descriptors(listOf(descriptor)).acceptExpired(true)
+                .networkRestriction(NetworkRestriction.DISALLOW_EXPENSIVE).build()
+            ) { result ->
+                if (result.isError) Log.d("KiteScenery", "Route tile prefetch unavailable")
+            }
+        }.onFailure { Log.d("KiteScenery", "Route tile prefetch unavailable", it) }
+    }
+
+    private fun lampCell(at: LatLng): Pair<Int, Int> =
+        floor(at.lat / 0.01).toInt() to floor(at.lng / 0.01).toInt()
+
+    private fun requestLampArea(cell: Pair<Int, Int>): Deferred<LampArea?>? {
+        if (cell in lampCache) return null
+        lampRequests[cell]?.let { return it }
+        if (lampRequests.size >= 2) return null
+        return model.scope.async {
+            try {
+                val mid = LatLng((cell.first + 0.5) * 0.01, (cell.second + 0.5) * 0.01)
+                val lngSpan = 0.012 / cos(Math.toRadians(mid.lat)).coerceAtLeast(0.35)
+                val box = "${(mid.lat - 0.012).coerceAtLeast(-90.0)},${(mid.lng - lngSpan).coerceAtLeast(-180.0)}," +
+                    "${(mid.lat + 0.012).coerceAtMost(90.0)},${(mid.lng + lngSpan).coerceAtMost(180.0)}"
+                val raw = Overpass.queryLocal(
+                    """[out:json][timeout:9];node["highway"="street_lamp"]($box);out body 2000;way["highway"]["lit"="yes"]($box);out tags geom($box) 600;way["highway"~"^(residential|living_street)$"]["lit"!~"^(no|disused)$"]["access"!~"^(no|private)$"]($box);out tags geom($box) 420;"""
+                ) ?: return@async null
+                withContext(Dispatchers.Default) { parseLamps(raw, mid) }.also { lampCache[cell] = it }
+            } finally { lampRequests.remove(cell) }
+        }.also { lampRequests[cell] = it }
+    }
+
     fun refreshLamps() {
         val map = view?.mapboxMap ?: return
         val st = style ?: return
@@ -599,7 +686,7 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
         val cam = map.cameraState
         if (cam.zoom < 14.3) return
         val center = cam.center.kite()
-        val cell = floor(center.lat / 0.01).toInt() to floor(center.lng / 0.01).toInt()
+        val cell = lampCell(center)
         val currentTime = android.os.SystemClock.elapsedRealtime()
         if (lastLampCell == cell && lampJob?.isActive == true) return
         val cached = lampCache[cell]
@@ -611,17 +698,10 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
         lastLampCenter = center
         lampJob?.cancel()
         lampJob = model.scope.launch {
-            val lamps = cached ?: run {
-                delay(250)
-                val mid = LatLng((cell.first + 0.5) * 0.01, (cell.second + 0.5) * 0.01)
-                val lngSpan = 0.012 / cos(Math.toRadians(mid.lat)).coerceAtLeast(0.35)
-                val box = "${(mid.lat - 0.012).coerceAtLeast(-90.0)},${(mid.lng - lngSpan).coerceAtLeast(-180.0)}," +
-                    "${(mid.lat + 0.012).coerceAtMost(90.0)},${(mid.lng + lngSpan).coerceAtMost(180.0)}"
-                val raw = Overpass.query(
-                    """[out:json][timeout:18];node["highway"="street_lamp"]($box);out body 2500;way["highway"]["lit"="yes"]($box);out tags geom($box) 850;way["highway"~"^(residential|living_street)$"]["lit"!~"^(no|disused)$"]["access"!~"^(no|private)$"]($box);out tags geom($box) 700;"""
-                ) ?: return@launch
-                withContext(Dispatchers.Default) { parseLamps(raw, mid) }.also { lampCache[cell] = it }
-            }
+            val lamps = cached ?: requestLampArea(cell)?.await()
+                ?: lampCache.entries.firstOrNull { (key, _) ->
+                    abs(key.first - cell.first) <= 1 && abs(key.second - cell.second) <= 1
+                }?.value ?: return@launch
             val budget = if (look.shadows && model.mapNavigator?.following == true) 44 else 65
             val (features, pools) = withContext(Dispatchers.Default) {
                 val actual = lamps.mapped.filter { center.distanceTo(it.at) < 1_300 }
@@ -698,6 +778,7 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
     private fun Point.kite() = LatLng(latitude(), longitude())
 
     companion object {
+        private const val ROUTE_TILE_REGION = "kite-driving-ahead"
         private const val EMPTY = """{"type":"FeatureCollection","features":[]}"""
         private const val GOOGLE_PLACES = "kite-standard-google-places"
         private const val LOCATION = "kite-location"

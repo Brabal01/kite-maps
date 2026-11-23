@@ -3,7 +3,10 @@
 package app.kite.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -32,6 +35,12 @@ fun TransitNavigationOverlay(model: AppModel, journey: TransitGuidance, showMapb
     LaunchedEffect(journey) {
         while (true) { delay(5000); now = System.currentTimeMillis() }
     }
+    val walking = journey.walking
+    if (walking != null && !showTrip) {
+        NavigationOverlay(model, walking, showMapbox, transitWalk = journey,
+            onTransitTrip = { tripDetent = SheetDetent.HALF; showTrip = true })
+        return
+    }
     BackHandler {
         if (showTrip) {
             showTrip = false
@@ -41,15 +50,6 @@ fun TransitNavigationOverlay(model: AppModel, journey: TransitGuidance, showMapb
     BoxWithConstraints(Modifier.fillMaxSize().systemBarsPadding()) {
         val full = maxHeight
         if (showMapbox) MapboxAttribution(Modifier.align(Alignment.TopStart).padding(start = 16.dp, top = 112.dp))
-        val walking = journey.walking
-        if (walking != null) Box(Modifier.align(Alignment.TopCenter).padding(top = 4.dp, start = 12.dp, end = 12.dp)) {
-            InstructionBanner(walking)
-        }
-        if (walking?.following == true && model.glide.carOnScreen) {
-            val y = NavGlide.carY(model.mapHeightDp, model.glide.carNorth).dp
-            Icon(Icons.Filled.Navigation, null, tint = Vela.accentText(LocalDark.current),
-                modifier = Modifier.align(Alignment.TopCenter).offset(y = y - 45.dp).size(36.dp))
-        }
         if (!showTrip) Column(Modifier.align(Alignment.BottomCenter).padding(12.dp).fillMaxWidth().glass(RoundedCornerShape(25.dp))
             .padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
             val label = when (phase) {
@@ -59,11 +59,14 @@ fun TransitNavigationOverlay(model: AppModel, journey: TransitGuidance, showMapb
                 TransitGuidance.Phase.RIDE -> if (journey.nearExit) "Get off at ${leg?.toName.orEmpty()}" else "On board"
                 TransitGuidance.Phase.COMPLETE -> "You reached ${journey.destination.name}"
             }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            val rideColor = leg?.takeUnless { it.isWalk }?.let { Color(0xFF000000 or it.mapColor) }
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                .background(rideColor ?: interfaceGround).padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (leg != null && !leg.isWalk) LineChip(leg)
-                Text(label, color = primaryText, fontSize = KType.headline, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Text(label, color = if (rideColor != null) Color.White else primaryText, fontSize = KType.headline, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                 if (phase != TransitGuidance.Phase.COMPLETE && (!journey.following || walking?.following == false))
-                    IconButton(model::followTransit) { Icon(Icons.Filled.MyLocation, "Re-centre") }
+                    IconButton(model::followTransit) { Icon(Icons.Filled.MyLocation, "Re-centre", tint = if (rideColor != null) Color.White else primaryText) }
             }
             when (phase) {
                 TransitGuidance.Phase.WALK -> {
@@ -98,7 +101,16 @@ fun TransitNavigationOverlay(model: AppModel, journey: TransitGuidance, showMapb
                     val positionAt = journey.lastAlongAt
                     val gps = positionAt != null && now - positionAt <= 20_000
                     val next = if (gps) journey.nextStop else journey.scheduledNext(now)
-                    next?.let { Text("${if (gps) "Next stop" else "Scheduled next stop"} · ${it.name}", color = primaryText) }
+                    next?.let {
+                        Text(if (gps) "Next stop" else "Scheduled next stop", fontSize = KType.caption, color = secondaryText)
+                        Text(it.name, color = primaryText, fontSize = KType.headline, fontWeight = FontWeight.Bold)
+                    }
+                    val followingLeg = journey.trip.legs.drop(journey.legIndex + 1).firstOrNull { !it.isWalk }
+                    if (followingLeg != null) Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Transfer to", color = secondaryText)
+                        LineChip(followingLeg)
+                        followingLeg.headsign?.let { Text(it, color = secondaryText, maxLines = 1) }
+                    }
                     val exit = listOfNotNull(leg?.toName, leg?.arrive?.let { Fmt.time(Date(it)) })
                     if (exit.isNotEmpty()) Text("Get off · ${exit.joinToString(" · ")}", color = secondaryText)
                     if (!gps) Text("Waiting for a position along the route", color = secondaryText, fontSize = KType.caption)
@@ -141,7 +153,7 @@ fun TransitNavigationOverlay(model: AppModel, journey: TransitGuidance, showMapb
                             StepsList(walking.route, walking.progress?.nextIndex ?: 0)
                             HorizontalDivider()
                         }
-                        TransitSteps(journey.trip)
+                        TransitSteps(journey.trip, activeLeg = journey.legIndex)
                     }
                 })
         }

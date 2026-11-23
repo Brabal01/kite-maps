@@ -78,38 +78,51 @@ object Overpass {
 
     data class SignalNode(val id: Long, val at: LatLng)
 
-    enum class ControlKind { SIGNAL, STOP, RAIL }
+    enum class ControlKind { SIGNAL, STOP, RAIL, CROSSING }
     data class RoadControl(val kind: ControlKind, val along: Double, val at: LatLng? = null)
-    data class RoadsideNode(val kind: ControlKind, val at: LatLng)
+    data class RoadsideNode(val kind: ControlKind, val at: LatLng, val direction: String? = null)
 
     suspend fun controlsInBox(box: Box): List<RoadsideNode>? {
         val filter = "(${box.s.plain()},${box.w.plain()},${box.n.plain()},${box.e.plain()})"
         return controlsQuery(filter, filter)?.let(::parseRoadControls)
     }
 
-    suspend fun controlsOnRoute(line: List<LatLng>): List<RoadControl>? {
+    suspend fun controlsOnRoute(line: List<LatLng>, walking: Boolean = false): List<RoadControl>? {
         if (line.size < 2) return emptyList()
         val path = coords(thinTo(line, 150))
-        val raw = controlsQuery("(around:42,$path)", "(around:28,$path)") ?: return null
+        val raw = controlsQuery("(around:42,$path)", "(around:28,$path)", walking) ?: return null
         return withContext(Dispatchers.Default) { projectControls(parseRoadControls(raw), line) }
     }
 
-    private suspend fun controlsQuery(signals: String, others: String): ByteArray? = firstAnswer(
-        """[out:json][timeout:10];(node["highway"="traffic_signals"]$signals;node["highway"="stop"]$others;node["railway"="level_crossing"]$others;);out body 900;""",
-        stagger = 3.5
-    ) { Json.obj(it)?.get("elements").asList() != null }
+    private suspend fun controlsQuery(signals: String, others: String, walking: Boolean = false): ByteArray? {
+        val tags = if (walking) """node["highway"="crossing"]$others;node["railway"="crossing"]$others;"""
+        else """node["highway"="traffic_signals"]$signals;node["highway"="stop"]$others;node["railway"="level_crossing"]$others;"""
+        return withTimeoutOrNull(12_000) {
+            firstAnswer("""[out:json][timeout:8];($tags);out body 900;""",
+                stagger = 1.5, useLocalMirrors = true, get = !signals.startsWith("(around:")) { Json.obj(it)?.get("elements").asList() != null }
+        }
+    }
 
     fun projectControls(nodes: List<RoadsideNode>, line: List<LatLng>): List<RoadControl> {
         if (line.size < 2) return emptyList()
         val cum = Geo.cumulative(line)
+        val exact = if (line.size > 32 && nodes.size > 3) buildMap {
+            line.forEachIndexed { index, at -> if (at !in this) put(at, cum[index]) }
+        } else emptyMap()
         val projected = nodes.mapNotNull { node ->
-            val hit = Geo.project(node.at, line, cum)
+            val hit = exact[node.at]?.let { Projection(it, 0.0) } ?: Geo.project(node.at, line, cum)
             val radius = when (node.kind) {
                 ControlKind.SIGNAL -> 32.0
                 ControlKind.STOP -> 16.0
                 ControlKind.RAIL -> 7.0
+                ControlKind.CROSSING -> 8.0
             }
-            RoadControl(node.kind, hit.along, node.at).takeIf { hit.offset <= radius }
+            if (hit.offset > radius) return@mapNotNull null
+            RoadCamera.bearings(node.direction)?.let { directions ->
+                val heading = Geo.bearing(Geo.point(line, hit.along - 5, cum), Geo.point(line, hit.along + 5, cum))
+                if (directions.none { Geo.diff(it, heading) <= 65 }) return@mapNotNull null
+            }
+            RoadControl(node.kind, hit.along, node.at)
         }
         return projected.groupBy { it.kind }.values.flatMap { group ->
             buildList<RoadControl> {
@@ -216,14 +229,15 @@ object Overpass {
      * asked [stagger] seconds after the last, and the first good answer wins.
      */
     suspend fun firstAnswer(
-        q: String, stagger: Double = 8.0, useLocalMirrors: Boolean = false, valid: (ByteArray) -> Boolean,
+        q: String, stagger: Double = 8.0, useLocalMirrors: Boolean = false, get: Boolean = useLocalMirrors,
+        valid: (ByteArray) -> Boolean,
     ): ByteArray? = coroutineScope {
         val mirrors = if (useLocalMirrors) localEndpoints else endpoints
         val results = Channel<ByteArray?>(mirrors.size)
         val jobs = mirrors.mapIndexed { i, ep ->
             launch {
                 if (i > 0) delay((i * stagger * 1000).toLong())
-                val r = fetch(ep, q, get = useLocalMirrors)
+                val r = fetch(ep, q, get = get)
                 results.send(if (r != null && r.second == 200 && !timedOut(r.first) && valid(r.first)) r.first else null)
             }
         }
@@ -276,11 +290,12 @@ object Overpass {
                 tags["highway"] == "traffic_signals" -> ControlKind.SIGNAL
                 tags["highway"] == "stop" -> ControlKind.STOP
                 tags["railway"] == "level_crossing" -> ControlKind.RAIL
+                tags["highway"] == "crossing" || tags["railway"] == "crossing" -> ControlKind.CROSSING
                 else -> return@mapNotNull null
             }
             val lat = e["lat"].num() ?: return@mapNotNull null
             val lng = e["lon"].num() ?: return@mapNotNull null
-            RoadsideNode(kind, LatLng(lat, lng))
+            RoadsideNode(kind, LatLng(lat, lng), tags["direction"])
         }
 
     fun parseSignalNodes(data: ByteArray): List<SignalNode> {

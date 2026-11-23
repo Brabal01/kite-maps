@@ -153,17 +153,24 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
         LocationService.last?.let(scenery::updatePosition)
     }
 
+    val previewRoute = model.directions?.route
+    LaunchedEffect(previewRoute?.id) { model.prepareRoadControls(previewRoute) }
+    val sceneryRoute = model.nav?.route ?: previewRoute
+    val scenerySection = ((model.nav?.progress?.alongMeters ?: 0.0) / 1800.0).toInt()
+    LaunchedEffect(sceneryRoute?.id, scenerySection, standardReady, satellite, s.streetLamps) {
+        scenery.prepareRoute(sceneryRoute.takeIf { standardReady && !satellite }, scenerySection)
+    }
     LaunchedEffect(model.nav) { model.nav?.let(kiteMap::seedRoadAhead) }
 
     // Redraw the map's layers whenever anything they show changes.
     LaunchedEffect(Unit) {
         snapshotFlow {
-            listOf(model.mapTick, model.results, model.selected?.id, model.directions, model.mapNavigator, model.mapNavigator?.following, model.transitGuidance?.legIndex, model.transitGuidance?.overviewing, model.stopSearch, model.measurement, model.nav?.routeWaze, model.nav?.roadControls, model.nav?.roadTraffic, model.openNowOnly, model.rating4Only,
+            listOf(model.mapTick, model.results, model.selected?.id, model.directions, model.mapNavigator, model.mapNavigator?.following, model.transitGuidance?.legIndex, model.transitGuidance?.overviewing, model.stopSearch, model.measurement, model.nav?.routeWaze, model.mapNavigator?.roadControls, model.nav?.roadTraffic, model.openNowOnly, model.rating4Only,
                 s.traffic, s.satellite, s.terrain, s.transitLines, s.speedCameras, s.plateCameras, s.wazeOnMap, s.wazeHeatmap,
                 s.home, s.work, s.parking, s.saved, LocationService.authorized, model.tab,
                 s.welcomed, s.noGoogle, s.surveillanceCameras, s.wazeOn, s.wazeKinds, s.wazeMaxAge,
                 s.liveCams, s.liveRoadCams, s.liveWebcams, LiveCamStore.version, model.cruise, s.driveMarker, model.routeReports,
-                s.aheadSignals, s.aheadStops, s.aheadRail, s.aheadWaze, s.aheadCameras, s.aheadTraffic, s.roadWazeKinds)
+                s.aheadSignals, s.aheadStops, s.aheadRail, s.aheadCrossings, s.aheadWaze, s.aheadCameras, s.aheadTraffic, s.roadWazeKinds)
         }.collect { kiteMap.render() }
     }
     // Kept on while driving; once arrived the phone goes in a pocket, so the screen may sleep (like the iPhone).

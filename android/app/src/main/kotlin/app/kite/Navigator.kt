@@ -120,7 +120,7 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
     var aircraftNear by mutableStateOf<AircraftNear?>(null); private set
     var averageCheck by mutableStateOf<AverageCheck?>(null); private set
     var roadControls by mutableStateOf<List<Overpass.RoadControl>>(emptyList()); private set
-    private var cachedRoadControls = emptyList<Overpass.RoadControl>()
+    private var preparedControls: Deferred<List<Overpass.RoadControl>?>? = null
     private var nearRoadControls = emptyList<Overpass.RoadControl>()
     private var allRoadControls = emptyList<Overpass.RoadControl>()
     private var roadControlsJob: Job? = null
@@ -131,45 +131,47 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
         val roadData = nearRoadControls + allRoadControls.filter { remote ->
             nearRoadControls.none { it.kind == remote.kind && abs(it.along - remote.along) < 35 }
         }
-        roadControls = (roadData + cachedRoadControls.filter { cached ->
-            roadData.none { it.kind == cached.kind && abs(it.along - cached.along) < 35 }
-        }).sortedBy { it.along }
+        val known = roadData + route.roadControls.filter { provider ->
+            roadData.none { it.kind == provider.kind && abs(it.along - provider.along) < 35 }
+        }
+        roadControls = known.sortedBy { it.along }
     }
 
-    fun seedRoadAhead(nodes: List<Overpass.RoadsideNode>, reports: List<WazeAlert>) {
-        if (route.mode != TravelMode.DRIVE || (nodes.isEmpty() && reports.isEmpty())) return
+    fun seedWazeReports(reports: List<WazeAlert>) {
+        if (route.mode != TravelMode.DRIVE || reports.isEmpty() || !AppSettings.wazeOn) return
         val current = route
-        val along = progress?.alongMeters ?: 0.0
-        val from = (along - 100).coerceAtLeast(0.0)
         scope.launch {
-            val (controls, alerts) = withContext(Dispatchers.Default) {
-                val line = Geo.slice(current.polyline, from, along + 4_200)
-                Overpass.projectControls(nodes, line) to
-                    if (reports.isEmpty()) emptyList() else Waze.project(reports, current.polyline)
-            }
-            if (stopped || route.id != current.id) return@launch
-            cachedRoadControls = controls.map { it.copy(along = it.along + from) }
-            publishRoadControls()
-            if (AppSettings.wazeOn && routeWaze.isEmpty() && !wazeUpdated && alerts.isNotEmpty()) {
-                routeWaze = alerts
-                wazeSeedExpires = now() + 180_000
-            }
+            val alerts = withContext(Dispatchers.Default) { Waze.project(reports, current.polyline) }
+            if (stopped || route.id != current.id || routeWaze.isNotEmpty() || wazeUpdated || alerts.isEmpty()) return@launch
+            routeWaze = alerts
+            wazeSeedExpires = now() + 180_000
         }
     }
 
+    fun usePreparedControls(prepared: Deferred<List<Overpass.RoadControl>?>?) {
+        preparedControls = prepared
+    }
+
     private fun refreshRoadControls(along: Double) {
-        if (route.mode != TravelMode.DRIVE || roadControlsJob?.isActive == true ||
-            (since(roadControlsAt) < 90 && abs(along - roadControlsAlong) < 1_400)) return
+        val walking = route.mode == TravelMode.WALK
+        if ((!walking && route.mode != TravelMode.DRIVE) || roadControlsJob?.isActive == true ||
+            (since(roadControlsAt) < 75 && abs(along - roadControlsAlong) < if (walking) 320 else 950)) return
         roadControlsAt = now()
         roadControlsAlong = along
         val current = route
-        val from = (along - 100).coerceAtLeast(0.0)
+        val prepared = preparedControls.takeIf { along < 200 }
+        preparedControls = null
+        val from = if (prepared != null) 0.0 else (along - 35).coerceAtLeast(0.0)
         roadControlsJob = scope.launch {
-            val local = withContext(Dispatchers.Default) {
-                val line = Geo.slice(current.polyline, from, along + 4_200)
-                Overpass.controlsOnRoute(line)
-            } ?: return@launch
+            val local = prepared?.await() ?: withContext(Dispatchers.Default) {
+                val line = Geo.slice(current.polyline, from, along + if (walking) 850.0 else 3_600.0)
+                Overpass.controlsOnRoute(line, walking)
+            }
             if (stopped || route.id != current.id) return@launch
+            if (local == null) {
+                roadControlsAt = now() - 63_000
+                return@launch
+            }
             nearRoadControls = local.map { it.copy(along = it.along + from) }
             publishRoadControls()
         }
@@ -197,6 +199,7 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
     private var joinedRoute = false
     private var fullRoadData = false
     private var matchedLimits = false
+    private var providerLimits = false
     private var matchedWays: List<Overpass.LimitWay> = emptyList()
     /** Merges on this route that are really a lane gain (where along the route), said nothing. */
     private var quietMerges: Set<Double> = emptySet()
@@ -314,11 +317,15 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
         stopped = true
         gpsWatch.cancel()
         roadControlsJob?.cancel()
+        preparedControls?.cancel()
         Voice.stop()
     }
 
     /** The posted limit where the user is now, in km/h. */
-    val speedLimitKmh: Double? get() = demoLimitKmh ?: route.speedLimit(progress?.alongMeters ?: 0.0)
+    val speedLimitKmh: Double?
+        get() = demoLimitKmh ?: progress?.takeUnless { it.offRoute || gpsLost && !estimating }?.let {
+            route.speedLimit(it.alongMeters)
+        }
 
     /**
      * A lower limit coming up, about 15 seconds ahead at your speed: shown small above the speed sign
@@ -328,7 +335,7 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
         get() {
             demoLimitDrop?.let { return it }
             val p = progress ?: return null
-            if (route.mode != TravelMode.DRIVE || arrived || p.offRoute) return null
+            if (route.mode != TravelMode.DRIVE || arrived || p.offRoute || gpsLost && !estimating) return null
             val next = route.nextLimitDrop(p.alongMeters, NavZoom.limitHeadsUp(speedMps)) ?: return null
             val kmh = next.kmh ?: return null
             val meters = next.startMeters - p.alongMeters
@@ -528,7 +535,10 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
         lastFix?.let { progress = update(it) }
     }
 
-    private fun setLimits(l: List<SpeedLimit>) { route = route.copy(speedLimits = l) }
+    private fun setLimits(l: List<SpeedLimit>) {
+        if (l.any { it.kmh != null } && !providerLimits)
+            route = route.copy(speedLimits = l)
+    }
 
     private fun loadCameras() {
         routeCameras = emptyList()
@@ -541,8 +551,7 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
         roadControlsAlong = -10_000.0
         nearRoadControls = emptyList()
         allRoadControls = emptyList()
-        cachedRoadControls = emptyList()
-        roadControls = emptyList()
+        roadControls = route.roadControls
         camerasTick++
         val s = AppSettings
         if (route.mode != TravelMode.DRIVE) return
@@ -552,6 +561,7 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
         WazeCameras.enabled = s.wazeOn
         fullRoadData = false
         matchedLimits = false
+        providerLimits = route.source == "mapbox" && route.speedLimits.any { it.kmh != null }
         matchedWays = emptyList()
         entryLanes = emptyList()
         val matcher = scope.async {

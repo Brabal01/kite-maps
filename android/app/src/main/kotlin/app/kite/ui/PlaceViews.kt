@@ -583,9 +583,9 @@ fun StreetViewTile(model: AppModel, place: Place, height: Dp) {
 /** A transit line's badge in its own colors. */
 @Composable
 fun LineChip(leg: TransitLeg) {
-    val bg = leg.color?.let { Color(0xFF000000 or it) } ?: Vela.routeBlue
-    val fg = leg.textColor?.let { Color(0xFF000000 or it) } ?: Color.White
-    Row(Modifier.height(22.dp).clip(RoundedCornerShape(5.dp)).background(bg).padding(horizontal = 6.dp),
+    val bg = Color(0xFF000000 or leg.mapColor)
+    val fg = Color.White
+    Row(Modifier.heightIn(min = 26.dp).clip(RoundedCornerShape(8.dp)).background(bg).padding(horizontal = 8.dp, vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
         Icon(vehicleIcon(leg.vehicle), null, tint = fg, modifier = Modifier.size(12.dp))
         Text(leg.line.ifEmpty { leg.mode.lowercase().replaceFirstChar { it.uppercase() } }, fontSize = KType.caption, fontWeight = FontWeight.Bold, color = fg, maxLines = 1)

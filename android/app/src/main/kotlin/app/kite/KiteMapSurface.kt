@@ -36,6 +36,7 @@ class KiteMapSurface(
     init {
         addView(classic, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         classic.onCreate(null)
+        classic.setMaximumFps(45)
         kite.attach(classic)
         lifecycle.addObserver(observer)
     }
@@ -54,7 +55,7 @@ class KiteMapSurface(
         }
         val showStandard = ready && standard != null
         val rendererChanged = useStandard != showStandard
-        if (rendererChanged) classic.setMaximumFps(if (showStandard) 12 else 60)
+        if (rendererChanged) classic.setMaximumFps(if (showStandard) 4 else 45)
         useStandard = showStandard
         standard?.alpha = if (showStandard) 1f else 0f
         classic.alpha = if (showStandard) 0f else 1f

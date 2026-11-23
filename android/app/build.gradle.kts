@@ -8,6 +8,7 @@ plugins {
 // The same version numbers as the iPhone app. CI can pass -PappVersionName=0.7.6.
 val kiteVersion = (project.findProperty("appVersionName") as String?) ?: "0.7.17"
 // 0.7.6 -> 706: always goes up with the version, so F-Droid sees every release as an update.
+val kiteAbi = providers.gradleProperty("kiteAbi").orNull
 val kiteCode = kiteVersion.split(".").map { it.toIntOrNull() ?: 0 }.let { (it.getOrElse(0) { 0 } * 10000) + (it.getOrElse(1) { 0 } * 100) + it.getOrElse(2) { 0 } }
 
 android {
@@ -21,6 +22,7 @@ android {
         versionCode = kiteCode
         versionName = kiteVersion
         vectorDrawables { useSupportLibrary = true }
+        if (kiteAbi != null) ndk { abiFilters.add(kiteAbi) }
     }
 
     // Release signing comes from CI (KITE_KEYSTORE_PATH / KITE_KEYSTORE_PASSWORD). Without it the

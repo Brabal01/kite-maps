@@ -30,6 +30,15 @@ data class TransitLeg(
     var walkSteps: List<Maneuver> = emptyList(),
 ) {
     val vehicle: Vehicle get() = Vehicle.of(mode)
+    val mapColor: Long get() = when (vehicle) {
+        Vehicle.WALK -> 0x64748B
+        Vehicle.BUS -> 0x1B58B8
+        Vehicle.TRAM -> 0xB52B45
+        Vehicle.METRO -> 0x107564
+        Vehicle.TRAIN -> 0x6543A5
+        Vehicle.FERRY -> 0x0B697F
+        Vehicle.OTHER -> 0x576880
+    }
 
     enum class Vehicle {
         WALK, BUS, METRO, TRAM, TRAIN, FERRY, OTHER;
