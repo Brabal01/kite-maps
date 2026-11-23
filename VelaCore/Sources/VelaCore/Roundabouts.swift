@@ -85,7 +85,12 @@ public enum Roundabouts {
                 changed = true
             }
             // The one number every view reads: banner, diagram, voice and Live Activity.
-            let final = resolved.exit
+            // An exit number is only shown when it is a confirmed answer (the map counted it, or it
+            // agrees with a router). A lone, unconfirmed router number is a guess: saying "1st exit"
+            // when the route really takes another makes the driver all the more misled, so V36 shows
+            // the direction ("toward Vejdovského") instead of inventing certainty. The router's guess
+            // is still kept as evidence (routerExit) for the diagnostics and the late-map correction.
+            let final = resolved.isCertain ? resolved.exit : resolved.exit.flatMap { _ in nil }
             if r.maneuvers[i].exit != final {
                 r.maneuvers[i].exit = final
                 changed = true
