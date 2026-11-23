@@ -191,7 +191,12 @@ struct VelaMapView: UIViewRepresentable {
                 inspection.layers.removeValue(forKey: id)
                 return
             }
-            let features = (shape as? MLNShapeCollectionFeature)?.shapes ?? shape.map { [$0] }
+            let features: [MLNShape]?
+            if let collection = shape as? MLNShapeCollectionFeature {
+                features = collection.shapes.map { $0 as MLNShape }
+            } else {
+                features = shape.map { [$0] }
+            }
             let points = features?.reduce(0) { total, feature in
                 if let line = feature as? MLNPolylineFeature { return total + Int(line.pointCount) }
                 return total + (feature is MLNPointFeature ? 1 : 0)
@@ -1301,7 +1306,7 @@ struct VelaMapView: UIViewRepresentable {
             let driven = model.nav != nil && from > 1 ? Geo.slice(r.polyline, from: 0, to: from, cumulative: cum) : []
             publish(routeShape(driven), to: "vela-route-done")
             let inspectTraffic = model.layerInspectionEnabled && layerMuted("vela-route-traffic")
-            let spans: [MLNPolylineFeature] = r.mode == .drive && (traffic || inspectTraffic) ? spanData.flatMap { span in
+            let spans: [MLNPolylineFeature] = r.mode == .drive && (traffic || inspectTraffic) ? spanData.flatMap { span -> [MLNPolylineFeature] in
                 let a = max(span.startMeters, from), b = min(span.startMeters + span.lengthMeters, total)
                 guard b > a else { return [] }
                 let piece = Geo.slice(r.polyline, from: a, to: b, cumulative: cum)
