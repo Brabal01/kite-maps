@@ -7,6 +7,12 @@ on:
   pull_request:
     branches: [iphone-custom-v29-redesign, iphone-custom-v30-advanced-navigation, iphone-custom-v31-navigation-transit, iphone-custom-v32-refinement, iphone-custom-v33-reliability-ux, iphone-custom-v34-real-world-reliability, iphone-custom-v35-traffic-map-transit, iphone-custom-v36-traffic-roundabout-accuracy]
 
+# A newer push to the same pull request replaces the run still going, so two
+# simulator jobs never fight over one device halfway through a test.
+concurrency:
+  group: simulator-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
