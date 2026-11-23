@@ -665,22 +665,22 @@ struct VelaMapView: UIViewRepresentable {
                 publishedRailFilter = nil
             }
             let showHeat = s.wazeOn && s.wazeHeatmap && s.wazePolice
-            // Live traffic must work while browsing a route-free map, not only on a planned route.
-            let browseTraffic = model.nav == nil && !model.justDrive
-            let requested = trafficOverlaysAllowed
-            let provider: TrafficOverlayState.Provider = map is MLNMapView
-                ? (s.noGoogle ? .none : .google) : .apple
-            let state = TrafficOverlayState(
-                kind: .map, provider: provider, renderer: map is MLNMapView ? "MapLibre" : "MapKit",
-                requested: requested, rendererReady: browseTraffic || model.nav?.route.mode == .drive,
-                dataLoaded: requested && provider != .none, receivedAt: nil,
-                dataAge: nil, legend: nil,
-                reason: s.noGoogle && map is MLNMapView
-                    ? "MapLibre's overlay is Google tiles; no-Google mode has no traffic source."
-                    : (browseTraffic ? nil : "shown on the active route"),
-                lastError: nil)
-            model.mapLayerInspection.trafficStatus = "\(provider.rawValue): \(state.status.rawValue)"
             if model.layerInspectionEnabled {
+                // Live traffic must work while browsing a route-free map, not only on a planned route.
+                let browseTraffic = model.nav == nil && !model.justDrive
+                let requested = trafficOverlaysAllowed
+                let provider: TrafficOverlayState.Provider = map is MLNMapView
+                    ? (s.noGoogle ? .none : .google) : .apple
+                let state = TrafficOverlayState(
+                    kind: .map, provider: provider, renderer: map is MLNMapView ? "MapLibre" : "MapKit",
+                    requested: requested, rendererReady: browseTraffic || model.nav?.route.mode == .drive,
+                    dataLoaded: requested && provider != .none, receivedAt: nil,
+                    dataAge: nil, legend: nil,
+                    reason: s.noGoogle && map is MLNMapView
+                        ? "MapLibre's overlay is Google tiles; no-Google mode has no traffic source."
+                        : (browseTraffic ? nil : "shown on the active route"),
+                    lastError: nil)
+                model.mapLayerInspection.trafficStatus = "\(provider.rawValue): \(state.status.rawValue)"
                 let renderer = map is MLNMapView ? "MapLibre" : "MapKit"
                 if model.mapLayerInspection.renderer != renderer {
                     model.mapLayerInspection.layers.removeAll()
