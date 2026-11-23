@@ -5,7 +5,7 @@ on:
   push:
     branches: [iphone-custom-v30-advanced-navigation, iphone-custom-v31-navigation-transit, iphone-custom-v32-refinement, iphone-custom-v33-reliability-ux]
   pull_request:
-    branches: [iphone-custom-v29-redesign, iphone-custom-v30-advanced-navigation, iphone-custom-v31-navigation-transit, iphone-custom-v32-refinement, iphone-custom-v33-reliability-ux, iphone-custom-v34-real-world-reliability]
+    branches: [iphone-custom-v29-redesign, iphone-custom-v30-advanced-navigation, iphone-custom-v31-navigation-transit, iphone-custom-v32-refinement, iphone-custom-v33-reliability-ux, iphone-custom-v34-real-world-reliability, iphone-custom-v35-traffic-map-transit, iphone-custom-v36-traffic-roundabout-accuracy]
 
 permissions:
   contents: read
