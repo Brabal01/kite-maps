@@ -21,20 +21,23 @@ object MapCam {
     private fun density() = KiteApp.app.resources.displayMetrics.density
 
     /** [padding] is left, top, right, bottom in dp. */
-    fun animate(m: MapLibreMap, pos: CameraPosition, padding: IntArray? = null, ms: Int = 500) {
+    fun animate(m: MapLibreMap, pos: CameraPosition, padding: IntArray? = null, ms: Int = 500,
+                native: ((CameraPosition, Int) -> Boolean)? = null) {
         val p = if (padding != null) {
             val d = density()
             CameraPosition.Builder(pos).padding(padding[0] * d.toDouble(), padding[1] * d.toDouble(), padding[2] * d.toDouble(), padding[3] * d.toDouble()).build()
         } else CameraPosition.Builder(pos).padding(0.0, 0.0, 0.0, 0.0).build()
+        if (native?.invoke(p, ms) == true) return
         if (ms <= 0) m.moveCamera(CameraUpdateFactory.newCameraPosition(p))
         else m.animateCamera(CameraUpdateFactory.newCameraPosition(p), ms)
     }
 
-    fun fit(m: MapLibreMap, b: LatLngBounds, padding: IntArray, ms: Int = 600) {
+    fun fit(m: MapLibreMap, b: LatLngBounds, padding: IntArray, ms: Int = 600,
+            native: ((CameraPosition, Int) -> Boolean)? = null) {
         val d = density()
         val px = padding.map { (it * d).toInt() }
         val pos = m.getCameraForLatLngBounds(b, intArrayOf(px[0], px[1], px[2], px[3]), 0.0, 0.0) ?: return
         val z = min(pos.zoom, 17.5)
-        m.animateCamera(CameraUpdateFactory.newCameraPosition(CameraPosition.Builder(pos).zoom(z).tilt(0.0).bearing(0.0).padding(0.0, 0.0, 0.0, 0.0).build()), ms)
+        animate(m, CameraPosition.Builder(pos).zoom(z).tilt(0.0).bearing(0.0).build(), ms = ms, native = native)
     }
 }

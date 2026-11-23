@@ -244,6 +244,8 @@ class AppModel {
 
     var map: MapLibreMap? = null
         set(v) { field = v; glide.map = v }
+    var nativeCamera: ((CameraPosition, Int) -> Boolean)? = null
+    var transitLive by mutableStateOf<Map<String, TransitLive>>(emptyMap())
     /** The map view's size in dp, for framing. */
     var mapWidthDp = 400f
     var mapHeightDp = 800f
@@ -535,7 +537,7 @@ class AppModel {
         browseLook = MapLook.NORTH
         val zoom = max(MapCam.zoomFor(900.0, p.location.lat, mapWidthDp), min(m.cameraPosition.zoom, 18.0).let { if (it > 16) it else 0.0 })
         MapCam.animate(m, CameraPosition.Builder().target(p.location.ml()).zoom(zoom).tilt(0.0).bearing(0.0).build(),
-            padding = intArrayOf(0, 120, 0, (mapHeightDp * 0.45f).toInt()), ms = 600)
+            padding = intArrayOf(0, 120, 0, (mapHeightDp * 0.45f).toInt()), ms = 320, native = nativeCamera)
     }
 
     fun closePlace() {
@@ -1441,7 +1443,7 @@ class AppModel {
         browseFollowing = false
         MapCam.animate(m, CameraPosition.Builder().target(fix.coord.ml())
             .zoom(MapCam.zoomFor(900.0, fix.lat, mapWidthDp)).tilt(0.0).bearing(0.0).build(),
-            padding = intArrayOf(0, 100, 0, (mapHeightDp * 0.36).toInt()), ms = 350)
+            padding = intArrayOf(0, 100, 0, (mapHeightDp * 0.36).toInt()), ms = 350, native = nativeCamera)
     }
 
     fun endNavigation() {
@@ -1720,22 +1722,26 @@ class AppModel {
         MapCam.animate(m, CameraPosition.Builder().target(p.ml()).zoom(15.0).build(), ms = 500)
     }
 
+    fun framePathSection(route: Route, section: Valhalla.PathSection) {
+        if (directions?.route?.id != route.id) return
+        frame(Geo.slice(route.polyline, section.from, section.to))
+    }
+
     fun frame(points: List<LatLng>, bottomFraction: Float = 0.45f, top: Int = 130) {
         val m = map ?: return
-        val unique = points.distinct()
-        if (unique.isEmpty()) return
+        val first = points.firstOrNull() ?: return
         // Showing a place or a route: stop following, or the next fix would pull the map away.
         browseFollowing = false
         if (nav == null) browseLook = MapLook.NORTH
-        if (unique.size == 1) {
-            MapCam.animate(m, CameraPosition.Builder().target(unique[0].ml()).zoom(MapCam.zoomFor(1200.0, unique[0].lat, mapWidthDp))
-                .tilt(0.0).bearing(0.0).build(), ms = 300)
+        if (points.all { it == first }) {
+            MapCam.animate(m, CameraPosition.Builder().target(first.ml()).zoom(MapCam.zoomFor(1200.0, first.lat, mapWidthDp))
+                .tilt(0.0).bearing(0.0).build(), ms = 300, native = nativeCamera)
             return
         }
-        val b = LatLngBounds.Builder().apply { unique.forEach { include(it.ml()) } }.build()
+        val b = LatLngBounds.Builder().apply { points.forEach { include(it.ml()) } }.build()
         val topInset = top.coerceAtMost((mapHeightDp * 0.35f).toInt())
         val bottomInset = (mapHeightDp * bottomFraction + 20).toInt().coerceAtMost((mapHeightDp * 0.55f).toInt())
-        MapCam.fit(m, b, intArrayOf(40, topInset, 40, bottomInset), ms = 600)
+        MapCam.fit(m, b, intArrayOf(40, topInset, 40, bottomInset), ms = 360, native = nativeCamera)
     }
 
     companion object {

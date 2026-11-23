@@ -3,6 +3,8 @@ package app.kite.core
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class TransitRideTests {
@@ -40,14 +42,50 @@ class TransitRideTests {
     @Test fun projectsSignalsButNotDistantSideRoads() {
         val line = listOf(LatLng(50.0, 14.0), LatLng(50.02, 14.0))
         val raw = """{"elements":[
-          {"type":"node","id":1,"lat":50.004,"lon":14.0002,"tags":{"highway":"traffic_signals"}},
-          {"type":"node","id":2,"lat":50.0041,"lon":14.0002,"tags":{"highway":"traffic_signals"}},
-          {"type":"node","id":3,"lat":50.007,"lon":14.001,"tags":{"highway":"stop"}},
+          {"type":"node","id":1,"lat":50.004,"lon":14.00003,"tags":{"highway":"traffic_signals"}},
+          {"type":"node","id":2,"lat":50.009,"lon":14.0002,"tags":{"highway":"traffic_signals"}},
+          {"type":"node","id":3,"lat":50.007,"lon":14.0001,"tags":{"highway":"stop"}},
           {"type":"node","id":4,"lat":50.011,"lon":14,"tags":{"railway":"level_crossing"}},
           {"type":"node","id":5,"lat":50.015,"lon":14.00016,"tags":{"railway":"level_crossing"}}
           ]}"""
         val projected = Overpass.projectControls(Overpass.parseRoadControls(raw.toByteArray()), line)
         assertEquals(listOf(Overpass.ControlKind.SIGNAL, Overpass.ControlKind.RAIL), projected.map { it.kind })
-        assertEquals(LatLng(50.004, 14.0002), projected.first().at)
+        assertEquals(LatLng(50.004, 14.0), projected.first().at)
     }
+
+    @Test fun liveDetailAlignsWithTheSelectedStopsAndLabelsEstimatedPosition() {
+        val now = checkNotNull(Transitous.date("2026-11-23T12:05:00Z"))
+        val data = """{"legs":[{"mode":"BUS","tripId":"ride-1","realTime":true,
+          "from":{"stopId":"a","name":"Board","lat":50.0,"lon":14.0,"departure":"2026-11-23T12:02:00Z",
+            "scheduledDeparture":"2026-11-23T12:00:00Z","departureTimestampReason":"OBSERVED"},
+          "to":{"stopId":"b","name":"Exit","lat":50.01,"lon":14.0,"arrival":"2026-11-23T12:08:00Z",
+            "scheduledArrival":"2026-11-23T12:05:00Z","arrivalTimestampReason":"PREDICTED"},
+          "alerts":[{"headerText":"Temporary route","descriptionText":"Use the replacement stop."}]}]}"""
+        val plan = Transitous.parse("""{"itineraries":[$data]}""".toByteArray()).single().rides.single()
+        val live = assertNotNull(Transitous.parseLive(data.toByteArray(), plan, now))
+        assertEquals(2, live.board?.departureDelay)
+        assertEquals(3, live.exit?.arrivalDelay)
+        assertEquals("Temporary route", live.notices.single().title)
+        assertEquals(50.005, assertNotNull(live.position).lat, 0.00001)
+        assertFalse(live.gps)
+        val scheduled = data.replace("OBSERVED", "NO_RT_DATA").replace("PREDICTED", "NO_RT_DATA")
+        assertNull(Transitous.parseLive(scheduled.toByteArray(), plan, now)?.position)
+        val cancelled = data.replace(""""mode":"BUS"""", """"mode":"BUS","cancelled":true""")
+        val disrupted = assertNotNull(Transitous.parseLive(cancelled.toByteArray(), plan, now))
+        assertTrue(disrupted.cancelled)
+        assertNull(disrupted.position)
+    }
+
+    @Test fun vehicleFeedMatchesExactRideAndRejectsStalePositions() {
+        val now = checkNotNull(Transitous.date("2026-11-23T12:01:00Z"))
+        val data = """{"data":[{"attributes":{"latitude":42.35,"longitude":-71.06,
+            "updated_at":"2026-11-23T12:00:40Z","occupancy_status":"FEW_SEATS_AVAILABLE"},
+            "relationships":{"trip":{"data":{"type":"trip","id":"abc"}}}}]}""".toByteArray()
+        val vehicle = assertNotNull(Transitous.parseMbtaVehicle(data, "abc", now))
+        assertEquals(LatLng(42.35, -71.06), vehicle.at)
+        assertEquals("Few seats available", vehicle.occupancy)
+        assertNull(Transitous.parseMbtaVehicle(data, "other", now))
+        assertNull(Transitous.parseMbtaVehicle(data, "abc", now + 90_000))
+    }
+
 }

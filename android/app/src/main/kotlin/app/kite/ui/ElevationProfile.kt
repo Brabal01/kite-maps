@@ -1,6 +1,8 @@
 package app.kite.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Terrain
@@ -12,7 +14,9 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import app.kite.*
+import app.kite.core.Geo
 import app.kite.core.Route
+import app.kite.core.Valhalla
 import kotlin.math.roundToInt
 
 @Composable
@@ -61,3 +65,70 @@ fun RouteElevation(route: Route) {
     }
     Text("Terrain data from Mapzen · AWS Open Data", color = secondaryText, fontSize = KType.caption)
 }
+
+@Composable
+fun RoutePathSections(route: Route, model: AppModel) {
+    var expanded by remember(route.id) { mutableStateOf(false) }
+    var sections by remember(route.id) { mutableStateOf<List<Valhalla.PathSection>?>(null) }
+    var selected by remember(route.id) { mutableStateOf<Valhalla.PathSection?>(null) }
+    LaunchedEffect(route.id, expanded) {
+        if (expanded && sections == null) sections = Valhalla.pathSections(route)
+    }
+    IconRow(Icons.Filled.Terrain, "Surface & path type", trailing = if (expanded) "Hide" else "Show") {
+        expanded = !expanded
+    }
+    if (!expanded) return
+    val known = sections
+    if (known == null) {
+        CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+        return
+    }
+    if (known.isEmpty()) {
+        Text("Surface and path data unavailable.", color = secondaryText)
+        return
+    }
+    val total = remember(route.id) { Geo.length(route.polyline) }
+    val unknown = secondaryText.copy(alpha = 0.20f)
+    val natural = Vela.open
+    val paved = interfaceAccentText
+    val rough = androidx.compose.ui.graphics.Color(0xFFB36A30)
+    fun tint(surface: String?) = when (surface) {
+        "paved_smooth", "paved", "paved_rough" -> paved
+        "gravel", "compacted", "dirt" -> rough
+        "path", "grass" -> natural
+        else -> unknown
+    }
+    Canvas(Modifier.fillMaxWidth().height(9.dp)) {
+        drawRect(unknown)
+        for (section in known) {
+            val start = (section.from / total).toFloat() * size.width
+            val width = ((section.to - section.from) / total).toFloat() * size.width
+            drawRect(tint(section.surface),
+                topLeft = androidx.compose.ui.geometry.Offset(start, 0f),
+                size = androidx.compose.ui.geometry.Size(width, size.height))
+        }
+    }
+    Column(Modifier.heightIn(max = 240.dp).verticalScroll(rememberScrollState())) {
+        for (section in known) {
+            val surface = section.surface?.let {
+                when (it) {
+                    "paved_smooth" -> "Smooth pavement"
+                    "paved_rough" -> "Rough pavement"
+                    "path" -> "Natural surface"
+                    else -> pathLabel(it)
+                }
+            } ?: "Surface unknown"
+            val type = section.type?.let(::pathLabel) ?: "Path type unknown"
+            Column(Modifier.fillMaxWidth().tap {
+                selected = section
+                model.framePathSection(route, section)
+            }.padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text("$surface · $type", color = if (selected == section) paved else primaryText, fontSize = KType.subheadline)
+                Text("${Fmt.distance(section.from)} – ${Fmt.distance(section.to)}", color = secondaryText, fontSize = KType.caption)
+            }
+        }
+    }
+    Text("Path data from OpenStreetMap via Valhalla", color = secondaryText, fontSize = KType.caption)
+}
+
+private fun pathLabel(value: String): String = value.replace('_', ' ').replaceFirstChar(Char::uppercaseChar)

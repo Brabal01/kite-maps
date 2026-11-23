@@ -51,4 +51,20 @@ class OutdoorDataTests {
         assertEquals("tram1", leg.tripId)
         assertEquals(listOf("A", "B", "C"), leg.calls.map { it.stopId })
     }
+
+    @Test fun surfaceSectionsFollowTheSelectedRoute() {
+        val shape = "??o}@?o}@?"
+        val response = """{"shape":"$shape","edges":[
+          {"surface":"paved","use":"footway","begin_shape_index":0,"end_shape_index":1},
+          {"surface":"gravel","use":"cycleway","begin_shape_index":1,"end_shape_index":2},
+          {"surface":"dirt","use":"track","begin_shape_index":2,"end_shape_index":9}]}""".toByteArray()
+        val route = listOf(LatLng(0.0, 0.0), LatLng(0.002, 0.0))
+        val sections = Valhalla.parsePathSections(response, route)
+        assertEquals(listOf("paved", "gravel"), sections.map { it.surface })
+        assertEquals(listOf("footway", "cycleway"), sections.map { it.type })
+        assertEquals(sections[0].to, sections[1].from, 0.001)
+        assertEquals(Geo.length(route), sections.last().to, 0.001)
+        assertTrue(Valhalla.parsePathSections(response, route.map { it.copy(lng = 0.0004) }).isEmpty())
+    }
+
 }

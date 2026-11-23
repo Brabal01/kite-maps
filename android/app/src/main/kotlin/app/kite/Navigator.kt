@@ -633,9 +633,13 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
             // OpenStreetMap never answered: Waze's cameras, read in the meantime, still show.
             val found = result ?: run { if (route.id == id) useKnown(); return@launch }
             if (route.id != id) return@launch
+            val (cameras, postedLimits) = withContext(Dispatchers.Default) {
+                CameraAlerts.project(found.cameras, line) to Overpass.speedLimits(found.ways, line)
+            }
+            if (route.id != id || stopped) return@launch
             fullRoadData = true
-            routeCameras = onOurSide(CameraAlerts.project(found.cameras, line))
-            if (!matchedLimits) setLimits(Overpass.speedLimits(found.ways, line))
+            routeCameras = onOurSide(cameras)
+            if (!matchedLimits) setLimits(postedLimits)
             zones = CameraAlerts.merge(found.zones, CameraAlerts.averageZones(routeCameras))
             allRoadControls = found.controls
             publishRoadControls()

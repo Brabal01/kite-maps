@@ -1,12 +1,28 @@
 package app.kite.core
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.util.UUID
 import kotlin.math.pow
 import kotlin.math.roundToInt
 
-data class TransitCall(val stopId: String?, val name: String, val at: LatLng, val arrival: Long?, val departure: Long?, val platform: String? = null)
+data class TransitCall(
+    val stopId: String?, val name: String, val at: LatLng, val arrival: Long?, val departure: Long?,
+    val platform: String? = null, val departureDelay: Int? = null, val arrivalDelay: Int? = null,
+    val cancelled: Boolean = false,
+)
+
+data class TransitNotice(val title: String, val message: String, val url: String?)
+
+data class TransitLive(
+    val board: TransitCall?, val exit: TransitCall?, val cancelled: Boolean,
+    val notices: List<TransitNotice>, val position: LatLng? = null, val gps: Boolean = false,
+    val occupancy: String? = null,
+)
 
 /** One part of a transit trip: a walk, or a ride on one line between two stops. Times are epoch millis. */
 data class TransitLeg(
@@ -28,6 +44,8 @@ data class TransitLeg(
     var calls: List<TransitCall> = emptyList(),
     var tripId: String? = null,
     var walkSteps: List<Maneuver> = emptyList(),
+    var notices: List<TransitNotice> = emptyList(),
+    var cancelled: Boolean = false,
 ) {
     val vehicle: Vehicle get() = Vehicle.of(mode)
     val mapColor: Long get() = when (vehicle) {
@@ -91,6 +109,91 @@ object Transitous {
         if (r.code != 200) throw KiteError.http(r.code)
         return parse(r.body)
     }
+
+    /** Refreshes the same train/bus, identified by its service-day trip ID, not another departure on the line. */
+    suspend fun live(leg: TransitLeg): TransitLive? = coroutineScope {
+        val id = leg.tripId ?: return@coroutineScope null
+        val gps = async {
+            val trip = mbtaTripId(id) ?: return@async null
+            val response = Http.getOrNull("https://api-v3.mbta.com/vehicles?filter%5Btrip%5D=${urlEnc(trip)}", headers, client)
+            response?.takeIf { it.ok }?.let { parseMbtaVehicle(it.body, trip, System.currentTimeMillis()) }
+        }
+        val response = Http.getOrNull("$base/api/v6/trip?tripId=${urlEnc(id)}&withScheduledSkippedStops=true", headers, client)
+        val data = response?.takeIf { it.ok }?.body
+        val status = data?.let { withContext(Dispatchers.Default) { parseLive(it, leg, System.currentTimeMillis()) } }
+        val vehicle = gps.await()
+        if (vehicle == null) return@coroutineScope status
+        if (status?.cancelled == true) return@coroutineScope status
+        (status ?: TransitLive(null, null, false, leg.notices)).copy(
+            position = vehicle.at, gps = true, occupancy = vehicle.occupancy
+        )
+    }
+
+    internal fun parseLive(data: ByteArray, selected: TransitLeg, now: Long): TransitLive? {
+        val raw = Json.obj(data)?.get("legs").asMaps()?.firstOrNull { it["tripId"] == selected.tripId } ?: return null
+        val current = leg(raw)
+        val first = selected.calls.firstOrNull()?.stopId
+        val last = selected.calls.lastOrNull()?.stopId
+        // Some loops visit the same stop twice. Match the events nearest the originally selected times.
+        fun match(id: String?, time: Long?, event: (TransitCall) -> Long?): TransitCall? =
+            id?.let { stop -> current.calls.filter { it.stopId == stop }.minByOrNull {
+                kotlin.math.abs((event(it) ?: 0L) - (time ?: 0L))
+            } }
+        val board = match(first, selected.depart, TransitCall::departure)
+        val exit = match(last, selected.arrive, TransitCall::arrival)
+        val cancelled = current.cancelled || board?.cancelled == true || exit?.cancelled == true
+        val position = if (raw["realTime"] == true && !cancelled) estimateVehicle(current, now) else null
+        return TransitLive(board, exit, cancelled, current.notices, position)
+    }
+
+    private fun estimateVehicle(leg: TransitLeg, now: Long): LatLng? {
+        if (leg.path.size < 2) return null
+        val stop = leg.calls.firstOrNull { call ->
+            !call.cancelled && call.arrival != null && call.departure != null && now in call.arrival..call.departure &&
+                (call.arrivalDelay != null || call.departureDelay != null)
+        }
+        if (stop != null) return stop.at
+        val (a, b) = leg.calls.filterNot { it.cancelled }.zipWithNext().firstOrNull { (a, b) ->
+            a.departure != null && b.arrival != null && b.arrival > a.departure && now in a.departure..b.arrival &&
+                (a.departureDelay != null || b.arrivalDelay != null)
+        } ?: return null
+        val fromTime = a.departure ?: return null
+        val toTime = b.arrival ?: return null
+        val distances = Geo.cumulative(leg.path)
+        val from = Geo.project(a.at, leg.path, distances)
+        val to = Geo.project(b.at, leg.path, distances)
+        if (from.offset > 150 || to.offset > 150 || to.along < from.along) return null
+        val fraction = (now - fromTime).toDouble() / (toTime - fromTime)
+        return Geo.point(leg.path, from.along + fraction * (to.along - from.along), distances)
+    }
+
+    internal data class VehicleReport(val at: LatLng, val occupancy: String?)
+
+    // Transitous prefixes GTFS trip IDs with the service date, time and feed ID.
+    private fun mbtaTripId(id: String): String? =
+        Regex("""^\d{8}_\d{2,3}:\d{2}_us-ma-MBTA_(.+)$""").matchEntire(id)?.groupValues?.get(1)
+
+    internal fun parseMbtaVehicle(data: ByteArray, tripId: String, now: Long): VehicleReport? =
+        Json.obj(data)?.get("data").asMaps().orEmpty().firstNotNullOfOrNull { vehicle ->
+            val trip = vehicle["relationships"].asMap()?.get("trip").asMap()?.get("data").asMap()
+            if (trip?.get("id") != tripId) return@firstNotNullOfOrNull null
+            val report = vehicle["attributes"].asMap() ?: return@firstNotNullOfOrNull null
+            val updated = date(report["updated_at"]) ?: return@firstNotNullOfOrNull null
+            if (now - updated !in -30_000L..90_000L) return@firstNotNullOfOrNull null
+            val lat = report["latitude"].num()?.takeIf { it in -90.0..90.0 } ?: return@firstNotNullOfOrNull null
+            val lng = report["longitude"].num()?.takeIf { it in -180.0..180.0 } ?: return@firstNotNullOfOrNull null
+            val occupancy = when (report["occupancy_status"]) {
+                "EMPTY" -> "Empty"
+                "MANY_SEATS_AVAILABLE" -> "Many seats available"
+                "FEW_SEATS_AVAILABLE" -> "Few seats available"
+                "STANDING_ROOM_ONLY" -> "Standing room only"
+                "CRUSHED_STANDING_ROOM_ONLY" -> "Very crowded"
+                "FULL" -> "Full"
+                "NOT_ACCEPTING_PASSENGERS" -> "Not accepting passengers"
+                else -> null
+            }
+            VehicleReport(LatLng(lat, lng), occupancy)
+        }
 
     data class Departure(
         val line: String, val mode: String, val color: Long?, val textColor: Long?, val headsign: String,
@@ -239,14 +342,38 @@ object Transitous {
         val intermediate = l["intermediateStops"].asMaps().orEmpty()
         out.stops = intermediate.size + 1
         out.tripId = l["tripId"] as? String
-        out.calls = (listOf(from) + intermediate + listOf(to)).mapNotNull { stop ->
+        out.cancelled = l["cancelled"] == true
+        val stops = listOf(from) + intermediate + listOf(to)
+        val realTime = l["realTime"] == true
+        out.calls = stops.mapNotNull { stop ->
             val at = point(stop) ?: return@mapNotNull null
-            TransitCall(stop["stopId"] as? String, (stop["name"] as? String).orEmpty(), at,
-                date(stop["arrival"]), date(stop["departure"]),
-                (stop["track"] ?: stop["scheduledTrack"]) as? String)
+            val arrival = date(stop["arrival"])
+            val departure = date(stop["departure"])
+            TransitCall(stop["stopId"] as? String, (stop["name"] as? String).orEmpty(), at, arrival, departure,
+                (stop["track"] ?: stop["scheduledTrack"]) as? String,
+                delayMinutes(departure, stop["scheduledDeparture"], realTime, stop["departureTimestampReason"]),
+                delayMinutes(arrival, stop["scheduledArrival"], realTime, stop["arrivalTimestampReason"]),
+                stop["cancelled"] == true)
         }
-        if (l["realTime"] == true && start != null) date(l["scheduledStartTime"])?.let { out.delayMinutes = ((start - it) / 60_000.0).roundToInt() }
+        out.delayMinutes = out.calls.firstOrNull()?.departureDelay
+            ?: delayMinutes(start, l["scheduledStartTime"], realTime, from["departureTimestampReason"])
+        out.notices = notices(l) + stops.flatMap(::notices)
+        out.notices = out.notices.distinct()
         return out
+    }
+
+    private fun delayMinutes(actual: Long?, planned: Any?, live: Boolean, reason: Any?): Int? {
+        if (!live || actual == null || reason == "NO_RT_DATA" || reason == "INCONSISTENT_RT") return null
+        val scheduled = date(planned) ?: return null
+        return ((actual - scheduled) / 60_000.0).roundToInt()
+    }
+
+    private fun notices(row: Map<String, Any?>): List<TransitNotice> = row["alerts"].asMaps().orEmpty().mapNotNull { item ->
+        val title = (item["headerText"] as? String).orEmpty().trim()
+        val message = (item["descriptionText"] as? String).orEmpty().trim()
+        if (title.isBlank() && message.isBlank()) return@mapNotNull null
+        val url = (item["url"] as? String)?.takeIf { it.startsWith("https://") || it.startsWith("http://") }
+        TransitNotice(title, message, url)
     }
 
     private fun walkSteps(rows: List<Map<String, Any?>>, line: List<LatLng>): List<Maneuver> {

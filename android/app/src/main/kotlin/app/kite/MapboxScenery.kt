@@ -34,6 +34,8 @@ import com.mapbox.maps.extension.style.terrain.generated.Terrain
 import com.mapbox.maps.extension.style.terrain.generated.removeTerrain
 import com.mapbox.maps.extension.style.terrain.generated.setTerrain
 import com.mapbox.maps.plugin.animation.camera
+import com.mapbox.maps.plugin.animation.easeTo
+import com.mapbox.maps.plugin.animation.MapAnimationOptions.Companion.mapAnimationOptions
 import com.mapbox.maps.plugin.attribution.AttributionDialogManagerImpl
 import com.mapbox.maps.plugin.attribution.attribution
 import com.mapbox.maps.plugin.gestures.addOnMapClickListener
@@ -81,6 +83,8 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
     private var watchdog: Job? = null
     private var styleRequest = 0
     private var submittedCamera: CameraPosition? = null
+    private var cameraEase: com.mapbox.common.Cancelable? = null
+    private var cameraEaseSync: Job? = null
     private var lastLampCell: Pair<Int, Int>? = null
     private var errorSubscription: com.mapbox.common.Cancelable? = null
     private var idleSubscription: com.mapbox.common.Cancelable? = null
@@ -151,7 +155,7 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
         MapboxOptions.accessToken = token
         val mapView = MapView(context, MapInitOptions(context, textureView = true, styleUri = null))
         view = mapView
-        mapView.setMaximumFps(45)
+        mapView.setMaximumFps(60)
         attributionDialog = AttributionDialogManagerImpl(context)
         val map = mapView.mapboxMap
         map.setPrefetchZoomDelta(2)
@@ -227,6 +231,10 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
     fun touch(event: MotionEvent) {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                if (cameraEase != null) {
+                    cancelCameraEase()
+                    view?.let(::copyCameraToKite)
+                }
                 downX = event.x
                 downY = event.y
                 movingFromTouch = false
@@ -271,10 +279,12 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
     fun syncFromKite(camera: CameraPosition, synchronize: Boolean = false) {
         val mapView = view ?: return
         if (movingFromTouch && model.glide.mapTouched) return
-        if (synchronize) mapView.camera.cancelAllAnimators()
+        if (synchronize) {
+            cancelCameraEase()
+            mapView.camera.cancelAllAnimators()
+        } else if (cameraEase != null) return
         val map = mapView.mapboxMap
         val at = camera.target ?: return
-        val pitch = camera.tilt.coerceIn(0.0, 60.0)
         val insets = camera.padding ?: DoubleArray(4)
         val previous = submittedCamera
         if (previous != null && !synchronize) {
@@ -286,9 +296,38 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
         }
         movingFromTouch = false
         submittedCamera = camera
-        map.setCamera(CameraOptions.Builder().center(Point.fromLngLat(at.longitude, at.latitude))
-            .zoom(camera.zoom).pitch(pitch).bearing(camera.bearing)
-            .padding(EdgeInsets(insets[1], insets[0], insets[3], insets[2])).build())
+        cameraOptions(camera)?.let(map::setCamera)
+    }
+
+    private fun cameraOptions(camera: CameraPosition): CameraOptions? {
+        val at = camera.target ?: return null
+        val padding = camera.padding ?: DoubleArray(4)
+        return CameraOptions.Builder().center(Point.fromLngLat(at.longitude, at.latitude))
+            .zoom(camera.zoom).pitch(camera.tilt.coerceIn(0.0, 60.0)).bearing(camera.bearing)
+            .padding(EdgeInsets(padding[1], padding[0], padding[3], padding[2])).build()
+    }
+
+    fun animateCamera(position: CameraPosition, duration: Int): Boolean {
+        val mapView = view ?: return false
+        val target = cameraOptions(position) ?: return false
+        cancelCameraEase()
+        model.map?.cancelTransitions()
+        movingFromTouch = false
+        submittedCamera = position
+        cameraEase = mapView.mapboxMap.easeTo(target, mapAnimationOptions { duration(duration.toLong()) })
+        cameraEaseSync = model.scope.launch {
+            delay(duration + 32L)
+            cameraEase = null
+            if (view === mapView) copyCameraToKite(mapView)
+        }
+        return true
+    }
+
+    private fun cancelCameraEase() {
+        cameraEaseSync?.cancel()
+        cameraEaseSync = null
+        cameraEase?.cancel()
+        cameraEase = null
     }
 
     private fun copyCameraToKite(mapView: MapView) {
@@ -326,6 +365,7 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
     fun detach(mapView: MapView) {
         if (view !== mapView) return
         destroying = true
+        cancelCameraEase()
         attributionDialog?.onStop()
         attributionDialog = null
         idleSubscription?.cancel()
@@ -352,6 +392,7 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
 
     private fun load() {
         val v = view ?: return
+        cancelCameraEase()
         style = null
         lampJob?.cancel()
         lastLampCell = null
@@ -412,7 +453,7 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
             else st.addImage("puck", MapIcons.puck(look.dark))
         }
         val paletteChanged = previous?.palette != look.palette
-        if (themeChanged || paletteChanged || previous.satellite != look.satellite || previous.driving != look.driving) {
+        if (themeChanged || paletteChanged || previous.satellite != look.satellite) {
             val configs = hashMapOf(
                 "lightPreset" to Value.valueOf(if (look.dark && !look.satellite) "night" else "day"),
                 "showPointOfInterestLabels" to Value.valueOf(false),
@@ -426,6 +467,10 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
                 configs["colorTrunks"] = Value.valueOf(look.palette[MapColor.HIGHWAYS])
             }
             if (!look.satellite) st.setStyleImportConfigProperties("basemap", configs)
+        } else if (previous.driving != look.driving && !look.satellite) {
+            st.setStyleImportConfigProperty("basemap", "showHdRoads", Value.valueOf(look.driving))
+        }
+        if (themeChanged || previous.satellite != look.satellite || previous.driving != look.driving) {
             fun visible(id: String, on: Boolean) {
                 st.setStyleLayerProperty(id, "visibility", Value.valueOf(if (on) "visible" else "none"))
             }
@@ -531,6 +576,13 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
             .visibility(if (AppSettings.transitLines && model.nav == null) Visibility.VISIBLE else Visibility.NONE))
         st.addLayer(CircleLayer(KiteMap.RIDE_STOPS, KiteMap.RIDE_STOPS).slot("top").circleRadius(5.5)
             .circleColor(Expression.toColor(Expression.get("color"))).circleStrokeColor(Color.WHITE).circleStrokeWidth(2.0).circleEmissiveStrength(1.0))
+        val vehicles = KiteMap.TRANSIT_VEHICLES
+        st.addLayer(CircleLayer(vehicles, vehicles).slot("top").circleRadius(13.0)
+            .circleColor(Expression.toColor(Expression.get("color"))).circleStrokeColor(Color.WHITE)
+            .circleStrokeWidth(2.0).circleEmissiveStrength(1.0))
+        st.addLayer(SymbolLayer("$vehicles-label", vehicles).slot("top")
+            .textField(Expression.get("line")).textSize(11.0).textColor(Color.WHITE).textAllowOverlap(true)
+            .textEmissiveStrength(1.0))
         st.addLayer(line("kite-turn-arrow", "vela-turn-arrow", Color.WHITE, 4.0))
         st.addLayer(CircleLayer("kite-search-hit", "vela-results").slot("top").circleRadius(14.0)
             .circleColor("#164B9F").circleOpacity(0.12).circleEmissiveStrength(1.0)
@@ -714,11 +766,13 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
                         })
                     }
                 }
-                models to nearby.map { Feature.fromGeometry(Point.fromLngLat(it.pool.lng, it.pool.lat)) }
+                FeatureCollection.fromFeatures(models).toJson() to FeatureCollection.fromFeatures(
+                    nearby.map { Feature.fromGeometry(Point.fromLngLat(it.pool.lng, it.pool.lat)) }
+                ).toJson()
             }
             if (lastLampCell != cell || style !== st || !look.lamps) return@launch
-            st.getSourceAs<GeoJsonSource>(LAMPS)?.data(FeatureCollection.fromFeatures(features).toJson())
-            st.getSourceAs<GeoJsonSource>(LAMP_GLOWS)?.data(FeatureCollection.fromFeatures(pools).toJson())
+            st.getSourceAs<GeoJsonSource>(LAMPS)?.data(features)
+            st.getSourceAs<GeoJsonSource>(LAMP_GLOWS)?.data(pools)
         }
     }
 
@@ -792,6 +846,6 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
         private const val LAMP_POOL = "kite-lamp-pool"
         private val overlaySources = setOf(LOCATION, NavGlide.PUCK, "vela-route", "vela-route-done", "vela-route-alt",
             "vela-route-traffic", "vela-turn-arrow", "vela-turn-head", "vela-transit", "vela-results", "vela-selected",
-            "vela-road-name", "vela-mine", "vela-waze", "vela-waze-group", "vela-cameras", "vela-livecams", "vela-signals", "vela-waze-heat", "kite-google-places", "kite-measure", "vela-rail", KiteMap.TRANSIT_STOPS, KiteMap.RIDE_STOPS, StopSearch.PINS)
+            "vela-road-name", "vela-mine", "vela-waze", "vela-waze-group", "vela-cameras", "vela-livecams", "vela-signals", "vela-waze-heat", "kite-google-places", "kite-measure", "vela-rail", KiteMap.TRANSIT_STOPS, KiteMap.RIDE_STOPS, KiteMap.TRANSIT_VEHICLES, StopSearch.PINS)
     }
 }

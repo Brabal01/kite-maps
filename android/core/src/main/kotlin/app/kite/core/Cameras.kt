@@ -112,17 +112,15 @@ object Overpass {
         val projected = nodes.mapNotNull { node ->
             val hit = exact[node.at]?.let { Projection(it, 0.0) } ?: Geo.project(node.at, line, cum)
             val radius = when (node.kind) {
-                ControlKind.SIGNAL -> 32.0
-                ControlKind.STOP -> 16.0
-                ControlKind.RAIL -> 7.0
-                ControlKind.CROSSING -> 8.0
+                ControlKind.SIGNAL, ControlKind.STOP -> 4.0
+                ControlKind.RAIL, ControlKind.CROSSING -> 5.0
             }
             if (hit.offset > radius) return@mapNotNull null
             RoadCamera.bearings(node.direction)?.let { directions ->
                 val heading = Geo.bearing(Geo.point(line, hit.along - 5, cum), Geo.point(line, hit.along + 5, cum))
                 if (directions.none { Geo.diff(it, heading) <= 65 }) return@mapNotNull null
             }
-            RoadControl(node.kind, hit.along, node.at)
+            RoadControl(node.kind, hit.along, Geo.point(line, hit.along, cum))
         }
         return projected.groupBy { it.kind }.values.flatMap { group ->
             buildList<RoadControl> {

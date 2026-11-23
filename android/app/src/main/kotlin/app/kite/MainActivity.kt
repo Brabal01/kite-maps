@@ -21,6 +21,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.viewinterop.AndroidView
 import app.kite.ui.*
+import app.kite.core.Transitous
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -153,19 +157,49 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
         LocationService.last?.let(scenery::updatePosition)
     }
 
+    val journey = model.transitGuidance
+    val transitTrip = journey?.trip ?: model.directions?.takeIf { it.transit }?.pickedTrip
+    LaunchedEffect(transitTrip?.id, journey?.legIndex, journey?.phase) {
+        model.transitLive = emptyMap()
+        val trip = transitTrip ?: return@LaunchedEffect
+        if (journey?.phase == TransitGuidance.Phase.COMPLETE) return@LaunchedEffect
+        val firstLeg = journey?.legIndex ?: 0
+        val candidates = trip.legs.drop(firstLeg).filter { !it.isWalk }.distinctBy { it.tripId }
+        if (candidates.isEmpty()) return@LaunchedEffect
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                val now = System.currentTimeMillis()
+                val visibleRides = candidates.filter { leg ->
+                    val depart = leg.depart ?: return@filter false
+                    val arrive = leg.arrive ?: depart
+                    now in (depart - 45 * 60_000)..(arrive + 12 * 60_000)
+                }.take(2)
+                val updated = buildMap {
+                    for (leg in visibleRides) {
+                        val id = leg.tripId ?: continue
+                        Transitous.live(leg)?.let { put(id, it) }
+                    }
+                }
+                model.transitLive = updated
+                delay(35_000)
+            }
+        }
+    }
     val previewRoute = model.directions?.route
     LaunchedEffect(previewRoute?.id) { model.prepareRoadControls(previewRoute) }
     val sceneryRoute = model.nav?.route ?: previewRoute
     val scenerySection = ((model.nav?.progress?.alongMeters ?: 0.0) / 1800.0).toInt()
     LaunchedEffect(sceneryRoute?.id, scenerySection, standardReady, satellite, s.streetLamps) {
-        scenery.prepareRoute(sceneryRoute.takeIf { standardReady && !satellite }, scenerySection)
+        val route = sceneryRoute.takeIf { standardReady && !satellite }
+        if (route != null) kotlinx.coroutines.delay(1_200)
+        scenery.prepareRoute(route, scenerySection)
     }
     LaunchedEffect(model.nav) { model.nav?.let(kiteMap::seedRoadAhead) }
 
     // Redraw the map's layers whenever anything they show changes.
     LaunchedEffect(Unit) {
         snapshotFlow {
-            listOf(model.mapTick, model.results, model.selected?.id, model.directions, model.mapNavigator, model.mapNavigator?.following, model.transitGuidance?.legIndex, model.transitGuidance?.overviewing, model.stopSearch, model.measurement, model.nav?.routeWaze, model.mapNavigator?.roadControls, model.nav?.roadTraffic, model.openNowOnly, model.rating4Only,
+            listOf(model.mapTick, model.results, model.selected?.id, model.directions, model.mapNavigator, model.mapNavigator?.following, model.transitGuidance?.legIndex, model.transitGuidance?.overviewing, model.transitLive, model.stopSearch, model.measurement, model.nav?.routeWaze, model.mapNavigator?.roadControls, model.nav?.roadTraffic, model.openNowOnly, model.rating4Only,
                 s.traffic, s.satellite, s.terrain, s.transitLines, s.speedCameras, s.plateCameras, s.wazeOnMap, s.wazeHeatmap,
                 s.home, s.work, s.parking, s.saved, LocationService.authorized, model.tab,
                 s.welcomed, s.noGoogle, s.surveillanceCameras, s.wazeOn, s.wazeKinds, s.wazeMaxAge,

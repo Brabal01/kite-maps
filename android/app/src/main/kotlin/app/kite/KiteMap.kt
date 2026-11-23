@@ -56,6 +56,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         const val GOOGLE_UNREVIEWED = "kite-google-unreviewed"
         const val TRANSIT_STOPS = "kite-transit-stops"
         const val RIDE_STOPS = "kite-ride-stops"
+        const val TRANSIT_VEHICLES = "kite-transit-vehicles"
         private val classicHitSources = setOf("vela-route-alt", "vela-route-bubbles", "vela-mine", "vela-selected",
             "vela-results", "vela-waze", "vela-waze-group", "vela-cameras", "vela-livecams")
         private val STOCK_POI = listOf("poi_r1", "poi_r7", "poi_r20", "poi_transit", "airport")
@@ -110,6 +111,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         routeContext = ""
         lastRoadNameKey = ""
         transitStopsKey = ""
+        vehicleKey = ""
         layerOptions = null
         policeHeatKey = null
         lastResultsKey = ""; lastRouteKey = ""; lastMineKey = ""; lastCameraKey = ""
@@ -230,6 +232,9 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             if (view !== v) return@getMapAsync
             map = m
             model.map = m
+            model.nativeCamera = { camera, duration ->
+                scenery?.takeIf { it.ready }?.animateCamera(camera, duration) == true
+            }
             m.uiSettings.isCompassEnabled = false
             m.uiSettings.isLogoEnabled = false
             m.uiSettings.setAttributionMargins(24, 0, 0, 24)
@@ -316,7 +321,10 @@ class KiteMap(private val model: AppModel, private val context: Context) {
 
     fun detach(v: MapView) {
         if (view !== v) return
-        if (model.map === map) model.map = null
+        if (model.map === map) {
+            model.nativeCamera = null
+            model.map = null
+        }
         map = null
         view = null
         styleReady = false
@@ -385,6 +393,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         routeContext = ""
         lastRoadNameKey = ""
         transitStopsKey = ""
+        vehicleKey = ""
         layerOptions = null
         policeHeatKey = null
         lastResultsKey = ""; lastRouteKey = ""; lastMineKey = ""; lastPuckKey = ""; lastHeadKey = ""; lastNextRoadKey = ""; lastCameraKey = ""; lastSignalsKey = ""; lastWazeKey = ""; lastLiveKey = ""
@@ -712,6 +721,11 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         src(RIDE_STOPS)
         style.addLayer(CircleLayer(RIDE_STOPS, RIDE_STOPS).withProperties(
             circleRadius(5.5f), circleColor(toColor(get("color"))), circleStrokeColor(Color.WHITE), circleStrokeWidth(2f)))
+        src(TRANSIT_VEHICLES)
+        style.addLayer(CircleLayer(TRANSIT_VEHICLES, TRANSIT_VEHICLES).withProperties(
+            circleRadius(13f), circleColor(toColor(get("color"))), circleStrokeWidth(2f), circleStrokeColor(Color.WHITE)))
+        style.addLayer(SymbolLayer("$TRANSIT_VEHICLES-label", TRANSIT_VEHICLES).withProperties(
+            textField(get("line")), textFont(overlayFont), textSize(11f), textColor(Color.WHITE), textAllowOverlap(true)))
         src(TRANSIT_STOPS)
         style.addLayer(SymbolLayer(TRANSIT_STOPS, TRANSIT_STOPS).withProperties(
             iconImage(get("icon")), iconSize(0.86f), textField(get("name")), textFont(overlayFont),
@@ -963,7 +977,9 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         }
 
     private fun visible(style: Style, id: String, on: Boolean) {
-        style.getLayer(id)?.setProperties(visibility(if (on) Property.VISIBLE else Property.NONE))
+        val layer = style.getLayer(id) ?: return
+        val value = if (on) Property.VISIBLE else Property.NONE
+        if (layer.visibility.value != value) layer.setProperties(visibility(value))
     }
 
     private var renderPosted = false
@@ -1118,9 +1134,11 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             .filter { if (it.kind == RoadCamera.Kind.SPEED) s.speedCameras else s.plateCameras }
         // Waze's speed cameras join OpenStreetMap's; one both maps hold shows once.
         val shown = if (waze) WazeCameras.merge(mapped, WazeCameras.shared.known()) else mapped
-        val cum = if (line.size >= 2) Geo.cumulative(line) else null
+        val routeIds = onRouteCameras.mapTo(HashSet()) { it.camera.id }
+        val previewDistances = if (!driving && line.size >= 2) Geo.cumulative(line) else null
         val features = shown.mapNotNull { cam ->
-            val onRoute = cum != null && Geo.project(cam.location, line, cum).offset < 40
+            val onRoute = cam.id in routeIds ||
+                (previewDistances != null && Geo.project(cam.location, line, previewDistances).offset < 40)
             if (driving && !s.aheadCameras && onRoute) return@mapNotNull null
             point(cam.location, mapOf("icon" to if (cam.kind == RoadCamera.Kind.SPEED) "cam-speed" else "cam-plate",
                 "big" to if (onRoute) 1 else 0, "op" to if (driving && !onRoute) OFF_ROUTE_OPACITY else 1.0,
@@ -1169,18 +1187,18 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         val live = model.nav?.routeWaze.orEmpty().map { it.alert } + model.nav?.liveAlerts.orEmpty() + model.routeReports.takeIf { model.directions != null }.orEmpty()
         // While driving, reports off your route fade back so the ones you'll meet stand out.
         val route = if (model.nav?.route?.mode == TravelMode.DRIVE) model.nav?.route?.polyline ?: emptyList() else emptyList()
-        val key = "${s.wazeOn}${s.wazeOnMap}${s.aheadWaze}${s.wazeHeatmap}${s.wazeMaxAge}$kinds$wazeAt${history.size}${live.joinToString("") { it.id }}${route.size}${route.firstOrNull()?.lat ?: 0}"
+        val key = "${s.wazeOn}${s.wazeOnMap}${s.aheadWaze}${s.wazeHeatmap}${s.wazeMaxAge}$kinds$wazeAt${history.size}${live.joinToString("") { it.id }}${model.nav?.routeWaze?.hashCode()}${route.size}${route.firstOrNull()?.lat ?: 0}"
         if (key == lastWazeKey) return
         lastWazeKey = key
         val ids = wazeAlerts.map { it.id }.toSet()
         val all = (wazeAlerts + live.filter { !ids.contains(it.id) }).distinctBy { it.id }
         val shown = if (!s.wazeOnMap) emptyList()
             else if (model.nav != null) all.filter(s::showsOnRoad) else all.filter(s::shows)
-        val cum = if (route.size >= 2) Geo.cumulative(route) else null
+        val alertsOnRoute = model.nav?.routeWaze.orEmpty().mapTo(HashSet()) { it.alert.id }
         fun feature(a: WazeAlert): Feature {
             val age = (now() - a.reportedAtMillis) / 1000.0
             var op = max(0.5, 1 - age / 14_400)
-            if (cum != null && Geo.project(a.location, route, cum).offset > 60) op = OFF_ROUTE_OPACITY
+            if (route.isNotEmpty() && a.id !in alertsOnRoute) op = OFF_ROUTE_OPACITY
             return point(a.location, mapOf("id" to a.id, "icon" to "waze-${a.kind.key}", "op" to op))
         }
         // Police and crashes matter most, so they never get grouped into a bubble.
@@ -1389,6 +1407,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
     private var routeContext = ""
     private var transitStopsKey = ""
 
+    private var vehicleKey = ""
     private fun renderRoutes(style: Style?) {
         var alts = emptyList<Route>()
         var main: Route? = null
@@ -1400,6 +1419,16 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         if (n != null && !overview) { main = n.route; from = n.progress?.alongMeters ?: 0.0 }
         else if (d != null && session == null) { main = d.route; alts = d.current.filter { it.id != main?.id } }
         val trip = if (session != null) session.trip else if (n == null) d?.pickedTrip else null
+        val vehicleKeyNow = "${trip?.id}|${model.transitLive.hashCode()}"
+        if (vehicleKey != vehicleKeyNow) {
+            vehicleKey = vehicleKeyNow
+            setShape(style, TRANSIT_VEHICLES, trip?.rides.orEmpty().distinctBy { it.tripId }.mapNotNull { leg ->
+                val report = model.transitLive[leg.tripId] ?: return@mapNotNull null
+                val at = report.position ?: return@mapNotNull null
+                val label = (if (report.gps) "" else "≈") + leg.line.take(4)
+                point(at, mapOf("color" to hex(leg.mapColor), "line" to label))
+            })
+        }
         val keyForStops = "${trip?.id}|${session?.legIndex}|${session?.phase}|$overview"
         if (transitStopsKey != keyForStops) {
             transitStopsKey = keyForStops

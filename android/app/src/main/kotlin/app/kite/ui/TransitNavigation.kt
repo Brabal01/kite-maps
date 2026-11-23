@@ -20,6 +20,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.kite.*
 import app.kite.core.Place
+import app.kite.core.TransitLeg
+import app.kite.core.TransitLive
+import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.delay
 import java.util.Date
 
@@ -27,6 +30,7 @@ import java.util.Date
 fun TransitNavigationOverlay(model: AppModel, journey: TransitGuidance, showMapbox: Boolean) {
     val leg = journey.leg
     val phase = journey.phase
+    val status = model.transitLive[leg?.tripId]
     var showTrip by remember { mutableStateOf(false) }
     var tripDetent by remember { mutableStateOf(SheetDetent.HALF) }
     var showDepartures by remember(journey.legIndex) { mutableStateOf(false) }
@@ -82,12 +86,13 @@ fun TransitNavigationOverlay(model: AppModel, journey: TransitGuidance, showMapb
                 }
                 TransitGuidance.Phase.BOARD -> {
                     val live = journey.liveDeparture
-                    val time = live?.time ?: leg?.depart
+                    val time = status?.board?.departure ?: live?.time ?: leg?.depart
                     val call = leg?.calls?.firstOrNull()
                     val details = listOfNotNull(
                         leg?.headsign?.let { "Toward $it" },
-                        (live?.platform ?: call?.platform)?.takeIf(String::isNotBlank)?.let { "Platform $it" },
-                        time?.let { "${if (live?.delayMinutes == null && leg?.delayMinutes == null) "Scheduled" else "Live"} ${Fmt.time(Date(it))}" })
+                        (status?.board?.platform ?: live?.platform ?: call?.platform)?.takeIf(String::isNotBlank)?.let { "Platform $it" },
+                        time?.let { Fmt.time(Date(it)) })
+                    if (leg != null) TransitStatus(leg, status, departureDelay = live?.delayMinutes)
                     if (details.isNotEmpty()) Text(details.joinToString(" · "), color = secondaryText)
                     if (time != null && now > time + 180_000) Text("This departure may have passed.", color = Vela.closed)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -111,7 +116,8 @@ fun TransitNavigationOverlay(model: AppModel, journey: TransitGuidance, showMapb
                         LineChip(followingLeg)
                         followingLeg.headsign?.let { Text(it, color = secondaryText, maxLines = 1) }
                     }
-                    val exit = listOfNotNull(leg?.toName, leg?.arrive?.let { Fmt.time(Date(it)) })
+                    if (leg != null) TransitStatus(leg, status, arrival = true)
+                    val exit = listOfNotNull(leg?.toName, (status?.exit?.arrival ?: leg?.arrive)?.let { Fmt.time(Date(it)) })
                     if (exit.isNotEmpty()) Text("Get off · ${exit.joinToString(" · ")}", color = secondaryText)
                     if (!gps) Text("Waiting for a position along the route", color = secondaryText, fontSize = KType.caption)
                     TextButton(model::advanceTransitLeg) { Text("I'm off the vehicle") }
@@ -153,7 +159,7 @@ fun TransitNavigationOverlay(model: AppModel, journey: TransitGuidance, showMapb
                             StepsList(walking.route, walking.progress?.nextIndex ?: 0)
                             HorizontalDivider()
                         }
-                        TransitSteps(journey.trip, activeLeg = journey.legIndex)
+                        TransitSteps(journey.trip, activeLeg = journey.legIndex, live = model.transitLive)
                     }
                 })
         }
@@ -170,4 +176,43 @@ fun TransitNavigationOverlay(model: AppModel, journey: TransitGuidance, showMapb
         title = { Text("End this trip?") },
         confirmButton = { TextButton(model::endNavigation) { Text("End trip") } },
         dismissButton = { TextButton({ confirmEnd = false }) { Text("Keep going") } })
+}
+
+internal fun transitDelay(minutes: Int): String = when {
+    minutes > 0 -> "$minutes min late"
+    minutes < 0 -> "${-minutes} min early"
+    else -> "On time"
+}
+
+@Composable
+internal fun TransitStatus(leg: TransitLeg, live: TransitLive?, arrival: Boolean = false, departureDelay: Int? = null) {
+    val context = LocalContext.current
+    val delay = if (arrival) live?.exit?.arrivalDelay ?: leg.calls.lastOrNull()?.arrivalDelay
+        else live?.board?.departureDelay ?: departureDelay ?: leg.delayMinutes
+    if (live?.cancelled == true || leg.cancelled) {
+        Text("Service cancelled or stop skipped", color = Vela.closed, fontSize = KType.caption)
+    } else {
+        Text(delay?.let(::transitDelay) ?: "Scheduled time", fontSize = KType.caption,
+            color = if (delay != null && delay > 0) Vela.closed else secondaryText)
+        live?.position?.let {
+            Text(if (live.gps) "Live vehicle position on map" else "Estimated vehicle position on map",
+                fontSize = KType.caption, color = secondaryText)
+        }
+        live?.occupancy?.let { Text("Occupancy · $it", fontSize = KType.caption, color = secondaryText) }
+    }
+    for (notice in live?.notices ?: leg.notices) {
+        val title = notice.title.ifBlank { "Service alert" }
+        var expanded by remember(notice) { mutableStateOf(false) }
+        TextButton({ expanded = !expanded }, contentPadding = PaddingValues(horizontal = 4.dp)) {
+            Text(title, modifier = Modifier.weight(1f, fill = false))
+            Icon(if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, null)
+        }
+        if (expanded) {
+            if (notice.message.isNotBlank()) Text(notice.message, fontSize = KType.caption, color = primaryText)
+            notice.url?.let { url -> TextButton({ context.open(url) }) { Text("Operator notice") } }
+        }
+    }
+    if (leg.tripId?.contains("_cz-DPMO_") == true && (live?.notices ?: leg.notices).isEmpty()) {
+        TextButton({ context.open("https://www.dpmo.cz/informace-pro-cestujici/aktuality/") }) { Text("DPMO service changes") }
+    }
 }

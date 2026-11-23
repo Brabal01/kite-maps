@@ -476,10 +476,68 @@ object Valhalla {
     private val limitAttributes = listOf("edge.speed_limit", "edge.way_id", "edge.names", "edge.length", "edge.begin_shape_index",
         "edge.end_shape_index", "edge.lane_count", "edge.roundabout", "shape")
 
-    private suspend fun fetch(shape: List<LatLng>, attributes: List<String> = limitAttributes): ByteArray? {
+    data class PathSection(val from: Double, val to: Double, val surface: String?, val type: String?)
+
+    suspend fun pathSections(route: Route): List<PathSection> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+        val line = route.polyline
+        if (line.size < 2) return@withContext emptyList()
+        val costing = when (route.mode) {
+            TravelMode.BIKE -> "bicycle"
+            TravelMode.WALK -> "pedestrian"
+            TravelMode.DRIVE -> "auto"
+        }
+        val distances = Geo.cumulative(line)
+        val total = distances.last()
+        val sections = mutableListOf<PathSection>()
+        val attributes = listOf("shape", "edge.use", "edge.surface", "edge.begin_shape_index", "edge.end_shape_index")
+        var from = 0.0
+        while (from < total) {
+            val to = min(total, from + 8_000.0)
+            val piece = Geo.slice(line, from, to, distances)
+            val data = if (piece.size >= 2) fetch(thin(piece), attributes, costing) else null
+            for (section in data?.let { parsePathSections(it, piece) }.orEmpty()) {
+                val next = section.copy(from = section.from + from, to = section.to + from)
+                val previous = sections.lastOrNull()
+                if (previous != null && previous.surface == next.surface && previous.type == next.type &&
+                    kotlin.math.abs(previous.to - next.from) < 2.0) {
+                    sections[sections.lastIndex] = previous.copy(to = next.to)
+                } else sections += next
+            }
+            from = to
+        }
+        sections
+    }
+
+    internal fun parsePathSections(data: ByteArray, line: List<LatLng>): List<PathSection> {
+        val root = Json.obj(data) ?: return emptyList()
+        val shape = (root["shape"] as? String)?.let(Geo::decodePolyline) ?: return emptyList()
+        if (line.size < 2 || shape.size < 2) return emptyList()
+        val distance = Geo.cumulative(line)
+        val matchedDistance = Geo.cumulative(shape)
+        val projections = HashMap<Int, Projection>()
+        fun at(index: Int) = projections.getOrPut(index) { Geo.project(shape[index], line, distance) }
+        var previousEnd = 0.0
+        return root["edges"].asMaps().orEmpty().mapNotNull { edge ->
+            val start = edge["begin_shape_index"].int()?.takeIf { it in shape.indices } ?: return@mapNotNull null
+            val end = edge["end_shape_index"].int()?.takeIf { it in shape.indices && it > start } ?: return@mapNotNull null
+            val a = at(start)
+            val b = at(end)
+            val middle = Geo.point(shape, (matchedDistance[start] + matchedDistance[end]) / 2, matchedDistance)
+            if (maxOf(a.offset, b.offset, Geo.project(middle, line, distance).offset) > 12) return@mapNotNull null
+            val from = maxOf(previousEnd, a.along)
+            if (b.along - from < 1.0) return@mapNotNull null
+            val surface = (edge["surface"] as? String)?.takeUnless { it.isBlank() || it == "unknown" }
+            val type = (edge["use"] as? String)?.takeUnless { it.isBlank() || it == "other" }
+            if (surface == null && type == null) return@mapNotNull null
+            previousEnd = b.along
+            PathSection(from, b.along, surface, type)
+        }
+    }
+
+    private suspend fun fetch(shape: List<LatLng>, attributes: List<String> = limitAttributes, costing: String = "auto"): ByteArray? {
         val body = mapOf(
             "shape" to shape.map { mapOf("lat" to it.lat, "lon" to it.lng) },
-            "costing" to "auto",
+            "costing" to costing,
             "shape_match" to "map_snap",
             "filters" to mapOf("attributes" to attributes, "action" to "include"),
         )

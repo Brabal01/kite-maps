@@ -193,8 +193,9 @@ class NavGlide : Choreographer.FrameCallback {
         step(dt)
         if (running) {
             val stationary = fixSpeed <= 0.5 && cameraEntry == null
-            val delayMs = if (mapTouched || stationary || nav?.following == false) 48L else 14L
-            Choreographer.getInstance().postFrameCallbackDelayed(this, delayMs)
+            val choreographer = Choreographer.getInstance()
+            if (mapTouched || stationary || nav?.following == false) choreographer.postFrameCallbackDelayed(this, 48L)
+            else choreographer.postFrameCallback(this)
         }
     }
 
