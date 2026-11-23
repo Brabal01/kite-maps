@@ -15,6 +15,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -1091,20 +1092,12 @@ fun StopPicker(model: AppModel) {
 @Composable
 fun StopMapOverlay(model: AppModel, showMapbox: Boolean) {
     val search = model.stopSearch ?: return
-    val dark = LocalDark.current
-    var showList by remember(search.query) { mutableStateOf(false) }
+    var showList by rememberSaveable(search.query, search.parking) { mutableStateOf(false) }
+    val list = key(search.query, search.parking) { rememberLazyListState() }
     androidx.activity.compose.BackHandler { model.closeStopSearch() }
-    if (showList) TripSheet(if (search.parking) "Parking near destination" else "Stops ahead", "Map", { showList = false }) {
-        LazyColumn {
-            items(search.results, key = { it.place.id }) { candidate ->
-                IconRow(Icons.Filled.Place, candidate.place.name, candidate.place.address,
-                    if (search.parking) Fmt.distance(candidate.offset) else search.detours[candidate.place.id]?.let(::detourLabel)
-                        ?: candidate.ahead?.let { Fmt.distance(it) }) {
-                    model.showStopPin(candidate)
-                    showList = false
-                }
-            }
-        }
+    if (showList) StopResultsPage(search, list, close = { showList = false }) { candidate ->
+        model.showStopPin(candidate)
+        showList = false
     }
     Box(Modifier.fillMaxSize().systemBarsPadding()) {
         if (showMapbox) MapboxAttribution(Modifier.align(Alignment.TopStart).padding(start = 16.dp, top = 62.dp))
@@ -1128,7 +1121,7 @@ fun StopMapOverlay(model: AppModel, showMapbox: Boolean) {
                         maxLines = 2, overflow = TextOverflow.Ellipsis)
                     val distance = if (search.parking) "${Fmt.distance(selected.offset)} from the destination"
                         else selected.ahead?.let { "${Fmt.distance(it)} ahead" }
-                    val sub = listOfNotNull(distance, search.detours[selected.place.id]?.let(::detourLabel), selected.place.address)
+                    val sub = listOfNotNull(distance, search.detours[selected.place.id]?.let(::detourShort), selected.place.address)
                     if (sub.isNotEmpty()) Text(sub.joinToString(" · "), color = secondaryText, maxLines = 2)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically) {
@@ -1145,8 +1138,6 @@ fun StopMapOverlay(model: AppModel, showMapbox: Boolean) {
         }
     }
 }
-
-private fun detourLabel(seconds: Double) = if (seconds < 60) "On the way" else "+${(seconds / 60).roundToInt()} min"
 
 @Composable
 fun StopPinOverlay(model: AppModel, showMapbox: Boolean, center: () -> LatLng?) {

@@ -338,14 +338,14 @@ fun Stars(rating: Double, size: Dp = 13.dp) {
 
 /** "4.7 ★★★★★ (1,341) · 0.2 mi · Sushi restaurant · $10–20" */
 @Composable
-fun PlaceMetaLine(place: Place, showStars: Boolean = true, here: LatLng? = null) {
+fun PlaceMetaLine(place: Place, showStars: Boolean = true, here: LatLng? = null, showDistance: Boolean = true) {
     Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
         place.rating?.let { r ->
             Text(String.format(Locale.US, "%.1f", r), color = primaryText, fontSize = KType.subheadline)
             if (showStars) Stars(r) else Icon(Icons.Filled.Star, null, tint = Vela.star, modifier = Modifier.size(12.dp))
             place.reviewCount?.let { Text("(${Fmt.count(it)})", color = secondaryText, fontSize = KType.subheadline) }
         }
-        val meters = here?.distanceTo(place.location) ?: place.distanceMeters
+        val meters = if (showDistance) here?.distanceTo(place.location) ?: place.distanceMeters else null
         val rest = listOfNotNull(meters?.let { Fmt.distance(it) }, place.category, place.priceText)
         if (rest.isNotEmpty()) {
             Text((if (place.rating != null) "· " else "") + rest.joinToString(" · "), color = secondaryText,

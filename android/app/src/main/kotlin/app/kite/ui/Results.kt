@@ -5,6 +5,7 @@ package app.kite.ui
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -106,27 +107,61 @@ fun ResultsList(model: AppModel, modifier: Modifier = Modifier,
 
 @Composable
 fun ResultRow(model: AppModel, place: Place) {
+    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(interfaceGround)) {
+        PlaceResultSummary(place, onOpen = { model.select(place) }, here = model.userLatLng) {
+            FilledIconButton(
+                onClick = { model.selected = place; model.openDirections(place) },
+                colors = IconButtonDefaults.filledIconButtonColors(containerColor = interfaceAccent, contentColor = interfaceOnAccent),
+                modifier = Modifier.size(48.dp),
+            ) { Icon(Icons.Filled.Directions, "Directions to ${place.name}") }
+        }
+    }
+}
+
+@Composable
+internal fun PlaceResultSummary(
+    place: Place,
+    onOpen: () -> Unit,
+    here: LatLng? = null,
+    mapNumber: Int? = null,
+    mapSelected: Boolean = false,
+    openLabel: String? = null,
+    supporting: @Composable ColumnScope.() -> Unit = {},
+    action: @Composable () -> Unit,
+) {
     val photo = place.photoUrls.firstOrNull { !AppSettings.noGoogle || !isGooglePhoto(it) }
-    val shape = RoundedCornerShape(18.dp)
-    Row(Modifier.fillMaxWidth().clip(shape).background(interfaceGround).tap { model.select(place) }
+    Row(Modifier.fillMaxWidth().clickable(onClickLabel = openLabel, onClick = onOpen)
         .padding(12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-        if (photo != null) {
-            AsyncImage(photo, null, contentScale = ContentScale.Crop,
-                modifier = Modifier.size(56.dp).clip(RoundedCornerShape(12.dp)).background(interfaceSurface))
+        if (photo != null || mapNumber != null) {
+            Box(Modifier.size(56.dp).clip(RoundedCornerShape(12.dp)).background(interfaceSurface), contentAlignment = Alignment.Center) {
+                if (photo != null) AsyncImage(photo, null, contentScale = ContentScale.Crop, modifier = Modifier.matchParentSize())
+                if (mapNumber != null) {
+                    val position = if (photo != null) Modifier.align(Alignment.BottomStart).padding(3.dp) else Modifier
+                    Surface(
+                        modifier = position,
+                        shape = CircleShape,
+                        color = if (mapSelected || photo != null) interfaceAccent else MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = if (mapSelected || photo != null) interfaceOnAccent else MaterialTheme.colorScheme.onSecondaryContainer,
+                    ) {
+                        val diameter = if (photo == null) 32.dp else 25.dp
+                        Box(Modifier.defaultMinSize(minWidth = diameter, minHeight = diameter).padding(horizontal = 4.dp),
+                            contentAlignment = Alignment.Center) {
+                            Text(mapNumber.toString(), fontSize = KType.caption, fontWeight = FontWeight.ExtraBold)
+                        }
+                    }
+                }
+            }
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(place.name, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = primaryText,
                 maxLines = 2, overflow = TextOverflow.Ellipsis)
-            PlaceMetaLine(place, showStars = false, here = model.userLatLng)
+            PlaceMetaLine(place, showStars = false, here = here, showDistance = mapNumber == null)
             place.address?.let {
                 Text(it, fontSize = KType.footnote, color = secondaryText, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             StatusText(place, fontSize = KType.footnote)
+            supporting()
         }
-        FilledIconButton(
-            onClick = { model.selected = place; model.openDirections(place) },
-            colors = IconButtonDefaults.filledIconButtonColors(containerColor = interfaceAccent, contentColor = interfaceOnAccent),
-            modifier = Modifier.size(48.dp),
-        ) { Icon(Icons.Filled.Directions, "Directions to ${place.name}") }
+        action()
     }
 }

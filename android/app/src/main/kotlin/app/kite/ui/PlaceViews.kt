@@ -440,7 +440,7 @@ private fun PlaceOverview(place: Place) {
 }
 
 @Composable
-private fun OpeningHoursCard(place: Place, expanded: Boolean, toggle: () -> Unit) {
+internal fun OpeningHoursCard(place: Place, expanded: Boolean, toggle: () -> Unit) {
     val accent = MaterialTheme.colorScheme.primary
     Surface(color = interfaceGround, shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, secondaryText.copy(alpha = 0.16f))) {
         Column(Modifier.fillMaxWidth()) {
