@@ -90,7 +90,7 @@ public enum Roundabouts {
             // when the route really takes another makes the driver all the more misled, so V36 shows
             // the direction ("toward Vejdovského") instead of inventing certainty. The router's guess
             // is still kept as evidence (routerExit) for the diagnostics and the late-map correction.
-            let final = resolved.isCertain ? resolved.exit : resolved.exit.flatMap { _ in nil }
+            let final = resolved.isCertain ? resolved.exit : nil
             if r.maneuvers[i].exit != final {
                 r.maneuvers[i].exit = final
                 changed = true
