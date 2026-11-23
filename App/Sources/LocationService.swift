@@ -144,6 +144,12 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
         return fix
     }
 
+    /** Display-only position when the browse distance filter hasn't emitted a new fix. */
+    var mapFix: CLLocation? {
+        guard authorized, !denied, let fix = lastKnown, fix.horizontalAccuracy <= 500 else { return nil }
+        return fix
+    }
+
     /** The last known fix, even if older: search distances and a labelled fallback. */
     var lastKnown: CLLocation? {
         guard let fix, Date().timeIntervalSince(fix.timestamp) <= 15 * 60,

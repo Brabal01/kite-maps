@@ -1419,7 +1419,7 @@ struct VelaMapView: UIViewRepresentable {
                 return
             }
             // Browsing: the same arrow, pointing the way the phone/car is facing, replacing the dot.
-            guard let loc = model.location.last else {
+            guard let loc = model.location.mapFix else {
                 guard lastPuckKey != "" else { return }
                 map.drawPuck(at: nil, bearing: 0)
                 lastPuckKey = ""

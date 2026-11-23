@@ -381,10 +381,10 @@ final class AppModel: ObservableObject {
             self?.locationChanged(loc)
         }
         location.onHeadingChanged = { [weak self] in
-            guard let self, self.nav == nil, let fix = self.location.last,
+            guard let self, self.nav == nil, let fix = self.location.mapFix,
                   UIApplication.shared.applicationState == .active else { return }
             if self.justDrive {
-                guard fix.speed < 1.5 else { return }
+                guard fix.speed < 1.5 || abs(fix.timestamp.timeIntervalSinceNow) >= 5 else { return }
                 self.driveBearing = self.mapBearing(for: fix)
             } else {
                 self.followBrowse(fix, entering: false)
@@ -2250,6 +2250,7 @@ final class AppModel: ObservableObject {
     func mapBearing(for loc: CLLocation) -> Double {
         let courseUsable = loc.course >= 0 && loc.courseAccuracy >= 0 && loc.courseAccuracy < 60
         let moving = loc.speed >= 1.5 && loc.courseAccuracy < 45
+            && abs(loc.timestamp.timeIntervalSinceNow) < 5
         let raw: Double?
         if moving, courseUsable {
             raw = loc.course
