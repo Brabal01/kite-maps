@@ -2,6 +2,16 @@ import XCTest
 @testable import VelaCore
 
 final class RoutingTests: XCTestCase {
+    func testWalkingRouteMustReachBothEndsOfTheRequest() {
+        let start = LatLng(49.59, 17.25)
+        let destination = LatLng(49.595, 17.27)
+        let nearEnd = LatLng(49.595, 17.269)
+        let farEnd = LatLng(49.595, 17.267)
+        XCTAssertTrue(Directions.reachesWalkingEndpoints([start, nearEnd], from: start, to: destination))
+        XCTAssertFalse(Directions.reachesWalkingEndpoints([start, farEnd], from: start, to: destination))
+        XCTAssertFalse(Directions.reachesWalkingEndpoints([nearEnd], from: start, to: destination))
+    }
+
     func testDecodePolyline5() {
         // Google's documented example.
         let pts = Geo.decodePolyline("_p~iF~ps|U_ulLnnqC_mqNvxq`@", precision: 1e5)
