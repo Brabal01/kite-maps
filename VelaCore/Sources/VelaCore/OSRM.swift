@@ -563,21 +563,40 @@ public enum Directions {
                               avoidHighways: Bool = false, avoidTolls: Bool = false,
                               useGoogle: Bool = true, via: [LatLng] = [], heading: Double? = nil,
                               alternatives: Bool = false, engine: RouteEngine = .automatic, mapboxToken: String? = nil) async -> Result {
-        switch engine {
-        case .mapbox:
+        func isNearEndpoints(_ route: Route) -> Bool {
+            if mode == .walk { return reachesWalkingEndpoints(route.polyline, from: a, to: b) }
+            return reaches(route.polyline, from: a, to: b)
+        }
+        func prepare(_ routes: [Route]) -> [Route] {
+            routes.filter(isNearEndpoints).map { route in
+                var route = route
+                StepMerge.tidy(&route.maneuvers)
+                return Roundabouts.settle(route)
+            }
+        }
+
+        if engine == .mapbox || (engine == .automatic && mode == .drive && mapboxToken != nil) {
             guard let mapboxToken else { return Result(routes: [], error: "Add a public Mapbox token in Settings.") }
-            let found = await MapboxRoutes.plan(from: a, to: b, via: via, mode: mode, heading: heading,
-                                               alternatives: alternatives, avoidHighways: avoidHighways, avoidTolls: avoidTolls, token: mapboxToken)
-            return Result(routes: found, error: found.isEmpty ? "Mapbox couldn't find a route." : nil)
-        case .openStreetMap:
-            let routes = (try? await OSRM.route(from: a, to: b, mode: mode, via: via, heading: heading)) ?? []
-            return Result(routes: routes, error: routes.isEmpty ? "OpenStreetMap routing is unavailable for this trip." : nil)
-        case .google:
+            let found = prepare(await MapboxRoutes.plan(from: a, to: b, via: via, mode: mode, heading: heading,
+                                                       alternatives: alternatives, avoidHighways: avoidHighways,
+                                                       avoidTolls: avoidTolls, token: mapboxToken))
+            if !found.isEmpty || engine == .mapbox {
+                return Result(routes: found, error: found.isEmpty ? "Mapbox couldn't find a route." : nil)
+            }
+        }
+
+        if engine == .openStreetMap || (engine == .automatic && mode == .walk) {
+            let found = prepare((try? await OSRM.route(from: a, to: b, mode: mode, via: via, heading: heading)) ?? [])
+            if !found.isEmpty || engine == .openStreetMap || !useGoogle {
+                return Result(routes: found, error: found.isEmpty ? "OpenStreetMap routing is unavailable for this trip." : nil)
+            }
+        }
+
+        if engine == .google || mode == .walk {
             guard useGoogle else { return Result(routes: [], error: "Google is disabled in Settings.") }
-            let routes = (try? await GoogleClient.shared.directions(from: a, to: b, mode: mode,
-                        avoidHighways: avoidHighways, avoidTolls: avoidTolls, via: via)) ?? []
-            return Result(routes: routes, error: routes.isEmpty ? "Google couldn't find a route." : nil)
-        case .automatic: break
+            let found = prepare((try? await GoogleClient.shared.directions(from: a, to: b, mode: mode,
+                                       avoidHighways: avoidHighways, avoidTolls: avoidTolls, via: via)) ?? [])
+            return Result(routes: found, error: found.isEmpty ? "Google couldn't find a route." : nil)
         }
         // Ask both at once: Google's route knows traffic, OSRM's steps read better (Vela puts
         // the open router's turn-by-turn on Google's line the same way).
@@ -691,6 +710,11 @@ extension Directions {
     public static func reaches(_ line: [LatLng], from a: LatLng, to b: LatLng) -> Bool {
         guard let first = line.first, let last = line.last else { return false }
         return first.distance(to: a) < 5_000 && last.distance(to: b) < 5_000
+    }
+
+    static func reachesWalkingEndpoints(_ line: [LatLng], from a: LatLng, to b: LatLng) -> Bool {
+        guard line.count >= 2, let first = line.first, let last = line.last else { return false }
+        return first.distance(to: a) <= 180 && last.distance(to: b) <= 180
     }
 
     /** Whether [line] sets off more than a right angle away from [heading]: back the way the car came. */
