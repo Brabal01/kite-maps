@@ -71,10 +71,17 @@ jobs:
           if-no-files-found: ignore
       - name: Capture simulator smoke screenshots
         if: github.ref_name == 'ios/android-parity'
-        timeout-minutes: 4
+        timeout-minutes: 12
         run: |
           set -euxo pipefail
-          device=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; devices=json.load(sys.stdin)["devices"]; phones=[d for r in sorted(devices, reverse=True) if ".iOS-" in r for d in devices[r] if d["name"].startswith("iPhone") and "Duo" not in d["name"]]; print(next((d["udid"] for d in phones if d["name"] in ("iPhone 17 Pro","iPhone 17","iPhone 16")), phones[0]["udid"]))')
+          read -r device name <<< "$(xcrun simctl list devices available -j | python3 -c 'import json,sys; devices=json.load(sys.stdin)["devices"]; phone=next(d for r in sorted(devices, reverse=True) if ".iOS-" in r for d in devices[r] if d["name"].startswith("iPhone")); print(phone["udid"], phone["name"])')"
+          screenshot() {
+            if [[ "$name" == *Duo* ]]; then
+              xcrun simctl io "$device" screenshot --display=1 "$1"
+            else
+              xcrun simctl io "$device" screenshot "$1"
+            fi
+          }
           xcrun simctl boot "$device"
           xcrun simctl bootstatus "$device" -b
           xcrun simctl install "$device" simbuild/Build/Products/Debug-iphonesimulator/Kite.app
@@ -83,14 +90,14 @@ jobs:
           xcrun simctl location "$device" set 49.592,17.252
           xcrun simctl launch "$device" app.vela.ios -demo browse
           sleep 12
-          xcrun simctl io "$device" screenshot screenshots/olomouc-first-fix.png
+          screenshot screenshots/olomouc-first-fix.png
           xcrun simctl openurl "$device" 'kite://place?lat=49.5881&lng=17.2582&name=Santovka'
           sleep 5
-          xcrun simctl io "$device" screenshot screenshots/olomouc-deeplink.png
+          screenshot screenshots/olomouc-deeplink.png
           xcrun simctl location "$device" set 49.595,17.259
           xcrun simctl launch --terminate-running-process "$device" app.vela.ios -demo go -demoTo 49.613,17.235
           sleep 46
-          xcrun simctl io "$device" screenshot screenshots/olomouc-go.png
+          screenshot screenshots/olomouc-go.png
       - name: Upload simulator screenshots
         if: github.ref_name == 'ios/android-parity'
         uses: actions/upload-artifact@v4
