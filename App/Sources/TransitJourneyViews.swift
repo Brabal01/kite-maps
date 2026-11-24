@@ -189,6 +189,7 @@ struct TransitJourneyView: View {
                 }
                 guard !Task.isCancelled else { return }
                 journey.updateLive(refreshed, vehicle: position, at: index)
+                if #available(iOS 16.2, *) { LiveTransit.shared.update(journey) }
                 model.mapTick += 1
                 try? await Task.sleep(nanoseconds: 30_000_000_000)
             }

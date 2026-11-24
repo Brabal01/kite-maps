@@ -60,6 +60,7 @@ final class LiveTurn {
             instruction: n.arrived ? "You've arrived" : InstructionBanner.headline(m),
             road: n.arrived ? nil : m?.road,
             arrival: Fmt.arrival(left),
-            arrived: n.arrived)
+            arrived: n.arrived,
+            remaining: n.arrived ? nil : Fmt.duration(left))
     }
 }

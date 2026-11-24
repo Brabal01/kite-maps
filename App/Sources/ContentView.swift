@@ -131,6 +131,13 @@ struct ContentView: View {
             launch.pending = nil
             Task { await model.perform(kind) }
         }
+        .onReceive(launch.$pendingTransit) { id in
+            guard let id else { return }
+            launch.pendingTransit = nil
+            guard model.nav == nil, model.transitJourney == nil,
+                  let plan = settings.savedTransit.first(where: { $0.id == id }) else { return }
+            model.openTransit(plan)
+        }
         .onChange(of: model.showSettings) { on in
             // Older ways in (a shortcut, the demo) open the Settings page of the dock.
             guard on else { return }

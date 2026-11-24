@@ -7,6 +7,7 @@ final class LaunchAction: ObservableObject {
     enum Kind: String { case home, work, car }
     static let shared = LaunchAction()
     @Published var pending: Kind?
+    @Published var pendingTransit: UUID?
 }
 
 struct DirectionsHomeIntent: AppIntent {

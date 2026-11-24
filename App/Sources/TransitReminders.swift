@@ -14,6 +14,8 @@ struct SavedTransitPlan: Codable, Identifiable, Equatable {
 
 @MainActor
 enum TransitReminders {
+    nonisolated static let planKey = "savedTransitPlan"
+
     static func authorize() async -> Bool {
         let center = UNUserNotificationCenter.current()
         let settings = await center.notificationSettings()
@@ -32,6 +34,7 @@ enum TransitReminders {
         let content = UNMutableNotificationContent()
         content.title = "Time to leave"
         content.body = plan.name
+        content.userInfo[planKey] = plan.id.uuidString
         content.sound = .default
         do {
             try await UNUserNotificationCenter.current().add(

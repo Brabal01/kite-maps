@@ -975,6 +975,7 @@ final class AppModel: ObservableObject {
         browseFollowing = false
         let journey = TransitJourney(trip: selected, destination: destination)
         transitJourney = journey
+        if #available(iOS 16.2, *) { LiveTransit.shared.update(journey) }
         location.setNavigating(true, mode: TravelMode.walk.rawValue)
         prepareTransitLeg(journey)
         if settings.transitExitAlerts { Task { _ = await TransitReminders.authorize() } }
@@ -984,10 +985,13 @@ final class AppModel: ObservableObject {
         guard let journey = transitJourney, journey.phase != .complete else { return }
         journey.advance()
         prepareTransitLeg(journey)
+        if #available(iOS 16.2, *) { LiveTransit.shared.update(journey) }
     }
 
     func boardTransit() {
-        transitJourney?.board()
+        guard let journey = transitJourney else { return }
+        journey.board()
+        if #available(iOS 16.2, *) { LiveTransit.shared.update(journey) }
         mapTick += 1
     }
 
@@ -995,6 +999,7 @@ final class AppModel: ObservableObject {
         transitWalkingTask?.cancel()
         transitJourney?.walking?.stop()
         transitJourney = nil
+        if #available(iOS 16.2, *) { LiveTransit.shared.end() }
         glide.stop()
         map?.showsUserLocation = true
         location.setNavigating(false)
@@ -1243,6 +1248,7 @@ final class AppModel: ObservableObject {
     }
 
     func mapStyleReady() {
+        if let journey = transitJourney, #available(iOS 16.2, *) { LiveTransit.shared.update(journey) }
         if mapNavigator != nil { glide.restoreOnMap() }
         else if let fix = navigationFix { applyInitialCamera(fix) }
     }
@@ -1294,6 +1300,7 @@ final class AppModel: ObservableObject {
         if let journey = transitJourney {
             if journey.observe(loc, settings: settings) { advanceTransit() }
             else if let walking = journey.walking { followCamera(walking, loc, animated: true) }
+            if #available(iOS 16.2, *) { LiveTransit.shared.update(journey) }
             mapTick += 1
             return
         }
