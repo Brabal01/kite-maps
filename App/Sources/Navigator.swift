@@ -72,6 +72,7 @@ final class Navigator: ObservableObject {
     private var roadEventTask: Task<Void, Never>?
     private var roadEventRoute: UUID?
     private var roadEventWindow: Int?
+    private var roadEventRetryAfter = Date.distantPast
     var roadStripReports: [(alert: WazeAlert, along: Double)] { routeWaze }
     var roadStripCameras: [(camera: RoadCamera, along: Double)] { routeCameras.filter { $0.camera.kind == .speed } }
 
@@ -313,8 +314,11 @@ final class Navigator: ObservableObject {
         let stride = route.mode == .walk ? 600.0 : 2_500.0
         let window = Int(max(0, traveled) / stride)
         let id = route.id
-        guard id != roadEventRoute || window != roadEventWindow else { return }
-        if id != roadEventRoute { roadEvents = [] }
+        guard id != roadEventRoute || (window != roadEventWindow && Date() >= roadEventRetryAfter) else { return }
+        if id != roadEventRoute {
+            roadEvents = []
+            roadEventRetryAfter = .distantPast
+        }
         roadEventRoute = id
         roadEventWindow = window
         roadEventTask?.cancel()
@@ -323,7 +327,12 @@ final class Navigator: ObservableObject {
         roadEventTask = Task { [weak self] in
             let events = await RouteRoadEvent.load(on: line, from: from, length: stride * 1.7)
             guard !Task.isCancelled, let self, self.route.id == id else { return }
-            self.roadEvents = events
+            if let events {
+                self.roadEvents = events
+            } else {
+                self.roadEventWindow = nil
+                self.roadEventRetryAfter = Date().addingTimeInterval(20)
+            }
         }
     }
 
@@ -933,22 +942,30 @@ final class Navigator: ObservableObject {
      * with a word about it.
      */
     private func checkTraffic(_ p: RouteTracker.Progress, _ loc: CLLocation) {
-        guard route.mode == .drive, !AppSettings.shared.noGoogle, !rerouting, !trafficLoading, !demoAlerts, fasterOffer == nil,
+        guard route.mode == .drive, (!AppSettings.shared.noGoogle || route.source == "mapbox"), !rerouting, !trafficLoading, !demoAlerts, fasterOffer == nil,
               p.remainingMeters > 5000, !p.offRoute, Date().timeIntervalSince(trafficAt) > 240 else { return }
         trafficLoading = true
         trafficAt = Date()
         let from = LatLng(loc.coordinate.latitude, loc.coordinate.longitude)
         let course = heading(loc), id = route.id, planned = p.remainingSeconds / trafficScale
+        let mapbox = route.source == "mapbox"
         let to = destination.location, hw = avoidHighways, tolls = avoidTolls, via = stops.map(\.location)
         Task {
             let app = AppSettings.shared
             let r = await Directions.routes(from: from, to: to, mode: .drive, avoidHighways: hw, avoidTolls: tolls,
-                                            via: via, heading: course, engine: app.driveEngine, mapboxToken: app.activeMapboxToken)
+                                            useGoogle: !app.noGoogle, via: via, heading: course,
+                                            engine: mapbox ? .mapbox : app.driveEngine, mapboxToken: app.activeMapboxToken)
             self.trafficLoading = false
             // Arrived (or ended) while asking: no new route, and no "Found a faster route" in the car park.
             guard !self.stopped, !self.arrived,
                   let fresh = r.routes.first, self.route.id == id, !self.rerouting, let now = self.progress,
-                  planned > 0, fresh.trafficSeconds != nil else { return }
+                  planned > 0 else { return }
+            if mapbox, let spans = MapboxRoutes.refreshedTraffic(line: self.route.polyline,
+                                                                previous: self.route.trafficSpans, fresh: fresh, from: p.alongMeters),
+               spans != self.route.trafficSpans {
+                self.route.trafficSpans = spans
+            }
+            guard fresh.trafficSeconds != nil else { return }
             let current = now.remainingSeconds
             let saving = current - fresh.durationSeconds
             // The same way, more or less: just a better arrival time.
