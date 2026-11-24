@@ -174,10 +174,6 @@ struct SettingsView: View {
                     ForEach(TravelMode.allCases) { Text($0.label).tag($0) }
                 } label: { SettingLabel("Default travel mode", icon: "car.fill", color: 0x2563EB) }
             }
-            Section("Offline maps") {
-                NavigationLink("Download regions") { OfflineRegionsView() }
-                Toggle("Show places in a menu", isOn: $settings.categoryMenu)
-            }
             Section("Routes") {
                 Toggle(isOn: $settings.avoidTolls) { SettingLabel("Avoid tolls", icon: "sterlingsign.circle.fill", color: 0xF59E0B) }
                 Toggle(isOn: $settings.avoidHighways) {
@@ -249,6 +245,11 @@ struct SettingsView: View {
                 Picker(selection: $settings.units) {
                     ForEach(UnitsMode.allCases) { Text($0.label).tag($0) }
                 } label: { SettingLabel("Distance units", icon: "ruler.fill", color: 0x0891B2) }
+                Picker("Map icon set", selection: $settings.markerTheme) {
+                    ForEach(MarkerTheme.allCases, id: \.self) { theme in Text(theme.title).tag(theme) }
+                }
+                Toggle("Show places in a menu", isOn: $settings.categoryMenu)
+                NavigationLink("Offline maps") { OfflineRegionsView() }
                 Toggle(isOn: $settings.parkingButton) { SettingLabel("Parking button on the map", icon: "parkingsign", color: 0x2563EB) }
             }
             Section {
@@ -261,6 +262,19 @@ struct SettingsView: View {
                     .labelsHidden()
                 }
                 .padding(.vertical, 4)
+                Picker("Road ahead design", selection: $settings.roadAheadStyle) {
+                    ForEach(RoadAheadStyle.allCases, id: \.self) { style in Text(style.title).tag(style) }
+                }
+                VStack(alignment: .leading) {
+                    Text("Waze icon size on the map")
+                    Slider(value: $settings.wazeMapScale, in: 0.7...1.5, step: 0.1)
+                        .accessibilityLabel("Waze icon size on the map")
+                }
+                VStack(alignment: .leading) {
+                    Text("Waze icon size in the road strip")
+                    Slider(value: $settings.wazeStripScale, in: 0.7...1.5, step: 0.1)
+                        .accessibilityLabel("Waze icon size in the road strip")
+                }
             } header: {
                 Text("While driving")
             } footer: {

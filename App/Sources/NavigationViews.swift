@@ -238,6 +238,10 @@ struct NavigationOverlay: View {
                         .inSidePanel(panel)
                         .transition(.opacity)
                 }
+                if !nav.arrived, let event = nav.wazeAhead {
+                    RoadAheadStrip(event: event, style: settings.roadAheadStyle, scale: settings.wazeStripScale)
+                        .inSidePanel(panel)
+                }
                 TripBar(nav: nav, onEnd: {
                     if nav.arrived { model.endNavigation() } else {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { confirmEnd = true }
@@ -1277,11 +1281,12 @@ struct AircraftCard: View {
 }
 
 struct WazeBadge: View {
+    @ObservedObject private var settings = AppSettings.shared
     let kind: WazeAlert.Kind
     var size: CGFloat = 28
 
     var body: some View {
-        Image(uiImage: MapIcons.waze(kind)).resizable().frame(width: size, height: size)
+        Image(uiImage: MapIcons.waze(kind, theme: settings.markerTheme)).resizable().frame(width: size, height: size)
     }
 }
 

@@ -2,6 +2,16 @@ import Foundation
 import SwiftUI
 import VelaCore
 
+enum MarkerTheme: String, CaseIterable {
+    case classic, porcelain, night, trail
+    var title: String { self == .night ? "Neon" : rawValue.capitalized }
+}
+
+enum RoadAheadStyle: String, CaseIterable {
+    case classic, minimal, contrast
+    var title: String { self == .contrast ? "High contrast" : rawValue.capitalized }
+}
+
 enum ThemeMode: String, CaseIterable, Identifiable {
     case system, light, dark
     var id: String { rawValue }
@@ -61,6 +71,18 @@ final class AppSettings: ObservableObject {
     /** How close the driving map sits: Closer, Normal (as Kite always was) or Wider. */
     @Published var mapZoom: MapZoom { didSet { d.set(mapZoom.rawValue, forKey: "mapZoom") } }
     /** The driving map's 3D, 2D or north-up choice from the map button, kept for the next drive. */
+    @Published var markerTheme = MarkerTheme(rawValue: UserDefaults.standard.string(forKey: "markerTheme") ?? "") ?? .classic {
+        didSet { d.set(markerTheme.rawValue, forKey: "markerTheme") }
+    }
+    @Published var roadAheadStyle = RoadAheadStyle(rawValue: UserDefaults.standard.string(forKey: "roadAheadStyle") ?? "") ?? .classic {
+        didSet { d.set(roadAheadStyle.rawValue, forKey: "roadAheadStyle") }
+    }
+    @Published var wazeMapScale = min(1.5, max(0.7, UserDefaults.standard.object(forKey: "wazeMapScale") as? Double ?? 1)) {
+        didSet { d.set(wazeMapScale, forKey: "wazeMapScale") }
+    }
+    @Published var wazeStripScale = min(1.5, max(0.7, UserDefaults.standard.object(forKey: "wazeStripScale") as? Double ?? 1)) {
+        didSet { d.set(wazeStripScale, forKey: "wazeStripScale") }
+    }
     @Published var driveNorthUp = UserDefaults.standard.bool(forKey: "driveNorthUp") {
         didSet { d.set(driveNorthUp, forKey: "driveNorthUp") }
     }

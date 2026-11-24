@@ -106,6 +106,8 @@ struct VelaMapView: UIViewRepresentable {
         private var pinDroppedAt = Date.distantPast
         private var originalLabels: [String: (NSExpression?, NSExpression?, NSExpression?)] = [:]
         private var lastResultsKey = ""
+        private var markerTheme: MarkerTheme?
+        private var wazeMapScale: Double?
         private var lastRouteKey = ""
         private var lastMineKey = ""
         private var lastPuckKey = ""
@@ -152,7 +154,10 @@ struct VelaMapView: UIViewRepresentable {
             for case let s as MLNSymbolStyleLayer in style.layers {
                 originalLabels[s.identifier] = (s.textColor, s.textHaloColor, s.textHaloWidth)
             }
-            MapIcons.register(in: style)
+            let theme = model.settings.markerTheme
+            MapIcons.register(in: style, theme: theme)
+            markerTheme = theme
+            wazeMapScale = nil
             addVelaLayers(style)
             styleReady = true
             heatTiles.styleReloaded()
@@ -553,6 +558,19 @@ struct VelaMapView: UIViewRepresentable {
             guard styleReady, let style = map.style else { return }
             let s = model.settings
             let navigating = model.nav != nil
+            if markerTheme != s.markerTheme {
+                MapIcons.registerMarkers(in: style, theme: s.markerTheme)
+                markerTheme = s.markerTheme
+            }
+            if wazeMapScale != s.wazeMapScale {
+                let scale = s.wazeMapScale
+                let expression = NSExpression(mglJSONObject: ["interpolate", ["linear"], ["zoom"],
+                                                                11, 0.62 * scale, 15, 0.95 * scale])
+                for id in ["vela-waze", "vela-waze-group"] {
+                    (style.layer(withIdentifier: id) as? MLNSymbolStyleLayer)?.iconScale = expression
+                }
+                wazeMapScale = scale
+            }
             // The navigation arrow replaces the blue dot.
             if map.showsUserLocation == navigating { map.showsUserLocation = !navigating }
             // Not before the welcome screen's choice: "Open data only" means nothing ever went to Google.
