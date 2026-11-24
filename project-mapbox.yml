@@ -1,0 +1,11 @@
+# Local build with a Mapbox account. The default project.yml remains the MapLibre distribution build.
+include:
+  - project.yml
+packages:
+  MapboxMaps:
+    url: https://github.com/mapbox/mapbox-maps-ios.git
+    exactVersion: 11.26.0
+targets:
+  Kite:
+    dependencies:
+      - package: MapboxMaps
