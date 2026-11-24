@@ -319,11 +319,11 @@ struct VelaMapView: UIViewRepresentable {
             vehicle.circleStrokeColor = NSExpression(forConstantValue: UIColor.white)
             vehicle.circleStrokeWidth = NSExpression(forConstantValue: 2)
             insert(vehicle)
-            let traffic = line("vela-route-traffic", spanSrc, UIColor(hex: 0x2563EB), width: 10)
-            traffic.lineColor = NSExpression(mglJSONObject: ["match", ["get", "level"],
+            let routeCongestion = line("vela-route-traffic", spanSrc, UIColor(hex: 0x2563EB), width: 10)
+            routeCongestion.lineColor = NSExpression(mglJSONObject: ["match", ["get", "level"],
                                                              1, "#F59E0B", 2, "#EF4444", 3, "#B91C1C", "#2563EB"])
-            traffic.lineCap = NSExpression(forConstantValue: "butt")
-            style.insertLayer(traffic, above: fill)
+            routeCongestion.lineCap = NSExpression(forConstantValue: "butt")
+            style.insertLayer(routeCongestion, above: fill)
 
             // Metro, tram and rail lines in their own colors, from zoom 10 in (Transitous).
             let railSrc = MLNShapeSource(identifier: "vela-rail", shape: nil, options: nil)
