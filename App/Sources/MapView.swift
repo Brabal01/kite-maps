@@ -122,6 +122,8 @@ struct VelaMapView: UIViewRepresentable {
         private var lastRouteKey = ""
         private var lastMineKey = ""
         private var appliedMapboxKey = ""
+        private var appliedMarkerTheme: MapMarkerTheme?
+        private var appliedWazeScale: Double?
         private var lastPuckKey = ""
         private var lastTransitVehicleKey = ""
         /** Whether the map is currently stripped down for driving; nil after a style load. */
@@ -219,7 +221,10 @@ struct VelaMapView: UIViewRepresentable {
                 originalLabels[s.identifier] = (s.textColor, s.textHaloColor, s.textHaloWidth)
             }
             appliedMapboxKey = ""
-            MapIcons.register(in: style)
+            let theme = model.settings.mapMarkerTheme
+            MapIcons.register(in: style, theme: theme)
+            appliedMarkerTheme = theme
+            appliedWazeScale = nil
             addVelaLayers(style)
             styleReady = true
             heatTiles.styleReloaded()
@@ -720,6 +725,14 @@ struct VelaMapView: UIViewRepresentable {
             }
         }
 
+        private func updateWazeScale(_ scale: Double, in style: MLNStyle) {
+            let wazeScale = NSExpression(mglJSONObject: ["interpolate", ["linear"], ["zoom"],
+                                                       11, 0.62 * scale, 15, 0.95 * scale])
+            for id in ["vela-waze", "vela-waze-group"] {
+                (style.layer(withIdentifier: id) as? MLNSymbolStyleLayer)?.iconScale = wazeScale
+            }
+        }
+
         private func renderBase(_ style: MLNStyle, navigating: Bool) {
             let s = model.settings
             updateMapbox(style)
@@ -732,10 +745,13 @@ struct VelaMapView: UIViewRepresentable {
             let profile = MapPresetCatalog.profile(for: effectivePreset)
             (style.layer(withIdentifier: "vela-puck") as? MLNSymbolStyleLayer)?.iconScale =
                 NSExpression(forConstantValue: s.navArrowScale)
-            let wazeScale = NSExpression(mglJSONObject: ["interpolate", ["linear"], ["zoom"],
-                                                       11, 0.62 * s.wazeMapScale, 15, 0.95 * s.wazeMapScale])
-            for id in ["vela-waze", "vela-waze-group"] {
-                (style.layer(withIdentifier: id) as? MLNSymbolStyleLayer)?.iconScale = wazeScale
+            if appliedMarkerTheme != s.mapMarkerTheme {
+                MapIcons.register(in: style, theme: s.mapMarkerTheme)
+                appliedMarkerTheme = s.mapMarkerTheme
+            }
+            if appliedWazeScale != s.wazeMapScale {
+                updateWazeScale(s.wazeMapScale, in: style)
+                appliedWazeScale = s.wazeMapScale
             }
             style.layer(withIdentifier: "vela-sat")?.isVisible = s.satellite
             style.layer(withIdentifier: "vela-terrain")?.isVisible = s.terrain && !s.satellite
@@ -1404,6 +1420,7 @@ struct VelaMapView: UIViewRepresentable {
             let theme = dark ? "navigation-night-v1" : "streets-v12"
             let key = token.isEmpty ? "" : theme + token
             guard appliedMapboxKey != key else { return }
+            if let localRoads = style.layer(withIdentifier: "vela-mapbox-local-roads") { style.removeLayer(localRoads) }
             if let layer = style.layer(withIdentifier: "vela-mapbox") { style.removeLayer(layer) }
             if let source = style.source(withIdentifier: "vela-mapbox") { style.removeSource(source) }
             appliedMapboxKey = key
@@ -1416,6 +1433,21 @@ struct VelaMapView: UIViewRepresentable {
             let layer = MLNRasterStyleLayer(identifier: "vela-mapbox", source: source)
             if let under = style.layer(withIdentifier: "building-3d") ?? style.layer(withIdentifier: "vela-route-alt-edge") { style.insertLayer(layer, below: under) }
             else { style.addLayer(layer) }
+
+            // The raster style can omit local roads before street-level zoom.
+            // Reuse the existing OpenFreeMap transportation source and keep the overlay below route guidance.
+            if let base = style.layer(withIdentifier: "road_minor") as? MLNLineStyleLayer,
+               let sourceID = base.sourceIdentifier, let roads = style.source(withIdentifier: sourceID) {
+                let localRoads = MLNLineStyleLayer(identifier: "vela-mapbox-local-roads", source: roads)
+                localRoads.sourceLayerIdentifier = base.sourceLayerIdentifier
+                localRoads.predicate = base.predicate
+                localRoads.minimumZoomLevel = 13
+                localRoads.maximumZoomLevel = 16
+                localRoads.lineWidth = NSExpression(mglJSONObject: ["interpolate", ["linear"], ["zoom"], 13, 0.6, 16, 1.6])
+                localRoads.lineOpacity = NSExpression(mglJSONObject: ["interpolate", ["linear"], ["zoom"], 13, 0.7, 15, 0.55, 16, 0.0])
+                localRoads.lineColor = NSExpression(forConstantValue: UIColor(hex: dark ? 0x69778D : 0xB8ACA0))
+                style.insertLayer(localRoads, above: layer)
+            }
         }
 
         /** Keep feed positions distinct from positions estimated from the active leg's timetable. */

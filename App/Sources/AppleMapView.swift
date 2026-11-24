@@ -55,11 +55,15 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
     private var navigating = false
     private var satellite: Bool?
     private var terrain = false
-    private static let images: [String: UIImage] = {
+    private var markerTheme = MapMarkerTheme.classic
+    private var wazeScale = 1.0
+    private var images = AppleMapSurface.markerImages(for: .classic)
+
+    private static func markerImages(for theme: MapMarkerTheme) -> [String: UIImage] {
         var result: [String: UIImage] = [:]
-        MapIcons.registerImages { result[$1] = $0 }
+        MapIcons.registerImages(theme: theme) { result[$1] = $0 }
         return result
-    }()
+    }
     private static let lightPuck = MapIcons.puck(dark: false)
     private static let start = CLLocationCoordinate2D(latitude: 51.5074, longitude: -0.1278)
 
@@ -252,6 +256,16 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
             self.heatLayer = nil
         }
         if oldDark != dark || oldNavigating != navigating { refreshLineColors() }
+        if markerTheme != settings.mapMarkerTheme || wazeScale != settings.wazeMapScale {
+            if markerTheme != settings.mapMarkerTheme {
+                markerTheme = settings.mapMarkerTheme
+                images = Self.markerImages(for: markerTheme)
+            }
+            wazeScale = settings.wazeMapScale
+            for pin in pins.values.joined() {
+                if let view = native.view(for: pin) { configure(view, for: pin) }
+            }
+        }
         if settings.navArrowScale != arrowScale || oldDark != dark {
             arrowScale = settings.navArrowScale
             if let puck, let view = native.view(for: puck) { configure(view, for: puck) }
@@ -427,16 +441,19 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
         case "vela-next-road":
             view.image = pill(label, background: UIColor(hex: 0xB8DBFF), foreground: UIColor(hex: 0x092853))
         case "vela-puck":
-            view.image = dark ? Self.images["puck"] : Self.lightPuck
+            view.image = dark ? images["puck"] : Self.lightPuck
             view.isUserInteractionEnabled = false
             rotate(view, bearing: puckBearing, heading: direction, scale: arrowScale)
         default:
-            view.image = Self.images[icon]
+            view.image = images[icon]
             if let image = view.image, !label.isEmpty {
                 view.image = labeled(image, label: label)
             }
             if (attrs["anchor"] as? String) == "bottom" || pin.source == "vela-signals" {
-                view.centerOffset.y = -(Self.images[icon]?.size.height ?? 0) / 2
+                view.centerOffset.y = -(images[icon]?.size.height ?? 0) / 2
+            }
+            if pin.source == "vela-waze" || pin.source == "vela-waze-group" {
+                view.transform = CGAffineTransform(scaleX: CGFloat(wazeScale), y: CGFloat(wazeScale))
             }
             if let bearing = attrs["bearing"] as? Double {
                 rotate(view, bearing: bearing, heading: direction, scale: 0.65)

@@ -513,6 +513,11 @@ struct SettingsView: View {
                 Text("Shown under the search field. Drag to change the order, use + to add and − to remove. Changes appear on the map immediately.")
             }
             Section {
+                Picker(L10n.isCzech ? "Sada mapových ikon" : "Map icon set", selection: $settings.mapMarkerTheme) {
+                    ForEach(MapMarkerTheme.allCases, id: \.self) { theme in
+                        Text(theme.title).tag(theme)
+                    }
+                }
                 Picker(L10n.isCzech ? "Vzhled lišty událostí" : "Road strip appearance", selection: $settings.roadStripStyle) {
                     ForEach(RoadStripStyle.allCases, id: \.self) { style in
                         Text(style.title).tag(style)

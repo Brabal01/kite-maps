@@ -29,13 +29,13 @@ enum MapIcons {
         return kinds.first { k in k.words.contains { c.contains($0) } }?.name ?? "cat-default"
     }
 
-    static func register(in style: MLNStyle) {
-        registerImages { image, name in style.setImage(image, forName: name) }
+    static func register(in style: MLNStyle, theme: MapMarkerTheme) {
+        registerImages(theme: theme) { image, name in style.setImage(image, forName: name) }
     }
 
-    static func registerImages(_ add: (UIImage, String) -> Void) {
-        for k in kinds { add(dot(k.symbol, UIColor(hex: k.color)), k.name) }
-        add(dot("mappin", UIColor(hex: 0xE8453C)), "cat-default")
+    static func registerImages(theme: MapMarkerTheme = .classic, _ add: (UIImage, String) -> Void) {
+        for k in kinds { add(dot(k.symbol, UIColor(hex: k.color), theme: theme), k.name) }
+        add(dot("mappin", UIColor(hex: 0xE8453C), theme: theme), "cat-default")
         add(selectedPin(), "pin-selected")
         add(originDot(), "pin-origin")
         add(puck(dark: true), "puck")
@@ -61,7 +61,7 @@ enum MapIcons {
         // Live camera photos: sky blue for road cameras, violet for Windy's scenic webcams.
         add(dot("web.camera.fill", UIColor(hex: 0x0284C7)), "livecam-road")
         add(dot("sun.horizon.fill", UIColor(hex: 0x7C3AED)), "livecam-web")
-        for k in WazeAlert.Kind.allCases { add(waze(k), "waze-\(k.rawValue)") }
+        for k in WazeAlert.Kind.allCases { add(waze(k, theme: theme), "waze-\(k.rawValue)") }
         add(turnHead(), "turn-head")
         add(routeChevron(), "route-chevron")
         add(dot("smallcircle.filled.circle", UIColor(hex: 0x5F6368)), "pin-stop")
@@ -144,7 +144,7 @@ enum MapIcons {
     }
 
     /** Waze report badges, in Waze's own colors: blue police, red crashes, amber hazards… */
-    static func waze(_ k: WazeAlert.Kind) -> UIImage {
+    static func waze(_ k: WazeAlert.Kind, theme: MapMarkerTheme = .classic) -> UIImage {
         let symbol: String
         switch k {
         case .police: symbol = "shield.fill"
@@ -154,6 +154,9 @@ enum MapIcons {
         case .roadworks: symbol = "wrench.and.screwdriver.fill"
         case .closure: symbol = "nosign"
         case .jam: symbol = "car.2.fill"
+        }
+        if let image = themedGlyph(symbol, color: wazeColor(k), theme: theme, side: 34.5) {
+            return image
         }
         return badge(wazeColor(k)) { _ in
             draw(symbol, in: CGRect(x: 12, y: 12, width: 22, height: 22), color: .white)
@@ -183,7 +186,19 @@ enum MapIcons {
         }
     }
 
-    private static func dot(_ symbol: String, _ color: UIColor) -> UIImage {
+    private static func themedGlyph(_ symbol: String, color: UIColor, theme: MapMarkerTheme, side: CGFloat) -> UIImage? {
+        guard theme != .classic, let plate = UIImage(named: "marker-\(theme.rawValue)") else { return nil }
+        let bounds = CGRect(x: 0, y: 0, width: side, height: side)
+        return UIGraphicsImageRenderer(size: bounds.size).image { _ in
+            plate.draw(in: bounds.insetBy(dx: side * 0.045, dy: side * 0.045))
+            color.withAlphaComponent(0.41).setFill()
+            UIBezierPath(ovalIn: bounds.insetBy(dx: side * 0.18, dy: side * 0.18)).fill()
+            draw(symbol, in: bounds.insetBy(dx: side * 0.275, dy: side * 0.275), color: .white)
+        }
+    }
+
+    private static func dot(_ symbol: String, _ color: UIColor, theme: MapMarkerTheme = .classic) -> UIImage {
+        if let image = themedGlyph(symbol, color: color, theme: theme, side: 28) { return image }
         let size = CGSize(width: 28, height: 28)
         return UIGraphicsImageRenderer(size: size).image { ctx in
             let r = CGRect(origin: .zero, size: size).insetBy(dx: 1.5, dy: 1.5)

@@ -1790,11 +1790,12 @@ struct AircraftCard: View {
 }
 
 struct WazeBadge: View {
+    @ObservedObject private var settings = AppSettings.shared
     let kind: WazeAlert.Kind
     var size: CGFloat = 28
 
     var body: some View {
-        Image(uiImage: MapIcons.waze(kind)).resizable().frame(width: size, height: size)
+        Image(uiImage: MapIcons.waze(kind, theme: settings.mapMarkerTheme)).resizable().frame(width: size, height: size)
     }
 }
 

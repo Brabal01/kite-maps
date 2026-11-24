@@ -2,6 +2,19 @@ import Foundation
 import SwiftUI
 import VelaCore
 
+enum MapMarkerTheme: String, CaseIterable {
+    case classic, porcelain, night, trail
+
+    var title: String {
+        switch self {
+        case .classic: return L10n.isCzech ? "Klasické" : "Classic"
+        case .porcelain: return L10n.isCzech ? "Porcelán" : "Porcelain"
+        case .night: return L10n.isCzech ? "Neon" : "Neon"
+        case .trail: return L10n.isCzech ? "Turistické" : "Trail"
+        }
+    }
+}
+
 enum RoadStripStyle: String, CaseIterable {
     case classic, minimal, contrast
 
@@ -171,6 +184,9 @@ final class AppSettings: ObservableObject {
     var effectiveDriveLook: MapLook { driveLook == .north ? .north : driveTilt ? .tilted : .flat }
     /** Show 2D footprints and 3D extrusions on the navigation map, not just while browsing. */
     @Published var navArrowScale: Double { didSet { d.set(navArrowScale, forKey: "navArrowScale") } }
+    @Published var mapMarkerTheme = MapMarkerTheme(rawValue: UserDefaults.standard.string(forKey: "mapMarkerTheme") ?? "") ?? .classic {
+        didSet { d.set(mapMarkerTheme.rawValue, forKey: "mapMarkerTheme") }
+    }
     @Published var roadStripStyle = RoadStripStyle(rawValue: UserDefaults.standard.string(forKey: "roadStripStyle") ?? "") ?? .classic {
         didSet { d.set(roadStripStyle.rawValue, forKey: "roadStripStyle") }
     }
