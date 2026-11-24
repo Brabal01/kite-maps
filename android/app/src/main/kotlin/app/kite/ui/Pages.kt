@@ -115,8 +115,14 @@ fun SavedPage(model: AppModel) {
                     s.savedPlans.forEach { plan ->
                         ListItem(
                             headlineContent = { Text(plan.name) },
-                            supportingContent = { Text(plan.points.joinToString(" → ") { it.name }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                            leadingContent = { Icon(Icons.Filled.Directions, null) },
+                            supportingContent = {
+                                val detail = plan.transitDeparture?.let {
+                                    java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT)
+                                        .format(java.util.Date(it))
+                                } ?: plan.points.joinToString(" → ") { it.name }
+                                Text(detail, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            },
+                            leadingContent = { Icon(if (plan.transit) Icons.Filled.DirectionsTransit else Icons.Filled.Directions, null) },
                             trailingContent = {
                                 Row {
                                     IconButton({ ctx.share(plan.shareText()) }) { Icon(Icons.Filled.Share, "Share route") }

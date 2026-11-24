@@ -27,16 +27,17 @@ import app.kite.core.Place
 @Composable
 fun IndoorPlaceActions(model: AppModel, place: Place, station: Boolean) {
     var access by remember(place.id) { mutableStateOf(false) }
+    val entrances = rememberStationEntrances(place.location.takeIf { station })
     val context = LocalContext.current
     val isSantovka = place.name.contains("Šantovka", ignoreCase = true) &&
         place.location.distanceTo(LatLng(49.5861, 17.2587)) < 1000
     Column {
-        if (station) IconRow(Icons.Filled.ExitToApp, "Station entrances and exits", trailing = "View") { access = true }
+        if (entrances.isNotEmpty()) IconRow(Icons.Filled.ExitToApp, "Station entrances and exits", trailing = "View") { access = true }
         if (isSantovka) IconRow(Icons.Filled.Map, "Official Galerie Šantovka floor map", trailing = "Open") {
             context.open("https://www.galeriesantovka.cz/obchody/mapa-centra/")
         }
     }
-    if (access) StationAccessDialog(place.location, { access = false }) {
+    if (access && entrances.isNotEmpty()) StationAccessDialog(place.location, entrances, { access = false }) {
         access = false
         model.showStationEntrance(it)
     }
@@ -89,39 +90,37 @@ fun IndoorFloorOverlay(model: AppModel, view: AppModel.IndoorView) {
 }
 
 @Composable
-fun StationAccessDialog(at: LatLng, onClose: () -> Unit, onMap: (LatLng) -> Unit) {
-    var entrances by remember(at) { mutableStateOf<List<IndoorMaps.Entrance>?>(null) }
-    var finished by remember(at) { mutableStateOf(false) }
+internal fun rememberStationEntrances(at: LatLng?): List<IndoorMaps.Entrance> {
+    var entrances by remember(at) { mutableStateOf(emptyList<IndoorMaps.Entrance>()) }
     LaunchedEffect(at) {
-        entrances = IndoorMaps.entrances(at)
-        finished = true
+        if (at != null) entrances = IndoorMaps.entrances(at).orEmpty()
     }
+    return entrances
+}
+
+@Composable
+fun StationAccessDialog(at: LatLng, entrances: List<IndoorMaps.Entrance>, onClose: () -> Unit, onMap: (LatLng) -> Unit) {
     AlertDialog(
         onDismissRequest = onClose,
         title = { Text("Entrances and exits nearby") },
         text = {
-            val pins = entrances
-            when {
-                !finished -> CircularProgressIndicator(Modifier.size(24.dp))
-                pins.isNullOrEmpty() -> Text("No station access points found in OpenStreetMap.")
-                else -> LazyColumn(Modifier.heightIn(max = 370.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(pins, key = { "${it.at.lat},${it.at.lng}" }) { pin ->
-                        val accessibility = when (pin.wheelchair) {
-                            true -> " · Wheelchair accessible"
-                            false -> " · Not wheelchair accessible"
-                            null -> ""
+            LazyColumn(Modifier.heightIn(max = 370.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                items(entrances, key = { "${it.at.lat},${it.at.lng}" }) { pin ->
+                    val accessibility = when (pin.wheelchair) {
+                        true -> " · Wheelchair accessible"
+                        false -> " · Not wheelchair accessible"
+                        null -> ""
+                    }
+                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(interfaceSurface)
+                        .tap { onMap(pin.at) }.padding(9.dp), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                        Icon(Icons.Filled.Place, null, tint = interfaceAccentText)
+                        Column(Modifier.weight(1f)) {
+                            Text(pin.name, fontWeight = FontWeight.SemiBold)
+                            Text(Fmt.distance(pin.at.distanceTo(at)) + accessibility,
+                                color = secondaryText, fontSize = KType.caption)
                         }
-                        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(interfaceSurface)
-                            .tap { onMap(pin.at) }.padding(9.dp), verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                            Icon(Icons.Filled.Place, null, tint = interfaceAccentText)
-                            Column(Modifier.weight(1f)) {
-                                Text(pin.name, fontWeight = FontWeight.SemiBold)
-                                Text(Fmt.distance(pin.at.distanceTo(at)) + accessibility,
-                                    color = secondaryText, fontSize = KType.caption)
-                            }
-                            Icon(Icons.Filled.Map, "Show on map", tint = interfaceAccentText)
-                        }
+                        Icon(Icons.Filled.Map, "Show on map", tint = interfaceAccentText)
                     }
                 }
             }

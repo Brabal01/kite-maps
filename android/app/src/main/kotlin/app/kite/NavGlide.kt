@@ -30,11 +30,9 @@ class NavGlide : Choreographer.FrameCallback {
     var mapTouched = false
     var onMapPuck: ((Feature?) -> Unit)? = null
     var cameraOutput: ((CameraPosition, Boolean) -> Unit)? = null
-    private var cameraEntry: CameraPosition? = null
-    private var cameraEntryAt = 0L
     private var lastCamera: CameraPosition? = null
     val followingCamera: CameraPosition?
-        get() = lastCamera.takeIf { nav?.following == true && !mapTouched }
+        get() = lastCamera.takeIf { nav?.following == true }
 
     fun resumeFollowing() {
         mapTouched = false
@@ -46,12 +44,9 @@ class NavGlide : Choreographer.FrameCallback {
         outputCamera(camera, synchronize = true)
     }
 
-    fun easeFromCurrentCamera(current: CameraPosition? = null) {
+    fun recenter() {
         mapTouched = false
-        cameraEntry = current ?: map?.cameraPosition
-        cameraEntryAt = System.nanoTime()
         lastCamera = null
-        map?.cancelTransitions()
     }
     /** The map's height in dp. */
     var heightDp = 800f
@@ -88,6 +83,12 @@ class NavGlide : Choreographer.FrameCallback {
         internal fun needsCameraCorrection(
             actual: LatLng, expected: LatLng, actualZoom: Double, expectedZoom: Double,
         ): Boolean = actual.distanceTo(expected) > 5.0 || abs(actualZoom - expectedZoom) > 0.08
+
+        internal fun reliableFix(ageMs: Long, accuracy: Double): Boolean =
+            ageMs in 0..5_000 && accuracy in 0.0..45.0
+
+        internal fun shouldReanchorAfterStartup(firstReliableFix: Boolean, distance: Double, accuracy: Double): Boolean =
+            firstReliableFix && distance > max(45.0, accuracy * 2)
     }
 
     private var nav: Navigator? = null
@@ -100,6 +101,7 @@ class NavGlide : Choreographer.FrameCallback {
     private var fixBearing = 0.0
     private var fixSpeed = 0.0
     private var fixCourse = -1.0
+    private var awaitingAccurateFix = false
     private var onRoute = false
     private var line: List<LatLng> = emptyList()
     private var cum = DoubleArray(1)
@@ -128,12 +130,17 @@ class NavGlide : Choreographer.FrameCallback {
     /** Called on every GPS fix while navigating. */
     fun fix(n: Navigator, loc: Fix, across: Double, pitch: Double) {
         val starting = nav !== n
-        if (starting) {
-            cameraEntry = null
-            lastCamera = null
+        val reliable = reliableFix(loc.ageMs, loc.accuracy)
+        val newlyLocated = !starting && shownCoord?.let {
+            shouldReanchorAfterStartup(awaitingAccurateFix && reliable, it.distanceTo(loc.coord), loc.accuracy)
+        } == true
+        if (starting) awaitingAccurateFix = !reliable
+        else if (reliable) awaitingAccurateFix = false
+        if (starting || newlyLocated) {
+            if (n.following) recenter()
             shownCoord = null
             shownAlong = null
-            map?.cancelTransitions()
+            puckPushed = null
         }
         nav = n
         val p = n.progress
@@ -162,7 +169,7 @@ class NavGlide : Choreographer.FrameCallback {
             northBlend = if (look == MapLook.NORTH) 1.0 else 0.0
         }
         // Keep the first view even if the renderer is still being laid out.
-        if (starting || lastCamera == null && n.following) step(0.0)
+        if (starting || newlyLocated || lastCamera == null && n.following) step(0.0)
         if (map != null || cameraOutput != null) start()
     }
 
@@ -177,7 +184,6 @@ class NavGlide : Choreographer.FrameCallback {
         nav = null
         shownAlong = null
         shownCoord = null
-        cameraEntry = null
         lastCamera = null
         carOnScreen = false
         clearPuck()
@@ -203,11 +209,10 @@ class NavGlide : Choreographer.FrameCallback {
         lastFrame = frameTimeNanos
         step(dt)
         if (running) {
-            val stationary = fixSpeed <= 0.5 && cameraEntry == null && abs(shownPitch - targetPitch) < 0.15 &&
+            val stationary = fixSpeed <= 0.5 && abs(shownPitch - targetPitch) < 0.15 &&
                 abs(northBlend - if (look == MapLook.NORTH) 1.0 else 0.0) < 0.005 && abs(shownAcross - targetAcross) < 1
             val choreographer = Choreographer.getInstance()
-            if (mapTouched || stationary || nav?.following == false) choreographer.postFrameCallbackDelayed(this, 48L)
-            else if (cameraEntry != null) choreographer.postFrameCallback(this)
+            if (stationary || nav?.following == false) choreographer.postFrameCallbackDelayed(this, 48L)
             else choreographer.postFrameCallbackDelayed(this, 24L)
         }
     }
@@ -258,12 +263,11 @@ class NavGlide : Choreographer.FrameCallback {
         shownAcross += (targetAcross - shownAcross) * (if (dt == 0.0) 1.0 else 1 - exp(-dt / zoomTime))
         shownPitch += (targetPitch - shownPitch) * (if (dt == 0.0) 1.0 else 1 - exp(-dt / 0.28))
 
-        val entering = cameraEntry != null
-        if (n.following && !entering) {
+        if (n.following) {
             if (!carOnScreen) carOnScreen = true
             if (puckOnMap) { clearPuck(); puckOnMap = false }
         } else {
-            if (!n.following) { cameraEntry = null; lastCamera = null }
+            lastCamera = null
             if (carOnScreen) carOnScreen = false
             // On the map, moved only now and then: each new spot makes the map fade the arrow in again.
             val now = System.nanoTime()
@@ -286,7 +290,7 @@ class NavGlide : Choreographer.FrameCallback {
         val northTarget = if (look == MapLook.NORTH) 1.0 else 0.0
         northBlend += (northTarget - northBlend) * (if (dt == 0.0) 1.0 else 1 - exp(-dt / 0.3))
         if (abs(northTarget - northBlend) < 0.001) northBlend = northTarget
-        if (n.following && !mapTouched) {
+        if (n.following) {
             val d = KiteApp.app.resources.displayMetrics.density.toDouble()
             // North up: the map turns to face north and the car moves up to the middle, as the road
             // ahead can be any way round. Otherwise it faces the way you go with the car low down.
@@ -298,13 +302,11 @@ class NavGlide : Choreographer.FrameCallback {
             val camera = CameraPosition.Builder().target(shown.ml()).zoom(zoom).tilt(shownPitch).bearing(heading)
                 .padding(0.0, topInset(heightDp, compactViewport) * (if (compactViewport) 1.0 else 1 - northBlend) * d,
                     0.0, bottomInset(heightDp, compactViewport) * d).build()
-            val visible = enter(camera)
-            carTurn = shortestTurn(visible.bearing, markerBearing).toFloat()
+            carTurn = shortestTurn(camera.bearing, markerBearing).toFloat()
             val last = lastCamera
-            val entryComplete = entering && cameraEntry == null
-            if (last == null || entryComplete || !nearCamera(last, visible)) {
-                lastCamera = visible
-                outputCamera(visible, synchronize = last == null || entryComplete)
+            if (last == null || !nearCamera(last, camera)) {
+                lastCamera = camera
+                outputCamera(camera, synchronize = last == null)
             }
         }
     }
@@ -317,28 +319,6 @@ class NavGlide : Choreographer.FrameCallback {
 
     private fun markerTarget(roadHeading: Double): Double =
         if (nav?.route?.mode == TravelMode.DRIVE && fixCourse >= 0) fixCourse else roadHeading
-
-    private fun enter(target: CameraPosition): CameraPosition {
-        val from = cameraEntry ?: return target
-        val a = from.target ?: return target.also { cameraEntry = null }
-        val b = target.target ?: return target.also { cameraEntry = null }
-        val t = ((System.nanoTime() - cameraEntryAt) / 390_000_000.0).coerceIn(0.0, 1.0)
-        if (t >= 1.0) {
-            cameraEntry = null
-            return target
-        }
-        val f = t * t * (3 - 2 * t)
-        fun mix(x: Double, y: Double) = x + (y - x) * f
-        fun angle(x: Double, y: Double) = x + ((y - x + 540) % 360 - 180) * f
-        val startPadding = from.padding ?: DoubleArray(4)
-        val endPadding = target.padding ?: DoubleArray(4)
-        return CameraPosition.Builder().target(
-            org.maplibre.android.geometry.LatLng(mix(a.latitude, b.latitude),
-                ((angle(a.longitude, b.longitude) + 540) % 360) - 180))
-            .zoom(mix(from.zoom, target.zoom)).tilt(mix(from.tilt, target.tilt))
-            .bearing((angle(from.bearing, target.bearing) + 360) % 360)
-            .padding(DoubleArray(4) { mix(startPadding[it], endPadding[it]) }).build()
-    }
 
     private fun nearCamera(a: CameraPosition, b: CameraPosition): Boolean {
         val center = a.target ?: return false

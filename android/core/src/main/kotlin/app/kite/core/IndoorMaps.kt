@@ -72,6 +72,8 @@ object IndoorMaps {
         val query = """
             [out:json][timeout:8];(
               node["railway"="subway_entrance"](around:320,${at.lat},${at.lng});
+              node["railway"="train_station_entrance"](around:240,${at.lat},${at.lng});
+              node["public_transport"="entrance"](around:240,${at.lat},${at.lng});
               node["entrance"]["public_transport"="station"](around:240,${at.lat},${at.lng});
               node["entrance"]["railway"="station"](around:240,${at.lat},${at.lng});
             );out 50;
@@ -81,7 +83,8 @@ object IndoorMaps {
             Json.obj(body)?.get("elements").asMaps().orEmpty().mapNotNull { item ->
                 val location = coordinate(item) ?: return@mapNotNull null
                 val tags = item["tags"].asMap().orEmpty()
-                if (tags["railway"] != "subway_entrance" &&
+                if (tags["railway"] !in listOf("subway_entrance", "train_station_entrance") &&
+                    tags["public_transport"] != "entrance" &&
                     !(tags["entrance"] != null && (tags["railway"] == "station" || tags["public_transport"] == "station"))) return@mapNotNull null
                 if (tags["access"] in listOf("private", "no", "customers")) return@mapNotNull null
                 val ref = tags["ref"] as? String

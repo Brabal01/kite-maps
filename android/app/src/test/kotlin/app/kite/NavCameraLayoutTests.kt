@@ -31,6 +31,15 @@ class NavCameraLayoutTests {
         assertFalse(NavGlide.needsCameraCorrection(fix.copy(lat = 49.592003), fix, 17.02, 17.0))
     }
 
+    @Test fun freshGpsReanchorsTheArrowAfterStartingWithACachedLocation() {
+        assertFalse(NavGlide.reliableFix(ageMs = 90_000, accuracy = 8.0))
+        assertFalse(NavGlide.reliableFix(ageMs = 600, accuracy = 1_000.0))
+        assertTrue(NavGlide.reliableFix(ageMs = 600, accuracy = 8.0))
+        assertTrue(NavGlide.shouldReanchorAfterStartup(firstReliableFix = true, distance = 1_100.0, accuracy = 8.0))
+        assertFalse(NavGlide.shouldReanchorAfterStartup(firstReliableFix = false, distance = 1_100.0, accuracy = 8.0))
+        assertFalse(NavGlide.shouldReanchorAfterStartup(firstReliableFix = true, distance = 16.0, accuracy = 15.0))
+    }
+
     @Test fun vehicleCanTurnRelativeToTheFollowingCameraAcrossNorth() {
         assertEquals(28.0, NavGlide.shortestTurn(350.0, 18.0))
         assertEquals(-28.0, NavGlide.shortestTurn(18.0, 350.0))

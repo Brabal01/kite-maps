@@ -403,8 +403,8 @@ object Transitous {
             val b = point(to)
             if (a != null && b != null) out.path = listOf(a, b)
         }
-        if (out.distanceMeters == 0.0) out.distanceMeters = Geo.length(out.path)
         if (out.isWalk) {
+            if (out.distanceMeters == 0.0) out.distanceMeters = Geo.length(out.path)
             out.walkSteps = walkSteps(l["steps"].asMaps().orEmpty(), out.path)
             return out
         }
@@ -428,11 +428,29 @@ object Transitous {
                 delayMinutes(arrival, stop["scheduledArrival"], realTime, stop["arrivalTimestampReason"]),
                 stop["cancelled"] == true)
         }
+        if (out.vehicle in setOf(TransitLeg.Vehicle.TRAM, TransitLeg.Vehicle.METRO, TransitLeg.Vehicle.TRAIN)) {
+            out.path = withoutRailSpikes(out.path, out.calls)
+        }
+        if (out.distanceMeters == 0.0) out.distanceMeters = Geo.length(out.path)
         out.delayMinutes = out.calls.firstOrNull()?.departureDelay
             ?: delayMinutes(start, l["scheduledStartTime"], realTime, from["departureTimestampReason"])
         out.notices = notices(l) + stops.flatMap(::notices)
         out.notices = out.notices.distinct()
         return out
+    }
+
+    internal fun withoutRailSpikes(path: List<LatLng>, calls: List<TransitCall>): List<LatLng> {
+        if (path.size < 3 || calls.size < 2) return path
+        return path.filterIndexed { i, point ->
+            if (i == 0 || i == path.lastIndex) return@filterIndexed true
+            val before = path[i - 1]
+            val after = path[i + 1]
+            val shorterSide = minOf(before.distanceTo(point), point.distanceTo(after))
+            // Some feeds insert a lone vertex hundreds of metres off track between consecutive
+            // stops. Protect mapped stops and leave ordinary curves or reversals in place.
+            shorterSide < 120 || before.distanceTo(after) >= 0.5 * shorterSide ||
+                calls.any { it.at.distanceTo(point) <= 45 }
+        }
     }
 
     private fun delayMinutes(actual: Long?, planned: Any?, live: Boolean, reason: Any?): Int? {

@@ -33,6 +33,13 @@ fun TransitNavigationOverlay(model: AppModel, journey: TransitGuidance, showMapb
     val phase = journey.phase
     val status = model.transitLive[leg?.tripId]
     val refreshedTrip = model.latestTransit(journey.trip) ?: journey.trip
+    val station = leg?.takeIf { it.vehicle in setOf(TransitLeg.Vehicle.METRO, TransitLeg.Vehicle.TRAIN) }
+    val accessAt = when (phase) {
+        TransitGuidance.Phase.BOARD -> station?.let { it.calls.firstOrNull()?.at ?: it.path.firstOrNull() }
+        TransitGuidance.Phase.RIDE -> station?.let { it.calls.lastOrNull()?.at ?: it.path.lastOrNull() }
+        else -> null
+    }
+    val entrances = rememberStationEntrances(accessAt)
     var showTrip by remember { mutableStateOf(false) }
     var tripDetent by remember { mutableStateOf(SheetDetent.HALF) }
     var showDepartures by remember(journey.legIndex) { mutableStateOf(false) }
@@ -140,7 +147,7 @@ fun TransitNavigationOverlay(model: AppModel, journey: TransitGuidance, showMapb
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 if (phase != TransitGuidance.Phase.COMPLETE) {
                     TextButton({ tripDetent = SheetDetent.HALF; showTrip = true }) { Text("Trip") }
-                    if (leg?.vehicle in setOf(TransitLeg.Vehicle.METRO, TransitLeg.Vehicle.TRAIN)) {
+                    if (entrances.isNotEmpty()) {
                         TextButton({ showAccess = true }) { Text(if (phase == TransitGuidance.Phase.RIDE) "Exits" else "Entrances") }
                     }
                     TextButton(model::replanTransit) { Text("Replan") }
@@ -181,10 +188,8 @@ fun TransitNavigationOverlay(model: AppModel, journey: TransitGuidance, showMapb
                 })
         }
     }
-    if (showAccess && leg != null) {
-        val call = if (phase == TransitGuidance.Phase.RIDE) leg.calls.lastOrNull() else leg.calls.firstOrNull()
-        val at = call?.at ?: if (phase == TransitGuidance.Phase.RIDE) leg.path.lastOrNull() else leg.path.firstOrNull()
-        if (at != null) StationAccessDialog(at, { showAccess = false }) {
+    if (showAccess && accessAt != null && entrances.isNotEmpty()) {
+        StationAccessDialog(accessAt, entrances, { showAccess = false }) {
             showAccess = false
             model.showStationEntrance(it)
         }

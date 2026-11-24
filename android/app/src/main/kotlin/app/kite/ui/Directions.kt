@@ -769,6 +769,7 @@ fun TransitBody(model: AppModel, state: DirectionsState) {
     if (state.missingOrigin) return
     val trips = state.trips
     var expandedTrip by rememberSaveable { mutableStateOf<String?>(null) }
+    var bookmarkedTrip by rememberSaveable { mutableStateOf<String?>(null) }
     when {
         trips != null && trips.isNotEmpty() -> {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -795,6 +796,15 @@ fun TransitBody(model: AppModel, state: DirectionsState) {
                                 Icon(if (disrupted) Icons.Filled.Refresh else Icons.Filled.Navigation, null, Modifier.size(18.dp))
                                 Spacer(Modifier.width(6.dp))
                                 Text(if (disrupted) "Find another connection" else "Start transit navigation")
+                            }
+                            TextButton({
+                                model.saveTransitPlan(t)
+                                bookmarkedTrip = t.id
+                            }, enabled = t.id != bookmarkedTrip && t.depart != null && model.routePlan("", t) != null) {
+                                Icon(if (t.id == bookmarkedTrip) Icons.Filled.Bookmark else Icons.Filled.BookmarkBorder,
+                                    null, Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(if (t.id == bookmarkedTrip) "Saved for later" else "Save for later")
                             }
                         }
                         if (expanded) TransitSteps(shown, live = live)

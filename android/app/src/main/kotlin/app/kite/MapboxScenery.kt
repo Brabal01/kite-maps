@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Color
 import android.util.Log
 import android.view.MotionEvent
+import android.view.ViewConfiguration
 import android.widget.Toast
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -85,7 +86,7 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
     private var submittedCamera: CameraPosition? = null
     private var cameraEase: com.mapbox.common.Cancelable? = null
     private var cameraEaseSync: Job? = null
-    private var followCameraCheck: Job? = null
+    private var cameraSubscription: com.mapbox.common.Cancelable? = null
     private var lastLampCell: Pair<Int, Int>? = null
     private var errorSubscription: com.mapbox.common.Cancelable? = null
     private var idleSubscription: com.mapbox.common.Cancelable? = null
@@ -175,6 +176,28 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
         map.setPrefetchZoomDelta(1)
         mapView.logo.enabled = false
         mapView.attribution.enabled = false
+        var correctionQueued = false
+        cameraSubscription = map.subscribeCameraChangedCoalesced { event ->
+            if (!ready || correctionQueued) return@subscribeCameraChangedCoalesced
+            val expected = model.glide.followingCamera ?: return@subscribeCameraChangedCoalesced
+            val target = expected.target ?: return@subscribeCameraChangedCoalesced
+            val actual = event.cameraState
+            if (!NavGlide.needsCameraCorrection(actual.center.kite(), target.kite(), actual.zoom, expected.zoom)) {
+                return@subscribeCameraChangedCoalesced
+            }
+            // Cancel a competing camera update outside the SDK callback, without interrupting gestures.
+            correctionQueued = true
+            mapView.postOnAnimation {
+                correctionQueued = false
+                if (view !== mapView || !ready) return@postOnAnimation
+                val latest = model.glide.followingCamera ?: return@postOnAnimation
+                val center = latest.target ?: return@postOnAnimation
+                val state = map.cameraState
+                if (NavGlide.needsCameraCorrection(state.center.kite(), center.kite(), state.zoom, latest.zoom)) {
+                    followCamera(latest, takeover = true)
+                }
+            }
+        }
         idleSubscription = map.subscribeMapIdle {
             if (movingFromTouch && model.mapNavigator?.following != true) {
                 copyCameraToKite(mapView)
@@ -300,7 +323,9 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
                 submittedCamera = null
                 model.glide.mapTouched = true
             }
-            MotionEvent.ACTION_MOVE -> if (event.pointerCount > 1 || abs(event.x - downX) + abs(event.y - downY) > 10f) {
+            MotionEvent.ACTION_MOVE -> if (!movingFromTouch &&
+                (event.pointerCount > 1 || abs(event.x - downX) + abs(event.y - downY) >
+                    (view?.let { ViewConfiguration.get(it.context).scaledTouchSlop } ?: 16))) {
                 movingFromTouch = true
                 model.mapNavigator?.following = false
                 model.transitGuidance?.following = false
@@ -400,25 +425,6 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
         }
         submitCamera(camera, force = takeover)
         sampleCrossStreets()
-        if (takeover) {
-            val guide = model.mapNavigator ?: return
-            followCameraCheck?.cancel()
-            // A queued preview frame can still land after the first guidance write. Check
-            // again after the preview animation window, using the current GPS camera each time.
-            followCameraCheck = model.scope.launch {
-                for (wait in listOf(32L, 120L, 280L)) {
-                    delay(wait)
-                    if (view !== mapView || model.mapNavigator !== guide) return@launch
-                    val expected = model.glide.followingCamera ?: return@launch
-                    val center = expected.target ?: return@launch
-                    val actual = mapView.mapboxMap.cameraState
-                    if (NavGlide.needsCameraCorrection(actual.center.kite(), center.kite(), actual.zoom, expected.zoom)) {
-                        mapView.camera.cancelAllAnimators()
-                        submitCamera(expected, force = true)
-                    }
-                }
-            }
-        }
     }
 
     private fun submitCamera(camera: CameraPosition, force: Boolean) {
@@ -515,7 +521,8 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
         if (view !== mapView) return
         destroying = true
         cancelCameraEase()
-        followCameraCheck?.cancel()
+        cameraSubscription?.cancel()
+        cameraSubscription = null
         attributionDialog?.onStop()
         attributionDialog = null
         idleSubscription?.cancel()
@@ -597,7 +604,7 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
         if (themeChanged) {
             val text = if (look.dark) "#F0F4FC" else "#202124"
             val halo = if (look.dark) "#172235" else "#FFFFFF"
-            for (id in listOf(OpenMapStyle.POIS, GOOGLE_PLACES, KiteMap.GOOGLE_UNREVIEWED, KiteMap.TRANSIT_STOPS, "kite-vela-mine", "kite-vela-results", "kite-vela-selected")) {
+            for (id in listOf(OpenMapStyle.POIS, GOOGLE_PLACES, KiteMap.GOOGLE_UNREVIEWED, KiteMap.TRANSIT_STOPS, "kite-vela-mine", "kite-vela-results", "kite-vela-selected", CROSS_STREETS)) {
                 st.setStyleLayerProperty(id, "text-color", Value.valueOf(text))
                 st.setStyleLayerProperty(id, "text-halo-color", Value.valueOf(halo))
             }
@@ -720,13 +727,12 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
         st.addLayer(line("kite-route", "vela-route-traffic", 0xFF2DD4BF.toInt(), 8.0)
             .lineCap(LineCap.BUTT).lineColor(Expression.fromRaw(routePaint(look.palette[MapColor.ROUTE]))))
         st.addLayer(SymbolLayer(CROSS_STREETS, CROSS_STREETS).slot("top")
-            .iconImage("street-pill").iconTextFit(IconTextFit.BOTH).iconTextFitPadding(listOf(4.0, 9.0, 4.0, 9.0))
             .textField(Expression.get("name")).textSize(12.0)
-            .textColor(0xFF184753.toInt()).textPadding(6.0).minZoom(14.5))
+            .textHaloWidth(1.7).textPadding(7.0).minZoom(14.5))
         st.addLayer(SymbolLayer("kite-route-times", "vela-route-bubbles").slot("top")
             .iconImage(Expression.fromRaw("""["case",["==",["get","sel"],1],"bubble-sel","bubble-alt"]"""))
-            .iconTextFit(IconTextFit.BOTH).iconTextFitPadding(listOf(6.0, 12.0, 6.0, 12.0))
-            .textField(Expression.get("label")).textSize(14.0)
+            .iconTextFit(IconTextFit.BOTH).iconTextFitPadding(listOf(5.0, 9.0, 5.0, 9.0))
+            .textField(Expression.get("label")).textSize(13.0)
             .textColor(Expression.fromRaw("""["case",["==",["get","sel"],1],"#FFFFFF","#202124"]"""))
             .iconAllowOverlap(true).textAllowOverlap(true))
         st.addLayer(line("kite-path-section-edge", "kite-path-section", Color.WHITE, 15.0))

@@ -297,7 +297,8 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             map = m
             model.map = m
             model.nativeCamera = { camera, duration ->
-                scenery?.takeIf { it.ready }?.animateCamera(camera, duration) == true
+                model.mapNavigator?.following == true ||
+                    scenery?.takeIf { it.ready }?.animateCamera(camera, duration) == true
             }
             model.visibleCamera = { scenery?.takeIf { it.ready }?.cameraPosition() ?: m.cameraPosition }
             m.uiSettings.isCompassEnabled = false
@@ -325,9 +326,6 @@ class KiteMap(private val model: AppModel, private val context: Context) {
                 model.mapNavigator?.following = false
                 model.transitGuidance?.following = false
                 model.stopTransitOverview()
-            }
-            m.addOnCameraMoveStartedListener { reason ->
-                if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) stopFollowing()
             }
             // Off a route in 3D or 2D, dragging or turning the map stops following; zooming doesn't.
             m.addOnMoveListener(object : MapLibreMap.OnMoveListener {
@@ -358,6 +356,17 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             })
             var lastFollowingRefresh = 0L
             m.addOnCameraIdleListener {
+                val expected = model.glide.followingCamera.takeIf { scenery?.ready != true }
+                if (expected != null) {
+                    val actual = m.cameraPosition
+                    val target = expected.target
+                    val center = actual.target
+                    if (target != null && center != null &&
+                        NavGlide.needsCameraCorrection(center.kite(), target.kite(), actual.zoom, expected.zoom)) {
+                        model.glide.restoreFollowingCamera()
+                        return@addOnCameraIdleListener
+                    }
+                }
                 if (searchMapDragged) {
                     searchMapDragged = false
                     val camera = m.cameraPosition
@@ -1019,8 +1028,8 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         for (selected in listOf(false, true)) {
             val b = SymbolLayer("vela-route-bubble-${if (selected) 1 else 0}", "vela-route-bubbles").withProperties(
                 iconImage(if (selected) "bubble-sel" else "bubble-alt"), iconTextFit(Property.ICON_TEXT_FIT_BOTH),
-                iconTextFitPadding(arrayOf(6f, 12f, 6f, 12f)), textField(get("label")), textFont(overlayFont),
-                textSize(15f), textColor(if (selected) Color.WHITE else c(0x202124)), iconAllowOverlap(true), textAllowOverlap(true))
+                iconTextFitPadding(arrayOf(5f, 9f, 5f, 9f)), textField(get("label")), textFont(overlayFont),
+                textSize(13f), textColor(if (selected) Color.WHITE else c(0x202124)), iconAllowOverlap(true), textAllowOverlap(true))
             b.setFilter(eq(get("sel"), literal(if (selected) 1 else 0)))
             style.addLayer(b)
         }

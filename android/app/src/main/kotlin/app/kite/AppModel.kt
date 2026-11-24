@@ -100,6 +100,7 @@ data class DirectionsState(
     val endNote: String? = null,
     val startRequested: Boolean = false,
     val waitingForLocation: Boolean = false,
+    val preferredTransitLines: List<String> = emptyList(),
 ) {
     fun orderedPlaces(): List<Place?> =
         if (reversed) listOf(destination) + stops.asReversed() + listOf(null)
@@ -859,10 +860,18 @@ class AppModel {
         Place("waypoint:${it.lat},${it.lng}", "Your location", it, "pin")
     }
 
-    fun routePlan(name: String): SavedPlan? {
+    fun routePlan(name: String, trip: TransitTrip? = directions?.pickedTrip): SavedPlan? {
         val d = directions?.takeUnless { it.missingOrigin } ?: return null
         val points = d.orderedPlaces().map { it ?: currentWaypoint() ?: return null }
-        return SavedPlan(name.trim().ifEmpty { "${points.first().name} → ${points.last().name}" }, points, d.mode, transit = d.transit)
+        return SavedPlan(name.trim().ifEmpty { "${points.first().name} → ${points.last().name}" }, points, d.mode, transit = d.transit,
+            transitDeparture = trip?.depart, transitLines = trip?.savedLineKeys().orEmpty())
+    }
+
+    fun saveTransitPlan(trip: TransitTrip) {
+        val plan = routePlan("", trip) ?: return
+        if (settings.savedPlans.none {
+            it.transit && it.points == plan.points && it.transitDeparture == plan.transitDeparture && it.transitLines == plan.transitLines
+        }) settings.savedPlans = listOf(plan) + settings.savedPlans
     }
 
     fun openSavedPlan(plan: SavedPlan) {
@@ -872,8 +881,12 @@ class AppModel {
         addingStop = false
         resetPlanRequests()
         val first = plan.points.first()
+        val now = System.currentTimeMillis()
+        val departure = plan.transitDeparture?.takeIf { it > now }
         directions = DirectionsState(plan.points.last(), mode = plan.mode,
-            stops = plan.points.drop(1).dropLast(1), start = first, transit = plan.transit)
+            stops = plan.points.drop(1).dropLast(1), start = first, transit = plan.transit,
+            transitTime = departure?.let { max(now, it - 60_000) },
+            preferredTransitLines = plan.transitLines.takeIf { departure != null }.orEmpty())
         detent = SheetDetent.HALF
         loadPlan()
     }
@@ -1090,7 +1103,7 @@ class AppModel {
 
     /** 0 leave now, 1 depart at, 2 arrive by. */
     fun setTransitTime(kind: Int, atMillis: Long) {
-        edit { it.copy(transitTime = if (kind == 0) null else atMillis, arriveBy = kind == 2) }
+        edit { it.copy(transitTime = if (kind == 0) null else atMillis, arriveBy = kind == 2, preferredTransitLines = emptyList()) }
         loadTransit()
     }
 
@@ -1328,7 +1341,8 @@ class AppModel {
             try {
                 val trips = Transitous.plan(from, to, d.transitTime, d.arriveBy)
                 ensureActive()
-                edit { it.copy(trips = trips, tripsError = if (trips.isEmpty()) "No transit trips found here." else null) }
+                val preferred = trips.indexOfFirst { it.savedLineKeys() == d.preferredTransitLines }.coerceAtLeast(0)
+                edit { it.copy(trips = trips, trip = preferred, tripsError = if (trips.isEmpty()) "No transit trips found here." else null) }
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
@@ -1537,7 +1551,7 @@ class AppModel {
         stopTransitOverview()
         session.following = true
         session.walking?.let { walking ->
-            if (!walking.following) glide.easeFromCurrentCamera(visibleCamera?.invoke())
+            glide.recenter()
             walking.following = true
             location.last?.let { followCamera(walking, it) }
             return
@@ -1617,10 +1631,9 @@ class AppModel {
             }
         }
         resumeOffer = null
-        rememberTrip(n)
-        glide.mapTouched = false
         n.handle(fix)
         followCamera(n, fix)
+        rememberTrip(n)
         location.setNavigating(true)
         DriveService.start(KiteApp.app)
         driveNote(n)
@@ -1675,11 +1688,9 @@ class AppModel {
             return
         }
         navigationCameraUntil = android.os.SystemClock.elapsedRealtime() + 10_000L
-        if (!n.following) glide.easeFromCurrentCamera(visibleCamera?.invoke())
-        else glide.mapTouched = false
         n.following = true
+        glide.recenter()
         location.last?.let { followCamera(n, it) }
-        glide.restoreFollowingCamera()
     }
 
     fun zoomNavigation(step: Int) {

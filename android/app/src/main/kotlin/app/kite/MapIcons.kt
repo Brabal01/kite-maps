@@ -162,9 +162,8 @@ object MapIcons {
             add("cat-default", dot(Icons.Filled.Place, c(0xE8453C)))
             add("pin-selected", selectedPin())
             add("pin-origin", originDot())
-            add("bubble-sel", bubble(c(0x0F766E), Color.WHITE))
-            add("bubble-alt", bubble(Color.WHITE, c(0xBDC1C6)))
-            add("street-pill", bubble(c(0xF5FCFD), c(0xA3C6CA)))
+            add("bubble-sel", routeTimeTag(c(0x0C646B), c(0x083F4B)))
+            add("bubble-alt", routeTimeTag(c(0xF7FAFC), c(0xA4B5BE)))
             add("road-pill", bubble(c(0x2DD4BF), c(0x0F766E)))
             add("cam-speed", speedCamera())
             add("cam-plate", plateCamera())
@@ -363,7 +362,12 @@ object MapIcons {
         cv.drawPath(p, paint(c(0x0B3B36), Paint.Style.STROKE, 3f))
     }
 
-    /** A pill for the route time bubbles; MapLibre stretches its middle to fit the text. */
+    private fun routeTimeTag(fill: Int, stroke: Int) = image(28f, 24f) { cv ->
+        val bounds = RectF(1f, 1f, 27f, 23f)
+        cv.drawRoundRect(bounds, 4f, 4f, paint(fill))
+        cv.drawRoundRect(bounds, 4f, 4f, paint(stroke, Paint.Style.STROKE, 1.4f))
+    }
+
     private fun bubble(fill: Int, stroke: Int) = image(30f, 26f) { cv ->
         val r = RectF(1f, 1f, 29f, 25f)
         cv.drawRoundRect(r, 12f, 12f, paint(fill))

@@ -11,9 +11,11 @@ data class SavedPlan(
     val mode: TravelMode,
     val transit: Boolean = false,
     val id: String = UUID.randomUUID().toString(),
+    val transitDeparture: Long? = null,
+    val transitLines: List<String> = emptyList(),
 ) {
     fun toMap() = mapOf("id" to id, "name" to name, "points" to points.map(PlaceCodec::toMap),
-        "mode" to mode.name, "transit" to transit)
+        "mode" to mode.name, "transit" to transit, "transitDeparture" to transitDeparture, "transitLines" to transitLines)
     fun shareText(): String {
         fun coords(p: Place) = "${p.location.lat.plain()},${p.location.lng.plain()}"
         val builder = Uri.parse("https://www.google.com/maps/dir/").buildUpon()
@@ -38,10 +40,14 @@ data class SavedPlan(
             val id = m["id"] as? String ?: return null
             if (points.size !in 2..10) return null
             val mode = TravelMode.entries.firstOrNull { it.name == m["mode"] } ?: TravelMode.DRIVE
-            return SavedPlan(name, points, mode, transit = m["transit"] == true, id = id)
+            return SavedPlan(name, points, mode, transit = m["transit"] == true, id = id,
+                transitDeparture = (m["transitDeparture"] as? Number)?.toLong(),
+                transitLines = m["transitLines"].asList().orEmpty().filterIsInstance<String>())
         }
     }
 }
+
+internal fun TransitTrip.savedLineKeys(): List<String> = rides.map { "${it.mode}:${it.line}" }
 
 data class PlaceFolder(val name: String, val members: Set<String> = emptySet(), val id: String = UUID.randomUUID().toString()) {
     fun toMap() = mapOf("id" to id, "name" to name, "members" to members.toList())
