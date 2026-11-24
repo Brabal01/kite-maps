@@ -3,7 +3,7 @@ name: Build Kite Driving for iPhone
 on:
   push:
     branches: [ios/kite-driving-native, ios/android-parity]
-    paths: [App/**, Shared/**, Widget/**, VelaCore/**, project.yml, .github/workflows/kite-ios-native.yml]
+    paths: [App/**, Shared/**, Widget/**, VelaCore/**, project.yml, project-mapbox.yml, .github/workflows/kite-ios-native.yml]
   workflow_dispatch:
 
 permissions:
@@ -71,9 +71,10 @@ jobs:
           if-no-files-found: ignore
       - name: Capture simulator smoke screenshots
         if: github.ref_name == 'ios/android-parity'
+        timeout-minutes: 4
         run: |
-          set -euo pipefail
-          device=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; devices=json.load(sys.stdin)["devices"]; print(next(d["udid"] for r in sorted(devices, reverse=True) if ".iOS-" in r for d in devices[r] if d["name"].startswith("iPhone")))')
+          set -euxo pipefail
+          device=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; devices=json.load(sys.stdin)["devices"]; phones=[d for r in sorted(devices, reverse=True) if ".iOS-" in r for d in devices[r] if d["name"].startswith("iPhone") and "Duo" not in d["name"]]; print(next((d["udid"] for d in phones if d["name"] in ("iPhone 17 Pro","iPhone 17","iPhone 16")), phones[0]["udid"]))')
           xcrun simctl boot "$device"
           xcrun simctl bootstatus "$device" -b
           xcrun simctl install "$device" simbuild/Build/Products/Debug-iphonesimulator/Kite.app
@@ -93,3 +94,30 @@ jobs:
         with:
           name: Kite-Driving-simulator
           path: screenshots/
+
+  mapbox:
+    name: Compile the local Mapbox Standard configuration
+    if: github.ref_name == 'ios/android-parity'
+    runs-on: xcode-27
+    timeout-minutes: 20
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate the Mapbox project
+        run: |
+          brew install xcodegen
+          xcodegen generate --spec project-mapbox.yml
+      - name: Compile Mapbox Standard for the iPhone Simulator
+        run: |
+          set -o pipefail
+          xcodebuild -project Kite.xcodeproj -scheme Kite -configuration Debug -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath mapbox-simbuild \
+            CODE_SIGNING_ALLOWED=NO build | tee mapbox-build.log
+      - name: Upload Mapbox build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kite-Driving-Mapbox-build-logs
+          path: mapbox-build.log
+          if-no-files-found: ignore
