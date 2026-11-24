@@ -171,11 +171,21 @@ struct TransitJourneyView: View {
             guard journey.phase != .complete else { return }
             let index = journey.index
             while !Task.isCancelled {
-                let refreshed = await Transitous.refresh(journey.trip)
+                var refreshed = await Transitous.refresh(journey.trip)
                 guard !Task.isCancelled else { return }
                 var position: Transitous.VehiclePosition?
-                if journey.phase == .ride, let leg = refreshed?.legs[safe: index] ?? journey.leg {
-                    position = await Transitous.livePosition(for: leg)
+                if let leg = refreshed?.legs[safe: index] ?? journey.leg, !leg.isWalk {
+                    if let pid = await PidRealtime.update(leg, token: PidKeyStore.read()) {
+                        var trip = refreshed ?? journey.trip
+                        if trip.legs.indices.contains(index) {
+                            trip.legs[index] = pid.leg
+                            refreshed = trip
+                        }
+                        position = pid.position
+                    }
+                    if journey.phase == .ride, position == nil, refreshed?.legs[safe: index]?.cancelled != true {
+                        position = await Transitous.livePosition(for: leg)
+                    }
                 }
                 guard !Task.isCancelled else { return }
                 journey.updateLive(refreshed, vehicle: position, at: index)

@@ -215,6 +215,9 @@ struct SettingsView: View {
             }
             Section("Transit") {
                 Toggle("Exit reminders", isOn: $settings.transitExitAlerts)
+                NavigationLink { PragueTransitSettings() } label: {
+                    SettingLabel("Prague PID live data", icon: "tram.fill", color: 0x7C3AED)
+                }
                 Toggle("Learn my walking pace", isOn: $settings.learnWalkingPace)
                 if let pace = settings.personalPace {
                     Button("Reset walking pace · \((pace * 3.6).formatted(.number.precision(.fractionLength(1)))) km/h") {
