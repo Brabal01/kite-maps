@@ -20,11 +20,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: iphone-android-081-port
+          fetch-depth: 0
       - name: Commit the Swift port
         id: apply
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = 8d3fab0b258b12681cdfb88425791a4703ac72c5
+          base=8d3fab0b258b12681cdfb88425791a4703ac72c5
+          git merge-base --is-ancestor "$base" HEAD
+          test "$(git diff --name-only "$base" HEAD)" = .github/workflows/port-android-ios.yml
           base64 -d <<'PATCH' | gzip -d | git apply --index
           H4sIAAAAAAAAA7Q823LbOJbv/gpEOxcypmldLNnWtMdJ23E6Hdtxxe501aZdXZAISYwpksWLHaXb77OfMI/zAf0J+5SaH9kv2XMO
           AN4pO+keViWSCOAA534BYMedzdjW1txNGN9+Hobbl0EaTUWM388CR3h2fOfOEjZZ07jh+o74yMSOszucObY9mwz7+6Mu63W7o52d
