@@ -32,6 +32,9 @@ struct PlaceHeader: View {
                 }.accessibilityLabel("Save to a list")
                 Menu {
                     if let url = place.shareURL { ShareLink("Google Maps link", item: url) }
+                    if let url = KiteLinks.placeURL(at: place.location, name: place.name) {
+                        ShareLink("Kite link", item: url)
+                    }
                     ShareLink("Place name", item: place.name)
                     ShareLink("Coordinates", item: String(format: "%.6f, %.6f", place.location.lat, place.location.lng))
                 } label: {

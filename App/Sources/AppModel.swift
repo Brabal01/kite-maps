@@ -535,10 +535,45 @@ final class AppModel: ObservableObject {
 
     // MARK: My places
 
+    func openIncomingURL(_ url: URL) async {
+        // The lock-screen widget can bring the existing trip forward.
+        let target = KiteLinks.parse(url)
+        if target == .map { tab = .map; return }
+        guard nav == nil, transitJourney == nil, cruise == nil else { return }
+        if url.scheme?.lowercased() != "kite" {
+            guard MapLinks.looksLikeLink(url.absoluteString) else { return }
+            tab = .map
+            openLink(url.absoluteString)
+            return
+        }
+        guard let target else { return }
+        tab = .map
+        switch target {
+        case .map: break
+        case .search(let text):
+            if directions != nil { closeDirections() }
+            if let text { search(text, title: text) } else { clearSearch() }
+        case let .place(point, name, directions):
+            let place = Place(id: "kite:pin:\(point.lat),\(point.lng)", name: name ?? "Shared location",
+                              location: point, source: "pin")
+            clearSearch()
+            if directions { openDirections(to: place) }
+            else { closeDirections(); select(place) }
+        case .shortcut(let id):
+            guard let place = myPlace(id) else { return }
+            clearSearch()
+            openDirections(to: place)
+        case .home: await perform(.home, preserveActiveTrip: true)
+        case .work: await perform(.work, preserveActiveTrip: true)
+        case .car: await perform(.car, preserveActiveTrip: true)
+        }
+    }
+
     /** A Siri or Shortcuts request: directions home or to work, or back to the car. */
-    func perform(_ kind: LaunchAction.Kind) async {
+    func perform(_ kind: LaunchAction.Kind, preserveActiveTrip: Bool = false) async {
         // At a cold start, give location a few seconds to come in first.
         for _ in 0..<20 where userLatLng == nil { try? await Task.sleep(nanoseconds: 250_000_000) }
+        if preserveActiveTrip, nav != nil || transitJourney != nil || cruise != nil { return }
         let target: Place?
         switch kind {
         case .home: target = settings.home

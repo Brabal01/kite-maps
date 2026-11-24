@@ -117,6 +117,9 @@ struct ContentView: View {
         .preferredColorScheme(settings.colorScheme)
         .tint(Vela.accent(settings.colorScheme ?? systemScheme))
         .task { await DemoScript.run(model) }
+        .onOpenURL { url in
+            Task { await model.openIncomingURL(url) }
+        }
         .onChange(of: scenePhase) { phase in
             if phase == .active { model.mapStyleReady() }
         }
