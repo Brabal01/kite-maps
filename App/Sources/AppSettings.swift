@@ -45,19 +45,19 @@ final class AppSettings: ObservableObject {
     @Published var theme: ThemeMode { didSet { d.set(theme.rawValue, forKey: "theme") } }
     @Published var mapLighting: MapLighting { didSet { d.set(mapLighting.rawValue, forKey: "kite.mapLighting") } }
     @Published var dayMapPalette = AppSettings.loadPalette("kite.dayMapPalette", dark: false) {
-        didSet { d.set(dayMapPalette.stored.map(Int.init), forKey: "kite.dayMapPalette") }
+        didSet { d.set(dayMapPalette.stored.map { Int($0) }, forKey: "kite.dayMapPalette") }
     }
     @Published var nightMapPalette = AppSettings.loadPalette("kite.nightMapPalette", dark: true) {
-        didSet { d.set(nightMapPalette.stored.map(Int.init), forKey: "kite.nightMapPalette") }
+        didSet { d.set(nightMapPalette.stored.map { Int($0) }, forKey: "kite.nightMapPalette") }
     }
     @Published var mapUIAccent = AppSettings.loadRGB("kite.mapUIAccent") {
-        didSet { d.set(mapUIAccent.map(Int.init), forKey: "kite.mapUIAccent") }
+        didSet { d.set(mapUIAccent.map { Int($0) }, forKey: "kite.mapUIAccent") }
     }
     @Published var mapUIDayPanel = AppSettings.loadRGB("kite.mapUIDayPanel") {
-        didSet { d.set(mapUIDayPanel.map(Int.init), forKey: "kite.mapUIDayPanel") }
+        didSet { d.set(mapUIDayPanel.map { Int($0) }, forKey: "kite.mapUIDayPanel") }
     }
     @Published var mapUINightPanel = AppSettings.loadRGB("kite.mapUINightPanel") {
-        didSet { d.set(mapUINightPanel.map(Int.init), forKey: "kite.mapUINightPanel") }
+        didSet { d.set(mapUINightPanel.map { Int($0) }, forKey: "kite.mapUINightPanel") }
     }
 
     func mapPalette(dark: Bool) -> MapPalette { dark ? nightMapPalette : dayMapPalette }
@@ -116,6 +116,35 @@ final class AppSettings: ObservableObject {
     }
     @Published var alertScale = UserDefaults.standard.object(forKey: "alertScale") as? Double ?? 1.0 {
         didSet { d.set(alertScale, forKey: "alertScale") }
+    }
+    @Published var walkingAhead = UserDefaults.standard.object(forKey: "walkingAhead") as? Bool ?? true {
+        didSet { d.set(walkingAhead, forKey: "walkingAhead") }
+    }
+    @Published var walkingAheadRight = UserDefaults.standard.bool(forKey: "walkingAheadRight") {
+        didSet { d.set(walkingAheadRight, forKey: "walkingAheadRight") }
+    }
+    @Published var walkingAheadRange = UserDefaults.standard.object(forKey: "walkingAheadRange") as? Int ?? 600 {
+        didSet { d.set(walkingAheadRange, forKey: "walkingAheadRange") }
+    }
+    @Published var walkingRoadEvents = Set((UserDefaults.standard.stringArray(forKey: "walkingRoadEvents") ??
+        [RouteRoadEvent.Kind.trafficLight.rawValue, RouteRoadEvent.Kind.railway.rawValue])
+        .compactMap(RouteRoadEvent.Kind.init(rawValue:))) {
+        didSet { d.set(walkingRoadEvents.map(\.rawValue), forKey: "walkingRoadEvents") }
+    }
+    @Published var walkingAheadWaze = UserDefaults.standard.bool(forKey: "walkingAheadWaze") {
+        didSet { d.set(walkingAheadWaze, forKey: "walkingAheadWaze") }
+    }
+    @Published var walkingAheadCameras = UserDefaults.standard.bool(forKey: "walkingAheadCameras") {
+        didSet { d.set(walkingAheadCameras, forKey: "walkingAheadCameras") }
+    }
+    @Published var wazeMapScale = UserDefaults.standard.object(forKey: "wazeMapScale") as? Double ?? 1.0 {
+        didSet { d.set(wazeMapScale, forKey: "wazeMapScale") }
+    }
+    @Published var wazeStripScale = UserDefaults.standard.object(forKey: "wazeStripScale") as? Double ?? 1.0 {
+        didSet { d.set(wazeStripScale, forKey: "wazeStripScale") }
+    }
+    @Published var arrivalParking = UserDefaults.standard.object(forKey: "arrivalParking") as? Bool ?? true {
+        didSet { d.set(arrivalParking, forKey: "arrivalParking") }
     }
     @Published var roadEvents = Set((UserDefaults.standard.stringArray(forKey: "roadEvents") ?? RouteRoadEvent.Kind.allCases.map(\.rawValue))
         .compactMap(RouteRoadEvent.Kind.init(rawValue:))) {

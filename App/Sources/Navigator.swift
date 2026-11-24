@@ -17,6 +17,8 @@ final class Navigator: ObservableObject {
     @Published private(set) var progress: RouteTracker.Progress?
     @Published private(set) var rerouting = false
     @Published private(set) var arrived = false
+    @Published private(set) var showArrivalParking = false
+    private var offeredArrivalParking = false
     /** What the voice says: everything, only warnings (cameras, police, hazards), or nothing. */
     @Published var voiceMode: VoiceMode {
         didSet {
@@ -76,7 +78,7 @@ final class Navigator: ObservableObject {
     var roadStripReports: [(alert: WazeAlert, along: Double)] { routeWaze }
     var roadStripCameras: [(camera: RoadCamera, along: Double)] { routeCameras.filter { $0.camera.kind == .speed } }
 
-    let destination: Place
+    @Published private(set) var destination: Place
     /** Stops still ahead, in trip order; each is dropped once reached. */
     @Published private(set) var stops: [Place]
     private var tracker: RouteTracker
@@ -406,6 +408,7 @@ final class Navigator: ObservableObject {
             tracedAt = Date()
             Self.trace.info("at \(String(format: "%.5f,%.5f", loc.coordinate.latitude, loc.coordinate.longitude), privacy: .public) along \(Int(p.alongMeters)) off \(Int(p.offsetMeters)) next \(p.nextIndex ?? -1) in \(Int(p.distanceToNext)) offRoute \(p.offRoute) speed \(Int(self.speedMps))")
         }
+        updateArrivalParking(p)
         announce(p)
         checkTraffic(p, loc)
         checkCameras(p)
@@ -418,6 +421,26 @@ final class Navigator: ObservableObject {
            speeding.update(speedKmh: loc.speed >= 0 ? loc.speed * 3.6 : nil, limitKmh: speedLimitKmh, now: loc.timestamp.timeIntervalSince1970) {
             speak("You're over the speed limit.", alert: true)
         }
+    }
+
+    private func updateArrivalParking(_ progress: RouteTracker.Progress) {
+        guard AppSettings.shared.arrivalParking, route.mode == .drive, !offeredArrivalParking,
+              !arrived, !rerouting, ArrivalHelp.offerParking(remainingMeters: progress.remainingMeters,
+                                                              stopsRemaining: stops.count, offRoute: progress.offRoute) else { return }
+        offeredArrivalParking = true
+        showArrivalParking = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+            self?.dismissArrivalParking()
+        }
+    }
+
+    func dismissArrivalParking() { showArrivalParking = false }
+
+    func routeToParking(_ park: CarPark) {
+        guard let fix = lastFix, !stopped, !arrived, !rerouting, stops.isEmpty else { return }
+        var place = Place(id: "osm:parking:\(park.id)", name: park.name ?? "Car park", location: park.location, source: "osm")
+        place.category = "Parking"
+        reroute(from: fix, quiet: true, parking: place)
     }
 
     /** A stop picked on the way (search along the route): go there first, then on. */
@@ -509,6 +532,23 @@ final class Navigator: ObservableObject {
         averageCheck = nil
         routeSignals = []
         let s = AppSettings.shared
+        if route.mode == .walk, s.walkingAhead, s.walkingAheadCameras {
+            let line = route.polyline
+            let start = max(0, (progress?.alongMeters ?? 0) - 50)
+            let path = Geo.slice(line, from: start, to: start + Double(s.walkingAheadRange) * 2)
+            guard path.count >= 2 else { return }
+            let id = route.id
+            let wazeOn = s.walkingAheadWaze && s.wazeOn
+            WazeCameras.enabled = s.wazeOn
+            Task { [weak self] in
+                async let osm = Overpass.cameras(along: path, speed: true, plate: false)
+                async let waze = wazeOn ? WazeCameras.along(path) : nil
+                let known = await WazeCameras.merge(osm ?? [], waze: waze ?? [])
+                guard let self, !self.stopped, self.route.id == id else { return }
+                self.routeCameras = CameraAlerts.project(known, on: line)
+            }
+            return
+        }
         guard route.mode == .drive else { return }
         let line = route.polyline, id = route.id
         let speed = s.speedCameras, plate = s.plateCameras
@@ -643,15 +683,18 @@ final class Navigator: ObservableObject {
 
     /** Live Waze reports along the route; asked again every 90 seconds, since they come and go. */
     private func loadWaze() {
-        guard route.mode == .drive, AppSettings.shared.wazeOn, !wazeLoading, !demoAlerts else { return }
+        let settings = AppSettings.shared
+        let walking = route.mode == .walk && settings.walkingAhead && settings.walkingAheadWaze
+        guard (route.mode == .drive || walking), settings.wazeOn, !wazeLoading, !demoAlerts else { return }
         wazeLoading = true
         wazeAt = Date()
         let line = route.polyline, id = route.id
         // Only the next 60 km: on a long drive the rest will have changed by the time you get there.
         let at = progress?.alongMeters ?? 0
-        let window = Geo.slice(line, from: max(at - 200, 0), to: at + 60_000)
+        let lookahead = walking ? Double(settings.walkingAheadRange) * 2 : 60_000
+        let window = Geo.slice(line, from: max(at - 200, 0), to: at + lookahead)
         let here = progress.map { Geo.point(along: line, meters: $0.alongMeters) } ?? line[0]
-        let ahead = Geo.slice(line, from: max(at - 200, 0), to: at + 40_000)
+        let ahead = Geo.slice(line, from: max(at - 200, 0), to: at + min(40_000, lookahead))
         Task {
             // Closures from the live map; everything else from Waze's app servers, for the next 40 km.
             async let closures = Waze.alongRoute(window.count >= 2 ? window : line)
@@ -678,6 +721,10 @@ final class Navigator: ObservableObject {
     }
 
     private func checkWaze(_ p: RouteTracker.Progress) {
+        if route.mode == .walk {
+            if Date().timeIntervalSince(wazeAt) > 90 { loadWaze() }
+            return
+        }
         guard !demoAlerts else { return }
         let s = AppSettings.shared
         if Date().timeIntervalSince(wazeAt) > 90 { loadWaze() }
@@ -1084,7 +1131,7 @@ final class Navigator: ObservableObject {
 
     private func latLng(_ loc: CLLocation) -> LatLng { LatLng(loc.coordinate.latitude, loc.coordinate.longitude) }
 
-    private func reroute(from loc: CLLocation, quiet: Bool = false, adding: Place? = nil) {
+    private func reroute(from loc: CLLocation, quiet: Bool = false, adding: Place? = nil, parking: Place? = nil) {
         Self.trace.info("reroute from \(String(format: "%.5f,%.5f", loc.coordinate.latitude, loc.coordinate.longitude), privacy: .public) heading \(self.heading(loc).map { Int($0) } ?? -1)")
         rerouting = true
         lastReroute = Date()
@@ -1105,7 +1152,7 @@ final class Navigator: ObservableObject {
         // Only while driving: on foot or a bike, turning round is fine.
         let course = route.mode == .drive ? heading(loc) : nil
         let mode = route.mode
-        let to = destination.location
+        let to = parking?.location ?? destination.location
         let hw = avoidHighways, tolls = avoidTolls
         rerouteRequest += 1
         let req = rerouteRequest
@@ -1131,8 +1178,10 @@ final class Navigator: ObservableObject {
                     self.stops.remove(at: i)
                     self.speak("Couldn't add a stop at \(adding.name). Carrying on to \(self.stops.first?.name ?? self.destination.name).")
                 }
+                if parking != nil { self.speak("Couldn't route to the car park. Carrying on to \(self.destination.name).") }
                 return
             }
+            if let parking { self.destination = parking }
             self.toldNoSignal = false
             self.adopt(fresh)
             if !quiet { self.sayNewRoute() }

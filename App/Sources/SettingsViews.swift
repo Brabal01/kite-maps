@@ -201,6 +201,7 @@ struct SettingsView: View {
                 Toggle("Swap controls during navigation", isOn: $settings.mirrorNavigationButtons)
                 Toggle("Hold the map to add a stop", isOn: $settings.pressToAddStop)
             }
+            Toggle("Parking near destination", isOn: $settings.arrivalParking)
             Section("Road ahead") {
                 NavigationLink {
                     Form {
@@ -220,6 +221,29 @@ struct SettingsView: View {
                                 Toggle(kind.title, isOn: Binding(get: { settings.roadEvents.contains(kind) }, set: { on in
                                     if on { settings.roadEvents.insert(kind) } else { settings.roadEvents.remove(kind) }
                                 }))
+                            }
+                        }
+                        Section("Waze icons") {
+                            alertSize("On the map", scale: $settings.wazeMapScale)
+                            alertSize("In Road Ahead", scale: $settings.wazeStripScale)
+                        }
+                        Section("Walking") {
+                            Toggle("Walking Road Ahead", isOn: $settings.walkingAhead)
+                            if settings.walkingAhead {
+                                Picker("Side", selection: $settings.walkingAheadRight) {
+                                    Text("Left").tag(false)
+                                    Text("Right").tag(true)
+                                }
+                                Picker("Look ahead", selection: $settings.walkingAheadRange) {
+                                    ForEach([300, 600, 1000], id: \.self) { Text(Fmt.distance(Double($0))).tag($0) }
+                                }
+                                ForEach(RouteRoadEvent.Kind.allCases, id: \.self) { kind in
+                                    Toggle(kind.title, isOn: Binding(get: { settings.walkingRoadEvents.contains(kind) }, set: { on in
+                                        if on { settings.walkingRoadEvents.insert(kind) } else { settings.walkingRoadEvents.remove(kind) }
+                                    }))
+                                }
+                                Toggle("Waze reports", isOn: $settings.walkingAheadWaze)
+                                Toggle("Speed cameras", isOn: $settings.walkingAheadCameras)
                             }
                         }
                     }.kiteList().navigationTitle("Road ahead")
@@ -261,6 +285,14 @@ struct SettingsView: View {
         }
         .kiteList()
         .navigationTitle("Voice & driving")
+    }
+
+    private func alertSize(_ title: String, scale: Binding<Double>) -> some View {
+        HStack {
+            Text(title)
+            Slider(value: scale, in: 0.75...1.75, step: 0.05) { Text(title) }
+            Text(scale.wrappedValue.formatted(.percent.precision(.fractionLength(0)))).monospacedDigit()
+        }
     }
 
     private var camerasPage: some View {

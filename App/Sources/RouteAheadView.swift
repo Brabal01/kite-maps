@@ -6,9 +6,9 @@ enum AheadStyle: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .line: return "Route line"
-        case .card: return "Cards"
-        case .symbols: return "Symbols only"
+        case .line: return "Classic"
+        case .card: return "Event cards"
+        case .symbols: return "Bare line"
         }
     }
 }
@@ -32,12 +32,15 @@ struct RouteAheadView: View {
         let title: String
         let meters: Double
         var accent: Color = .primary
+        var scale: Double = 1
     }
 
     private var markers: [Marker] {
         let traveled = nav.progress?.alongMeters ?? 0
-        let horizon = nav.route.mode == .walk ? 600.0 : 4_000.0
-        var all = events.filter { settings.roadEvents.contains($0.kind) }.map {
+        let walking = nav.route.mode == .walk
+        let horizon = walking ? Double(settings.walkingAheadRange) : 4_000.0
+        let categories = walking ? settings.walkingRoadEvents : settings.roadEvents
+        var all = events.filter { categories.contains($0.kind) }.map {
             Marker(id: "osm:\($0.id)", image: $0.kind.icon, title: $0.kind.title, meters: $0.along - traveled)
         }
         if nav.route.mode == .drive {
@@ -45,10 +48,15 @@ struct RouteAheadView: View {
                 Marker(id: "traffic:\($0.startMeters)", image: "car.2.fill", title: "Slow traffic",
                        meters: max(0, $0.startMeters - traveled), accent: .red)
             }
+        }
+        if nav.route.mode == .drive || (walking && settings.walkingAheadCameras) {
             all += nav.roadStripCameras.map {
                 Marker(id: "camera:\($0.camera.id)", image: "camera.fill", title: "Speed camera",
-                       meters: $0.along - traveled, accent: .orange)
+                       meters: $0.along - traveled, accent: .orange,
+                       scale: WazeCameras.isWaze($0.camera) ? settings.wazeStripScale : 1)
             }
+        }
+        if nav.route.mode == .drive || (walking && settings.walkingAheadWaze) {
             all += nav.roadStripReports.filter { settings.shows($0.alert) }.map {
                 let report = $0.alert
                 let icon: String
@@ -62,7 +70,7 @@ struct RouteAheadView: View {
                 case .hazard: icon = "exclamationmark.triangle.fill"
                 }
                 return Marker(id: report.id, image: icon, title: report.kind.rawValue.capitalized,
-                              meters: $0.along - traveled, accent: .orange)
+                              meters: $0.along - traveled, accent: .orange, scale: settings.wazeStripScale)
             }
         }
         return Array(all.filter { $0.meters >= 0 && $0.meters <= horizon }
@@ -84,7 +92,7 @@ struct RouteAheadView: View {
                             let size = 21 * settings.alertScale
                             Image(uiImage: MapIcons.trafficLight()).resizable().frame(width: size, height: size)
                         } else {
-                            Image(systemName: marker.image).font(.system(size: 17 * settings.alertScale, weight: .bold))
+                            Image(systemName: marker.image).font(.system(size: 17 * settings.alertScale * marker.scale, weight: .bold))
                                 .foregroundStyle(marker.accent)
                         }
                         Text(Fmt.distance(marker.meters)).font(.caption2.weight(.semibold)).monospacedDigit()
@@ -101,9 +109,9 @@ struct RouteAheadView: View {
             }
             .padding(6)
             .background(alignment: vertical ? .leading : .bottom) {
-                if settings.aheadStyle == .line {
-                    RoundedRectangle(cornerRadius: 13).fill(Vela.sheet(scheme))
-                    Capsule().fill(congested ? Color.red : Color.teal)
+                if settings.aheadStyle != .card {
+                    if settings.aheadStyle == .line { RoundedRectangle(cornerRadius: 13).fill(Vela.sheet(scheme)) }
+                    Capsule().fill(congested ? Color.red : Vela.accent(scheme))
                         .frame(width: vertical ? 3 : nil, height: vertical ? nil : 3)
                 }
             }

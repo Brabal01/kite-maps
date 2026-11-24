@@ -17,6 +17,7 @@ final class MapboxStandardSurface: MapboxMaps.MapView {
         let driving: Bool
         let terrain: Bool
         let palette: MapPalette
+        let wazeScale: Double
 
         var style: MapStyle {
             let light: StandardLightPreset = dark ? .night : .day
@@ -128,6 +129,7 @@ final class MapboxStandardSurface: MapboxMaps.MapView {
             if styleChanged { mapboxMap.mapStyle = appearance.style }
             if overlaysReady {
                 updateTerrain()
+                updateWazeSize()
                 try? mapboxMap.setLayerProperty(for: "vela-route", property: "line-color", value: routeColor)
             }
         }
@@ -263,6 +265,7 @@ final class MapboxStandardSurface: MapboxMaps.MapView {
             try addLayers()
             installVehicleModels()
             updateTerrain()
+            updateWazeSize()
             overlaysReady = true
             syncOverlays()
         } catch {
@@ -318,6 +321,14 @@ final class MapboxStandardSurface: MapboxMaps.MapView {
                                     "paint": ["circle-color": color, "circle-radius": 7,
                                               "circle-stroke-color": "#FFFFFF", "circle-stroke-width": 2]], layerPosition: nil)
         }
+    }
+
+    private func updateWazeSize() {
+        for id in ["vela-waze", "vela-waze-group"] {
+            try? mapboxMap.setLayerProperty(for: id, property: "icon-size", value: appearance.wazeScale)
+        }
+        let scale: [Any] = ["case", ["==", ["get", "waze"], 1], appearance.wazeScale, 1]
+        try? mapboxMap.setLayerProperty(for: "vela-cameras", property: "icon-size", value: scale)
     }
 
     private func updateTerrain() {

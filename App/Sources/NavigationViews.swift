@@ -9,6 +9,7 @@ struct NavigationOverlay: View {
     @State private var profileAfterSteps = false
     @State private var showAlong = false
     @State private var confirmEnd = false
+    @State private var showParking = false
     @Environment(\.colorScheme) private var scheme
     @Environment(\.sidePanel) private var panel
 
@@ -74,8 +75,10 @@ struct NavigationOverlay: View {
     }
 
     private func roadAhead(at position: AheadPosition) -> some View {
-        Group {
-            if !nav.arrived && settings.aheadPosition == position {
+        let walking = nav.route.mode == .walk
+        let chosen: AheadPosition = walking ? (settings.walkingAheadRight ? .right : .left) : settings.aheadPosition
+        return Group {
+            if !nav.arrived && chosen == position && (!walking || settings.walkingAhead) {
                 RouteAheadView(nav: nav, settings: settings, events: nav.roadEvents,
                                vertical: position == .left || position == .right)
             }
@@ -255,6 +258,24 @@ struct NavigationOverlay: View {
                     .inSidePanel(panel)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             } else {
+                if nav.showArrivalParking, !nav.arrived, !nav.rerouting {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Parking near \(nav.destination.name)").font(.headline).lineLimit(2)
+                        HStack {
+                            Button("Continue") { nav.dismissArrivalParking() }
+                            Spacer()
+                            Button("Find parking") {
+                                nav.dismissArrivalParking()
+                                showParking = true
+                            }
+                            .buttonStyle(.borderedProminent)
+                        }
+                    }
+                    .padding(12)
+                    .background(Vela.sheet(scheme), in: RoundedRectangle(cornerRadius: 16))
+                    .padding(.horizontal, 16)
+                    .inSidePanel(panel)
+                }
                 if let road = nav.currentRoad, !road.isEmpty, !nav.arrived, nav.following {
                     Text(road).font(.footnote.weight(.semibold)).lineLimit(1)
                         .padding(.horizontal, 12).padding(.vertical, 5)
@@ -284,6 +305,9 @@ struct NavigationOverlay: View {
                 try? await Task.sleep(nanoseconds: 4_000_000_000)
                 withAnimation { confirmEnd = true }
             }
+        }
+        .sheet(isPresented: $showParking) {
+            DestinationParkingView(nav: nav)
         }
         .sheet(isPresented: $showAlong) {
             AlongRouteSheet(nav: nav).kiteType()
@@ -1774,5 +1798,48 @@ struct RoundaboutDiagram: View {
             ctx.draw(digits, at: c)
         }
         .accessibilityLabel("Roundabout, take exit \(exit)")
+    }
+}
+
+
+private struct DestinationParkingView: View {
+    @ObservedObject var nav: Navigator
+    @Environment(\.dismiss) private var dismiss
+    @State private var results: [CarPark]?
+    @State private var failed = false
+    @State private var retry = 0
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if failed {
+                    Button("Retry parking search") { retry += 1 }
+                } else if let results, results.isEmpty {
+                    Text("No mapped parking near the destination.").foregroundStyle(.secondary)
+                } else if let results {
+                    ForEach(results) { parking in
+                        Button {
+                            nav.routeToParking(parking)
+                            dismiss()
+                        } label: {
+                            LabeledContent(parking.name ?? "Car park", value: Fmt.distance(parking.meters))
+                        }
+                    }
+                } else {
+                    ProgressView("Finding parking…")
+                }
+            }
+            .navigationTitle("Parking near destination")
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Continue", action: { dismiss() }) } }
+        }
+        .task(id: retry) {
+            let place = nav.destination
+            failed = false
+            results = nil
+            let found = await ArrivalHelp.parking(near: place.location)
+            guard !Task.isCancelled, nav.destination.id == place.id else { return }
+            failed = found == nil
+            results = found
+        }
     }
 }

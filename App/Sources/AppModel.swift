@@ -1405,7 +1405,8 @@ final class AppModel: ObservableObject {
     private func tripCheck(_ n: Navigator) {
         if n.arrived {
             if settings.trip != nil { settings.trip = nil }
-        } else if Date().timeIntervalSince(tripSavedAt) > 60 || settings.trip?.stops.count != n.stops.count {
+        } else if Date().timeIntervalSince(tripSavedAt) > 60 || settings.trip?.stops.count != n.stops.count ||
+                    settings.trip?.destination.id != n.destination.id {
             rememberTrip(n)
         }
     }
