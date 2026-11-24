@@ -26,6 +26,7 @@ struct TransitLiveActivity: Widget {
             }
             .padding(16)
             .foregroundStyle(.white)
+            .widgetURL(URL(string: "kite://map"))
             .activityBackgroundTint(Color(red: 0.06, green: 0.09, blue: 0.16))
             .activitySystemActionForegroundColor(.white)
         } dynamicIsland: { context in
@@ -54,6 +55,7 @@ struct TransitLiveActivity: Widget {
             } minimal: {
                 Image(systemName: state.symbol).foregroundStyle(accent)
             }
+            .widgetURL(URL(string: "kite://map"))
         }
     }
 }

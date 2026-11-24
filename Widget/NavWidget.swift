@@ -17,6 +17,7 @@ struct NavLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: NavActivityAttributes.self) { context in
             LockScreenTurn(state: context.state, destination: context.attributes.destination)
+                .widgetURL(URL(string: "kite://map"))
                 .activityBackgroundTint(Color(red: 0.06, green: 0.09, blue: 0.16))
                 .activitySystemActionForegroundColor(.white)
         } dynamicIsland: { context in
@@ -52,6 +53,7 @@ struct NavLiveActivity: Widget {
             } minimal: {
                 Image(systemName: s.symbol).font(.system(size: 15, weight: .bold)).foregroundColor(teal)
             }
+            .widgetURL(URL(string: "kite://map"))
         }
     }
 }
