@@ -102,6 +102,7 @@ class NavGlide : Choreographer.FrameCallback {
     private var targetPitch = 50.0
     /** 3D, 2D or north up, from the map button. */
     var look = MapLook.TILTED
+    var deviceHeading: Double? = null
     /** 0 facing the way you go, 1 north up; eased so a tap turns the map rather than jumping. */
     private var northBlend = 0.0
 
@@ -273,7 +274,8 @@ class NavGlide : Choreographer.FrameCallback {
             val d = KiteApp.app.resources.displayMetrics.density.toDouble()
             // North up: the map turns to face north and the car moves up to the middle, as the road
             // ahead can be any way round. Otherwise it faces the way you go with the car low down.
-            val heading = (shownBearing + shortestTurn(shownBearing, 0.0) * northBlend + 360) % 360
+            val forward = deviceHeading?.takeIf { fixSpeed < 1.4 || n.route.mode == TravelMode.WALK } ?: shownBearing
+            val heading = (forward + shortestTurn(forward, 0.0) * northBlend + 360) % 360
             carNorth = northBlend.toFloat()
             carSquash = (1 - 0.36 * (shownPitch / 50.0).coerceIn(0.0, 1.0)).toFloat()
             // A pitched camera sees farther than the same zoom flat: zoom in a little to match the iPhone's distance.

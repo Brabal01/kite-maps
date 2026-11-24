@@ -83,7 +83,7 @@ fun DirectionsOverlay(model: AppModel, showMapbox: Boolean) {
         val full = maxHeight
         Box(Modifier.align(Alignment.BottomCenter)) {
             BottomSheet(model.detent, { model.detent = it }, full, tripPeek(d),
-                topClearance = statusTop + 6.dp + cardHeight + 16.dp,
+                topClearance = statusTop + 6.dp + cardHeight + 16.dp, opaque = true,
                 header = { TripHeader(model) }, content = { TripBody(model) })
         }
         if (showMapbox) {
@@ -624,8 +624,7 @@ fun TripBody(model: AppModel) {
                         }
                     }
                 }
-                if (r.mode != TravelMode.DRIVE) RouteElevation(r)
-                RoutePathSections(r, model)
+                IconRow(Icons.Filled.Terrain, "Elevation and surface", trailing = "View") { model.openProfile(r) }
                 HorizontalDivider()
                 Text("Steps", fontSize = KType.headline, fontWeight = FontWeight.SemiBold, color = primaryText)
                 StepsList(r)
@@ -903,7 +902,10 @@ fun TransitSteps(trip: TransitTrip, activeLeg: Int? = null, live: Map<String, Tr
                                 Text(times(updated.arrival ?: updated.departure, name), fontSize = KType.caption, color = secondaryText)
                             }
                         } else Text(Fmt.duration(leg.durationSeconds), fontSize = KType.caption, color = secondaryText)
-                        Text(times(status?.exit?.arrival ?: leg.arrive, "Get off at ${leg.toName}"), fontSize = KType.subheadline, color = primaryText)
+                        val exitPlatform = (status?.exit?.platform ?: leg.calls.lastOrNull()?.platform)
+                            ?.takeIf(String::isNotBlank)?.let { " · Platform $it" }.orEmpty()
+                        Text(times(status?.exit?.arrival ?: leg.arrive, "Get off at ${leg.toName}") + exitPlatform,
+                            fontSize = KType.subheadline, color = primaryText)
                     }
                 }
             }
@@ -916,9 +918,9 @@ fun TransitSteps(trip: TransitTrip, activeLeg: Int? = null, live: Map<String, Tr
 fun PickerPage(title: String, close: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
     FullScreenDialog(close) {
         val dark = LocalDark.current
-        Column(Modifier.fillMaxSize().background(Vela.ground(dark)).systemBarsPadding().imePadding()) {
-            Box(Modifier.fillMaxWidth().height(56.dp)) {
-                Text("Cancel", fontSize = KType.body, color = Vela.accentText(dark), modifier = Modifier.align(Alignment.CenterStart)
+        Column(Modifier.fillMaxSize().background(interfaceGround).systemBarsPadding().imePadding()) {
+            Box(Modifier.fillMaxWidth().height(56.dp).background(interfaceSheet)) {
+                Text("Cancel", fontSize = KType.body, color = interfaceAccentText, modifier = Modifier.align(Alignment.CenterStart)
                     .padding(start = 8.dp).clip(RoundedCornerShape(8.dp)).tap(close).padding(horizontal = 10.dp, vertical = 8.dp))
                 Text(title, fontSize = KType.headline, fontWeight = FontWeight.SemiBold, color = primaryText, modifier = Modifier.align(Alignment.Center))
             }
@@ -937,7 +939,7 @@ fun PickerSearchField(
     val requester = remember { androidx.compose.ui.focus.FocusRequester() }
     LaunchedEffect(autoFocus) { if (autoFocus) runCatching { requester.requestFocus() } }
     Row(Modifier.padding(horizontal = 16.dp, vertical = 6.dp).fillMaxWidth().height(48.dp).clip(RoundedCornerShape(14.dp))
-        .background(Vela.chip(dark)).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        .background(interfaceSurface).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Icon(Icons.Filled.Search, null, tint = secondaryText, modifier = Modifier.size(22.dp))
         Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
             if (query.isEmpty()) Text(prompt, fontSize = KType.body, color = secondaryText)
@@ -1195,7 +1197,7 @@ fun StopMapOverlay(model: AppModel, showMapbox: Boolean) {
     var listDetent by rememberSaveable(search.query, search.parking) { mutableStateOf(SheetDetent.HALF) }
     LaunchedEffect(search.results) {
         if (search.results.isNotEmpty()) {
-            listDetent = SheetDetent.HALF
+            listDetent = SheetDetent.FULL
             showList = true
         }
     }
@@ -1229,7 +1231,7 @@ fun StopMapOverlay(model: AppModel, showMapbox: Boolean) {
                     footer = {
                         Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
                             horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            TextButton({ showList = true }) { Text("All results") }
+                            TextButton({ listDetent = SheetDetent.FULL; showList = true }) { Text("All results") }
                             Button({ model.acceptStop(selected) }) { Text(if (search.parking) "Drive here" else "Add stop") }
                         }
                     })
@@ -1244,7 +1246,7 @@ fun StopMapOverlay(model: AppModel, showMapbox: Boolean) {
                 search.results.isEmpty() -> Text(if (search.parking) "No parking found nearby." else "No stops found near the road ahead.", color = primaryText, modifier = Modifier.padding(vertical = 8.dp))
                 else -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("Choose a pin on the map", Modifier.weight(1f), color = primaryText)
-                    TextButton({ showList = true }) { Text("List (${search.results.size})", color = interfaceAccentText) }
+                    TextButton({ listDetent = SheetDetent.FULL; showList = true }) { Text("List (${search.results.size})", color = interfaceAccentText) }
                 }
             }
         }

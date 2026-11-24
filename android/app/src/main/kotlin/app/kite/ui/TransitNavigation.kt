@@ -35,6 +35,7 @@ fun TransitNavigationOverlay(model: AppModel, journey: TransitGuidance, showMapb
     var showTrip by remember { mutableStateOf(false) }
     var tripDetent by remember { mutableStateOf(SheetDetent.HALF) }
     var showDepartures by remember(journey.legIndex) { mutableStateOf(false) }
+    var showAccess by remember(journey.legIndex, phase) { mutableStateOf(false) }
     var confirmEnd by remember { mutableStateOf(false) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(journey) {
@@ -55,7 +56,7 @@ fun TransitNavigationOverlay(model: AppModel, journey: TransitGuidance, showMapb
     BoxWithConstraints(Modifier.fillMaxSize().systemBarsPadding()) {
         val full = maxHeight
         if (showMapbox) MapboxAttribution(Modifier.align(Alignment.TopStart).padding(start = 16.dp, top = 112.dp))
-        if (!showTrip) Column(Modifier.align(Alignment.BottomCenter).padding(12.dp).fillMaxWidth().glass(RoundedCornerShape(25.dp))
+        if (!showTrip) Column(Modifier.align(Alignment.BottomCenter).padding(12.dp).fillMaxWidth().glass(RoundedCornerShape(25.dp), solid = true)
             .padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
             val label = when (phase) {
                 TransitGuidance.Phase.WALK -> leg?.toName?.takeUnless { it.isBlank() || it == "END" }?.let { "Walk to $it" }
@@ -136,6 +137,9 @@ fun TransitNavigationOverlay(model: AppModel, journey: TransitGuidance, showMapb
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 if (phase != TransitGuidance.Phase.COMPLETE) {
                     TextButton({ tripDetent = SheetDetent.HALF; showTrip = true }) { Text("Trip") }
+                    if (leg?.vehicle in setOf(TransitLeg.Vehicle.METRO, TransitLeg.Vehicle.TRAIN)) {
+                        TextButton({ showAccess = true }) { Text(if (phase == TransitGuidance.Phase.RIDE) "Exits" else "Entrances") }
+                    }
                     TextButton(model::replanTransit) { Text("Replan") }
                     TextButton({ confirmEnd = true }) { Text("End") }
                 } else Button(model::endNavigation) { Text("Done") }
@@ -171,6 +175,14 @@ fun TransitNavigationOverlay(model: AppModel, journey: TransitGuidance, showMapb
                         TransitSteps(journey.trip, activeLeg = journey.legIndex, live = model.transitLive)
                     }
                 })
+        }
+    }
+    if (showAccess && leg != null) {
+        val call = if (phase == TransitGuidance.Phase.RIDE) leg.calls.lastOrNull() else leg.calls.firstOrNull()
+        val at = call?.at ?: if (phase == TransitGuidance.Phase.RIDE) leg.path.lastOrNull() else leg.path.firstOrNull()
+        if (at != null) StationAccessDialog(at, { showAccess = false }) {
+            showAccess = false
+            model.showStationEntrance(it)
         }
     }
     if (showDepartures) TripSheet("Departures", "Done", { showDepartures = false }) {

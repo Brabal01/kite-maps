@@ -52,7 +52,7 @@ fun RoadAheadStrip(nav: Navigator, modifier: Modifier = Modifier, showLabels: Bo
     val range = (progress?.remainingMeters ?: nav.route.distanceMeters).coerceIn(1.0, if (walking) 600.0 else 3_000.0)
     val end = start + range
     val dark = LocalDark.current
-    val traffic = nav.roadTraffic.filter { it.startMeters < end && it.startMeters + it.lengthMeters > start }
+    val traffic = nav.roadTraffic.takeIf { AppSettings.aheadTraffic }.orEmpty().filter { it.startMeters < end && it.startMeters + it.lengthMeters > start }
     val controls = nav.roadControls.asSequence().filter { it.along in start..end && AppSettings.showsControl(it.kind) }.map {
         val distance = it.along - start
         when (it.kind) {

@@ -99,6 +99,22 @@ object AppSettings {
         { p -> p.getStringSet("openPlaceGroups", null)?.let { saved -> OpenPlaceGroup.entries.filter { it.name in saved }.toSet() }
             ?: OpenPlaceGroup.entries.toSet() },
         { e, v -> e.putStringSet("openPlaceGroups", v.map { it.name }.toSet()) })
+    private fun routeEngine(key: String) = Pref(key,
+        { p -> RouteEngine.entries.firstOrNull { it.name == p.getString(key, null) } ?: RouteEngine.AUTO },
+        { e, value -> e.putString(key, value.name) })
+    var driveEngine by routeEngine("driveEngine")
+    var walkEngine by routeEngine("walkEngine")
+    var bikeEngine by routeEngine("bikeEngine")
+    fun routeEngine(mode: TravelMode): RouteEngine = when (mode) {
+        TravelMode.DRIVE -> driveEngine
+        TravelMode.WALK -> walkEngine
+        TravelMode.BIKE -> bikeEngine
+    }
+    var navigationHoldAnywhere by bool("navigationHoldAnywhere")
+    var portraitPip by bool("portraitPip")
+    var driveNorthUp by bool("driveNorthUp")
+    var browseNorthUp by bool("browseNorthUp", true)
+    var preloadRouteProfile by bool("preloadRouteProfile", true)
     var navigationPlaces by bool("navigationPlaces")
     var navigationPlaceSource by Pref("navigationPlaceSource",
         { p -> NavigationPlaceSource.entries.firstOrNull { it.name == p.getString("navigationPlaceSource", null) }

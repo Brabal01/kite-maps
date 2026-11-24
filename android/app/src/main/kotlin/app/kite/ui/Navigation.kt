@@ -120,7 +120,7 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean,
     // The voice or map view just picked, shown by its button for a moment.
     var buttonNote by remember { mutableStateOf<Pair<String, String>?>(null) }
     LaunchedEffect(buttonNote) { if (buttonNote != null) { delay(2500); buttonNote = null } }
-    val north = AppSettings.driveLook == MapLook.NORTH
+    val north = AppSettings.driveNorthUp || AppSettings.driveLook == MapLook.NORTH
     val risk = nav.policeRisk
     val showRiskChip = risk != null && !nav.arrived && PoliceRisk.level(risk) != PoliceRisk.Level.LOW
     val chipShowing = showRiskChip
@@ -157,7 +157,7 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean,
             }, contentAlignment = Alignment.TopCenter) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Image(puck, "Current position", Modifier.size(76.dp)
-                        .combinedClickable(onClick = { model.recenterNav() }, onDoubleClick = { model.recenterNav(closer = true) })
+                        .combinedClickable(onClick = model::tapNavigationLocation)
                         .graphicsLayer {
                             if (!tilted) scaleY = model.glide.carSquash
                             rotationZ = model.glide.carTurn
@@ -290,6 +290,7 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean,
                             val look = AppSettings.driveLook
                             buttonNote = look.title to look.detail
                         }
+                        CompassButton(model.mapHeading, AppSettings.driveNorthUp) { model.toggleDriveCompass() }
                         val icon = when (nav.voiceMode) {
                             VoiceMode.ALL -> Icons.AutoMirrored.Filled.VolumeUp
                             VoiceMode.ALERTS -> Icons.Filled.Notifications
@@ -332,7 +333,7 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean,
             }
             if (!nav.following) {
                 Row(Modifier.align(Alignment.CenterHorizontally).height(52.dp).shadow(3.dp, CircleShape).clip(CircleShape).background(Vela.accent(dark))
-                    .combinedClickable(onClick = { model.recenterNav() }, onDoubleClick = { model.recenterNav(closer = true) })
+                    .combinedClickable(onClick = model::tapNavigationLocation)
                     .padding(horizontal = 22.dp), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Icon(Icons.Filled.Navigation, null, tint = Vela.onAccent(dark))
@@ -376,6 +377,7 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean,
                     TripAction(Icons.Filled.Search, "Add stop") { showSteps = false; model.addingStop = true }
                     TripAction(Icons.Filled.Share, "Share ETA") { ctx.share(etaText()) }
                     TripAction(Icons.Filled.ZoomOutMap, "Overview") { showSteps = false; model.overviewNav() }
+                    TripAction(Icons.Filled.Terrain, "Profile") { showSteps = false; model.openProfile(nav.route) }
                 }
                 nav.stops.firstOrNull()?.let { stop ->
                     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(interfaceSurface).padding(10.dp),
@@ -405,7 +407,7 @@ fun TripSheet(title: String, button: String, close: () -> Unit, content: @Compos
                 Text(button, fontSize = KType.body, fontWeight = FontWeight.SemiBold, color = Vela.accentText(dark), modifier = Modifier.align(Alignment.CenterEnd)
                     .padding(end = 8.dp).clip(RoundedCornerShape(8.dp)).tap(close).padding(horizontal = 10.dp, vertical = 8.dp))
             }
-            content()
+            Column(Modifier.weight(1f).fillMaxWidth(), content = content)
         }
     }
 }
@@ -586,7 +588,7 @@ fun InstructionBanner(nav: Navigator) {
         return
     }
     val lanes = if (m != null && p != null && p.distanceToNext < 1_500) LaneGuide.lanes(m, leftTraffic) else null
-    Column(Modifier.fillMaxWidth().glass(RoundedCornerShape(28.dp)).padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(Modifier.fillMaxWidth().glass(RoundedCornerShape(28.dp), solid = true).padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             if (m?.type == ManeuverType.ROUNDABOUT) RoundaboutDiagram(m.roundabout, m.exit, leftTraffic, Modifier.size(76.dp))
             else Box(Modifier.size(64.dp, 72.dp), contentAlignment = Alignment.Center) {

@@ -91,14 +91,15 @@ fun BrowseOverlay(model: AppModel, showMapbox: Boolean) {
                     }
                     // 3D, 2D or north up, always there. On north up with the map turned by hand,
                     // the needle shows which way north is and a tap faces north again.
-                    MapLookButton(model.browseLook, model.mapHeading, 48.dp) { model.cycleBrowseLook(ctx) }
+                    MapLookButton(model.browseLook, 48.dp) { model.cycleBrowseLook(ctx) }
+                    CompassButton(model.mapHeading, AppSettings.browseNorthUp) { model.toggleBrowseCompass(ctx) }
                 }
             }
             Spacer(Modifier.weight(1f))
             if (sheetH < full * 0.6f) {
                 Row(Modifier.fillMaxWidth().padding(bottom = if (hasSheet) (sheetH - navBottom).coerceAtLeast(0.dp) + 14.dp else 86.dp),
                     verticalAlignment = Alignment.Bottom) {
-                    if (idle) WazeMapChips(model)
+                    if (idle) Box(Modifier.offset(y = (-58).dp)) { WazeMapChips(model) }
                     Spacer(Modifier.weight(1f))
                     LocateButton(model)
                 }
@@ -190,7 +191,7 @@ private fun LocateButton(model: AppModel) {
     val ctx = LocalContext.current
     var menu by remember { mutableStateOf(false) }
     Box {
-        Box(Modifier.size(52.dp).glass(CircleShape).combinedClickable(onClick = { model.centerOnUser(ctx) }, onDoubleClick = { model.centerOnUser(ctx, closer = true) }, onLongClick = { menu = true }),
+        Box(Modifier.size(52.dp).glass(CircleShape).combinedClickable(onClick = { model.centerOnUser(ctx) }, onLongClick = { menu = true }),
             contentAlignment = Alignment.Center) {
             Icon(Icons.Filled.MyLocation, "Centre on me", tint = Vela.accentText(dark), modifier = Modifier.size(24.dp))
         }

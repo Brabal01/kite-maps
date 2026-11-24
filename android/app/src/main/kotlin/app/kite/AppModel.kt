@@ -196,6 +196,8 @@ class AppModel {
     private var transitDeparturesJob: Job? = null
     private var transitCameraAt = 0L
     var showLayers by mutableStateOf(false)
+    var offlineMapShown by mutableStateOf(false)
+    var offlineFocus by mutableStateOf<LatLng?>(null)
     var tab by mutableStateOf(AppTab.MAP)
     /** Live Waze reports in view, for the "Live from Waze" chip; null until Waze answers. */
     var wazeLiveCount by mutableStateOf<Int?>(null)
@@ -215,6 +217,8 @@ class AppModel {
     fun showNavigationPlace(place: Place?) {
         if (nav?.arrived == false) navigationPlace = place
     }
+
+    fun navigationPin(at: LatLng) = Place("pin:" + at.lat + "," + at.lng, "Dropped pin", at, "pin")
 
     fun addNavigationPlace(place: Place) {
         val n = nav?.takeUnless { it.arrived } ?: return
@@ -910,7 +914,15 @@ class AppModel {
                 if (parking && driving != null) {
                     val target = driving.destination.location
                     val places = coroutineScope {
-                        val osm = async { OutdoorData.find(OutdoorData.PARKING, target, 1400.0).orEmpty() }
+                        val osm = async {
+                            val nearby = ArrivalHelp.parking(target)?.map { park ->
+                                Place("osm:parking:${park.id}", park.name ?: "Parking", park.location, "osm",
+                                    category = "Parking", address = listOfNotNull(park.kind,
+                                        park.fee?.let { if (it) "Paid parking" else "Free parking" },
+                                        park.spaces?.let { "$it spaces" }).joinToString(" · ").ifBlank { null })
+                            }.orEmpty()
+                            nearby.ifEmpty { OutdoorData.find(OutdoorData.PARKING, target, 1400.0).orEmpty() }
+                        }
                         val google = async { if (useGoogle) PlaceSearch.namedNearby("parking", target, 2800.0, true) else emptyList() }
                         OutdoorData.combine(google.await(), osm.await())
                     }
@@ -1252,12 +1264,14 @@ class AppModel {
             for (mode in modes) launch {
                 val result = try {
                     val preferred = Directions.routes(from, to, mode, hw, tolls, google, via, heading.takeIf { mode == TravelMode.DRIVE },
-                        alternatives = !d.startRequested, mapboxToken = mapboxToken)
+                        alternatives = !d.startRequested, mapboxToken = mapboxToken, engine = settings.routeEngine(mode))
                     if (mode == TravelMode.DRIVE && d.avoid.isNotEmpty()) {
                         val clear = preferred.routes.filterNot { Directions.touches(it.polyline, d.avoid) }
                         if (clear.isNotEmpty()) Directions.Result(clear)
-                        else Directions.avoiding(from, to, via, d.avoid)?.let { Directions.Result(listOf(it)) }
-                            ?: Directions.Result(emptyList(), "No route found.")
+                        else if (settings.driveEngine == RouteEngine.AUTO) {
+                            Directions.avoiding(from, to, via, d.avoid)?.let { Directions.Result(listOf(it)) }
+                                ?: Directions.Result(emptyList(), "No route found.")
+                        } else Directions.Result(emptyList(), "The selected engine did not find a route that skips those roads.")
                     } else preferred
                 } catch (e: CancellationException) {
                     throw e
@@ -1266,8 +1280,7 @@ class AppModel {
                 }
                 ensureActive()
                 val routes = result.routes.filter { it.polyline.size >= 2 }.sortedBy { it.durationSeconds }
-                val error = Connectivity.explain(if (result.error == "No route found.") "No route found."
-                    else "Couldn't get a route just now. Try again in a moment.")
+                val error = Connectivity.explain(result.error ?: "Couldn't get a route just now. Try again in a moment.")
                 val shouldStart = directions?.let { !it.transit && it.mode == mode && it.startRequested } == true
                 edit { it.copy(loading = it.loading - mode,
                     routes = if (routes.isEmpty()) it.routes else it.routes + (mode to routes),
@@ -1422,10 +1435,12 @@ class AppModel {
         val index = session.legIndex
         session.walkingError = false
         transitWalkJob = scope.launch {
-            val route = if (leg.walkSteps.isNotEmpty() && leg.path.size >= 2 && origin.distanceTo(leg.path.first()) < 50) {
+            val route = if (settings.walkEngine == RouteEngine.AUTO && leg.walkSteps.isNotEmpty() &&
+                leg.path.size >= 2 && origin.distanceTo(leg.path.first()) < 50) {
                 Route(TravelMode.WALK, leg.path, leg.distanceMeters, leg.durationSeconds, null, null,
                     leg.walkSteps.map { it.copy() }.toMutableList(), source = "transitous")
-            } else Directions.routes(origin, destination, TravelMode.WALK, useGoogle = !settings.noGoogle).routes.firstOrNull()
+            } else Directions.routes(origin, destination, TravelMode.WALK, useGoogle = !settings.noGoogle, mapboxToken = settings.activeMapboxToken,
+                engine = settings.walkEngine).routes.firstOrNull()
             if (transitGuidance !== session || session.legIndex != index) return@launch
             if (route == null) {
                 session.walkingError = true
@@ -1650,7 +1665,7 @@ class AppModel {
 
     fun recenterNav(closer: Boolean = false) {
         val n = mapNavigator ?: return
-        if (closer) navZoomSteps = max(navZoomSteps, 2)
+        if (closer) navZoomSteps = max(navZoomSteps, 5)
         if (transitGuidance?.walking != null) {
             followTransit()
             return
@@ -1818,15 +1833,15 @@ class AppModel {
         val rawView = if (n.route.mode == TravelMode.WALK) NavZoom.View(135.0, 40.0)
             else NavZoom.view(f.speed, p?.distanceToNext, n.nextManeuver?.type, n.route.mode == TravelMode.DRIVE)
         val view = rawView.applying(settings.mapZoom, settings.driveLook)
-        glide.look = settings.driveLook
+        glide.look = if (settings.driveNorthUp) MapLook.NORTH else settings.driveLook
         val across = if (n.route.mode == TravelMode.DRIVE && android.os.SystemClock.elapsedRealtime() < navigationCameraUntil)
             min(view.across, 560.0 * settings.mapZoom.scale) else view.across
         glide.fix(n, f, across / 1.36.pow(navZoomSteps), view.pitch)
     }
 
-    /** The map button while driving: 3D, then 2D, then north up. Kept for the next drive. */
+    /** 2D or 3D perspective, saved for the next drive. */
     fun cycleDriveLook() {
-        settings.driveLook = settings.driveLook.next
+        settings.driveLook = if (settings.driveLook == MapLook.TILTED) MapLook.FLAT else MapLook.TILTED
         browseLook = settings.driveLook
         settings.browseMapLook = browseLook
         val n = mapNavigator ?: return
@@ -1834,31 +1849,42 @@ class AppModel {
         location.last?.let { followCamera(n, it) }
     }
 
-    /**
-     * The map button off a route. North up with the map turned by hand: face north first, like the
-     * compass it replaces. Otherwise on to the next of 3D, 2D and north up.
-     */
+    fun toggleDriveCompass() {
+        settings.driveNorthUp = !settings.driveNorthUp
+        val n = mapNavigator ?: return
+        n.following = true
+        location.last?.let { followCamera(n, it) }
+    }
+
     fun cycleBrowseLook(ctx: android.content.Context) {
-        if (browseLook == MapLook.NORTH && mapHeading != 0.0) {
-            resetCamera()
-            return
-        }
-        browseLook = browseLook.next
+        browseLook = if (browseLook == MapLook.TILTED) MapLook.FLAT else MapLook.TILTED
         settings.browseMapLook = browseLook
         settings.driveLook = browseLook
-        if (browseLook == MapLook.NORTH) {
-            browseFollowing = false
-            resetCamera()
-            return
-        }
-        val loc = location.last
-        if (loc == null) {
-            resetCamera()
-            if (location.denied) LocationService.openSettings(ctx) else location.start()
-            return
-        }
-        browseFollowing = true
-        followBrowse(loc, entering = true)
+        val fix = location.last
+        if (browseFollowing && fix != null) followBrowse(fix, entering = true)
+        else resetCamera()
+    }
+
+    private var phoneHeading: Double? = null
+
+    fun headingChanged(heading: Double) {
+        phoneHeading = heading
+        glide.deviceHeading = heading
+        if (!settings.browseNorthUp && browseFollowing && !isGuiding) location.last?.let { followBrowse(it, entering = false) }
+    }
+
+    fun toggleBrowseCompass(ctx: android.content.Context) {
+        settings.browseNorthUp = !settings.browseNorthUp
+        if (settings.browseNorthUp) resetCamera() else centerOnUser(ctx)
+    }
+
+    private var lastNavCenteredAt: LatLng? = null
+    fun tapNavigationLocation() {
+        val coord = location.last?.coord
+        val closer = mapNavigator?.following == true && coord != null &&
+            lastNavCenteredAt?.distanceTo(coord)?.let { it < 18 } == true
+        lastNavCenteredAt = coord
+        recenterNav(closer)
     }
 
     /**
@@ -1870,8 +1896,8 @@ class AppModel {
         if (!browseFollowing || nav != null) return
         if (!entering && (selected != null || results.isNotEmpty() || directions != null)) return
         val current = visibleCamera?.invoke() ?: m.cameraPosition
-        val course = if (browseLook == MapLook.NORTH) 0.0 else if (f.courseKnown && f.speed > 2) f.course else current.bearing
-        val meters = if (closer) 230.0 else if (browseLook == MapLook.TILTED) 700.0 else 950.0
+        val course = if (settings.browseNorthUp) 0.0 else phoneHeading ?: f.course.takeIf { f.courseKnown } ?: current.bearing
+        val meters = if (closer) 72.0 else if (browseLook == MapLook.TILTED) 700.0 else 950.0
         val zoom = if (entering) max(current.zoom, MapCam.zoomFor(meters, f.lat, mapWidthDp)) else current.zoom
         if (!entering && current.target?.kite()?.distanceTo(f.coord)?.let { it < 9 } == true && Geo.diff(current.bearing, course) < 4) return
         val pos = CameraPosition.Builder().target(f.coord.ml()).zoom(zoom).tilt(browsePitch).bearing(course).build()
@@ -1882,21 +1908,25 @@ class AppModel {
 
     private val browsePitch: Double get() = if (browseLook == MapLook.TILTED) 48.0 else 0.0
 
+    private var lastCenteredAt: LatLng? = null
+
     fun centerOnUser(ctx: android.content.Context, closer: Boolean = false) {
         val loc = location.last
         if (map == null || loc == null) {
             if (location.denied) LocationService.openSettings(ctx) else location.start()
             return
         }
+        val close = closer || browseFollowing && lastCenteredAt?.distanceTo(loc.coord)?.let { it < 18 } == true
+        lastCenteredAt = loc.coord
         browseFollowing = true
-        followBrowse(loc, entering = true, closer = closer)
+        followBrowse(loc, entering = true, closer = close)
     }
 
     private fun resetCamera() {
         val m = map ?: return
         val c = visibleCamera?.invoke() ?: m.cameraPosition
         MapCam.animate(m, CameraPosition.Builder(c).tilt(browsePitch)
-            .bearing(if (browseLook == MapLook.NORTH) 0.0 else c.bearing).build(), ms = 290, native = nativeCamera)
+            .bearing(if (settings.browseNorthUp) 0.0 else phoneHeading ?: c.bearing).build(), ms = 290, native = nativeCamera)
     }
 
     /** A spot on the map, close up (a report along the route). */
@@ -1906,15 +1936,102 @@ class AppModel {
         MapCam.animate(m, CameraPosition.Builder().target(p.ml()).zoom(15.0).build(), ms = 500)
     }
 
+    data class IndoorView(val place: Place, val plan: IndoorMaps.Plan, val floor: String)
+    var indoorView by mutableStateOf<IndoorView?>(null)
+        private set
+    var loadingIndoor by mutableStateOf(false)
+        private set
+
+    fun openIndoor(place: Place) {
+        if (loadingIndoor) return
+        loadingIndoor = true
+        scope.launch {
+            val plan = try {
+                IndoorMaps.plan(place.location)
+            } finally {
+                loadingIndoor = false
+            }
+            if (selected?.id != place.id) return@launch
+            val floor = plan?.floors?.let { it.firstOrNull { f -> f == "0" } ?: it.lastOrNull() }
+            if (plan == null || floor == null) {
+                notice = "No indoor floor plan found here."
+                return@launch
+            }
+            indoorView = IndoorView(place, plan, floor)
+            val m = map ?: return@launch
+            MapCam.animate(m, CameraPosition.Builder(m.cameraPosition).target(place.location.ml())
+                .zoom(18.9).tilt(0.0).build(), ms = 260, native = nativeCamera)
+        }
+    }
+
+    fun setIndoorFloor(floor: String) {
+        indoorView = indoorView?.copy(floor = floor)
+    }
+
+    fun closeIndoor() {
+        indoorView = null
+        resetCamera()
+    }
+
+    fun showStationEntrance(at: LatLng) {
+        mapNavigator?.following = false
+        transitGuidance?.following = false
+        val m = map ?: return
+        if (!isGuiding) detent = SheetDetent.PEEK
+        MapCam.animate(m, CameraPosition.Builder(m.cameraPosition).target(at.ml()).zoom(18.6).build(),
+            padding = intArrayOf(0, 60, 0, (mapHeightDp * 0.30f).toInt()), ms = 230, native = nativeCamera)
+        stationEntrance = at
+        stationEntranceJob?.cancel()
+        stationEntranceJob = scope.launch { delay(18_000); stationEntrance = null }
+    }
+
+    private var stationEntranceJob: Job? = null
+    var stationEntrance by mutableStateOf<LatLng?>(null)
+        private set
+
+    var profileRoute by mutableStateOf<Route?>(null)
+        private set
+    var profileProbe by mutableStateOf<LatLng?>(null)
+        private set
+    val routeProfiles = RouteProfiles(scope)
+    private var profileWasFollowing = false
+
+    fun openProfile(route: Route) {
+        profileWasFollowing = mapNavigator?.following == true
+        profileRoute = route
+    }
+
+    fun closeProfile() {
+        val restore = profileWasFollowing
+        val probed = profileProbe != null || pathSectionHighlight?.first == profileRoute?.id
+        profileRoute = null
+        profileProbe = null
+        pathSectionHighlight = null
+        if (probed && restore) recenterNav()
+        else if (probed && mapNavigator == null) frameRoute()
+    }
+
+    fun scrubProfile(at: LatLng) {
+        val m = map ?: return
+        profileProbe = at
+        mapNavigator?.following = false
+        browseFollowing = false
+        val c = m.cameraPosition
+        MapCam.animate(m, CameraPosition.Builder(c).target(at.ml()).zoom(c.zoom.coerceAtLeast(14.5)).build(),
+            padding = intArrayOf(0, 40, 0, (mapHeightDp * 0.53f).toInt()), ms = 0, native = nativeCamera)
+    }
+
     var pathSectionHighlight by mutableStateOf<Pair<String, Valhalla.PathSection>?>(null)
 
     fun framePathSection(route: Route, section: Valhalla.PathSection) {
-        if (directions?.route?.id != route.id) return
+        if (directions?.route?.id != route.id && mapNavigator?.route?.id != route.id) return
         val points = Geo.slice(route.polyline, section.from, section.to)
         if (points.size < 2) return
         pathSectionHighlight = route.id to section
-        detent = SheetDetent.PEEK
-        frame(points, bottomFraction = 0.30f, top = 184)
+        profileProbe = null
+        mapNavigator?.following = false
+        if (profileRoute == null) detent = SheetDetent.PEEK
+        frame(points, bottomFraction = if (profileRoute == null) 0.30f else 0.52f, top = 58)
     }
 
     fun frame(points: List<LatLng>, bottomFraction: Float = 0.45f, top: Int = 130) {

@@ -508,19 +508,28 @@ object Directions {
         a: LatLng, b: LatLng, mode: TravelMode,
         avoidHighways: Boolean = false, avoidTolls: Boolean = false,
         useGoogle: Boolean = true, via: List<LatLng> = emptyList(), heading: Double? = null,
-        alternatives: Boolean = false, mapboxToken: String? = null,
+        alternatives: Boolean = false, mapboxToken: String? = null, engine: RouteEngine = RouteEngine.AUTO,
     ): Result = withContext(Dispatchers.Default) {
-        if (mapboxToken != null && mode == TravelMode.DRIVE) {
-            val primary = MapboxDirections.routes(a, b, via, heading, avoidHighways, avoidTolls, alternatives, mapboxToken)
+        if (engine == RouteEngine.GOOGLE && !useGoogle) return@withContext Result(emptyList(), "Google routing is disabled.")
+        if (engine == RouteEngine.MAPBOX || engine == RouteEngine.AUTO && mapboxToken != null && mode == TravelMode.DRIVE) {
+            val token = mapboxToken ?: return@withContext Result(emptyList(), "Mapbox routing needs a map token.")
+            val primary = MapboxDirections.routes(a, b, via, heading, avoidHighways, avoidTolls, alternatives, token, mode)
                 .filter { reaches(it.polyline, a, b) }
                 .map { StepMerge.tidy(it.maneuvers); Roundabouts.settle(it) }
-            if (primary.isNotEmpty()) return@withContext Result(primary)
+            if (primary.isNotEmpty() || engine == RouteEngine.MAPBOX) {
+                return@withContext Result(primary, "Mapbox did not find a route.".takeIf { primary.isEmpty() })
+            }
+        }
+        if (engine == RouteEngine.OPENSTREETMAP) {
+            val routes = OSRM.route(a, b, mode, via, heading).filter { reaches(it.polyline, a, b) }
+            return@withContext Result(routes.map { StepMerge.tidy(it.maneuvers); Roundabouts.settle(it) },
+                "OpenStreetMap did not find a route.".takeIf { routes.isEmpty() })
         }
         // Off the main thread: fitting the open router's steps onto a long route (a drive across the
         // country) is millions of sums, enough to freeze the screen for seconds.
         // Ask both at once: Google's route knows traffic, OSRM's steps read better.
         val osrmTask = async(Dispatchers.IO) { runCatching { OSRM.route(a, b, mode, via, heading) } }
-        if (mode == TravelMode.WALK) {
+        if (mode == TravelMode.WALK && engine == RouteEngine.AUTO) {
             val walk = osrmTask.await().getOrNull().orEmpty().filter {
                 it.polyline.firstOrNull()?.distanceTo(a)?.let { d -> d <= 180 } == true &&
                     it.polyline.last().distanceTo(b) <= 180
@@ -572,7 +581,7 @@ object Directions {
                             }
                             g[i].maneuvers = steps
                             g[i].stepsComplete = true
-                        } else if (!g[i].stepsComplete && spare.isNotEmpty()) {
+                        } else if (engine == RouteEngine.AUTO && !g[i].stepsComplete && spare.isNotEmpty()) {
                             val o = spare.removeAt(0).deep()
                             val t = g[i].trafficSeconds
                             if (t != null && g[i].typicalSeconds > 0) o.trafficSeconds = o.typicalSeconds * t / g[i].typicalSeconds
@@ -595,13 +604,39 @@ object Directions {
                 err = e.message ?: "Google didn't answer."
             }
         }
+        if (engine == RouteEngine.GOOGLE) {
+            osrmTask.cancel()
+            return@withContext Result(emptyList(), err ?: "Google Maps did not find a route.")
+        }
         val o = osrmTask.await()
         // The open router only knows Europe: asked for somewhere it has no roads to (California, an
         // island with no ferry), it snaps the end to its nearest road, and Southampton to Davis came
         // back as 1,280 miles to Cabo da Roca in Portugal. A route that stops miles short isn't one.
-        o.getOrNull()?.filter { reaches(it.polyline, a, b) }?.let { if (it.isNotEmpty()) return@withContext Result(it.map { r -> StepMerge.tidy(r.maneuvers); Roundabouts.settle(r) }) }
+        val open = o.getOrNull()
+        open?.filter { reaches(it.polyline, a, b) }?.let { if (it.isNotEmpty()) return@withContext Result(it.map { r -> StepMerge.tidy(r.maneuvers); Roundabouts.settle(r) }) }
         o.exceptionOrNull()?.let { err = it.message }
-        Result(emptyList(), err ?: "No route found.")
+        Result(emptyList(), noRouteReason(a, b, mode, open) ?: err ?: "No route found.")
+    }
+
+    /**
+     * Why there's no route, when it can be told: too far for the way of travel, or roads that stop
+     * short of the place (the open router found a way, but only to the nearest road it has: the sea,
+     * or a ferry, is in the way). Null when it can't be told.
+     */
+    fun noRouteReason(a: LatLng, b: LatLng, mode: TravelMode, open: List<Route>?): String? {
+        val km = a.distanceTo(b) / 1000
+        return when {
+            mode == TravelMode.WALK && km > 500 -> "Too far to walk."
+            mode == TravelMode.BIKE && km > 1000 -> "Too far to cycle."
+            km > 6000 -> "Too far to drive."
+            // Thousands of km with no road found at all: almost always an ocean in between (London to New York).
+            km > 3000 -> "No road goes all the way there. The sea may be in the way."
+            // Only when the open router got close (within 50 km at both ends): far off means it simply has
+            // no map there (it only knows Europe), not that the sea is in the way.
+            open?.any { it.polyline.size > 1 && it.polyline.first().distanceTo(a) < 50_000 && it.polyline.last().distanceTo(b) < 50_000 } == true ->
+                "No road goes all the way there. The sea or a ferry may be in the way."
+            else -> null
+        }
     }
 
     /** Whether [line] starts and ends within 5 km of where it was asked to go from and to. */

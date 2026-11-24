@@ -56,7 +56,7 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
 
     val roadTraffic: List<TrafficSpan>
         get() {
-            if (!AppSettings.traffic || !AppSettings.aheadTraffic) return emptyList()
+            if (!AppSettings.traffic) return emptyList()
             val measured = currentTraffic ?: route.trafficSpans
             if (!AppSettings.aheadWaze || !AppSettings.wazeOnMap) return measured
             // A point report identifies an approximate spot, so keep its mark short.
@@ -192,7 +192,7 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
     private var spokenStage = mutableMapOf<Int, Int>()
     private var stoppedNearEnd: Long? = null
     private var trafficScale = 1.0
-    private var trafficAt = now()
+    private var trafficAt = now() - if (route0.trafficSpans.isEmpty()) 100_000 else 0
     private var trafficLoading = false
     private var cameraSpokenAt = 0L
     private var cameraSpokenLimit: Double? = null
@@ -962,8 +962,9 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
     private fun checkTraffic(p: RouteTracker.Progress, loc: Fix) {
         val mapboxToken = AppSettings.activeMapboxToken
         val useGoogle = !AppSettings.noGoogle
-        if (route.mode != TravelMode.DRIVE || (!useGoogle && mapboxToken == null) || rerouting || trafficLoading || fasterOffer != null ||
-            p.remainingMeters <= 5000 || p.offRoute || since(trafficAt) <= 240) return
+        val engine = AppSettings.driveEngine
+        if (!AppSettings.traffic || engine == RouteEngine.OPENSTREETMAP || route.mode != TravelMode.DRIVE || (!useGoogle && mapboxToken == null) || rerouting || trafficLoading || fasterOffer != null ||
+            p.remainingMeters <= 250 || p.offRoute || since(trafficAt) <= 110) return
         trafficLoading = true
         trafficAt = now()
         val from = loc.coord
@@ -973,7 +974,7 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
         val previousTraffic = currentTraffic ?: route.trafficSpans
         scope.launch {
             val r = runCatching {
-                Directions.routes(from, to, TravelMode.DRIVE, avoidHighways, avoidTolls, useGoogle, via, course, mapboxToken = mapboxToken)
+                Directions.routes(from, to, TravelMode.DRIVE, avoidHighways, avoidTolls, useGoogle, via, course, mapboxToken = mapboxToken, engine = engine)
             }.getOrNull()
             trafficLoading = false
             val fresh = r?.routes?.firstOrNull() ?: return@launch
@@ -989,9 +990,11 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
                 offerFaster(fresh, saving, nowP.remainingMeters, left)
             } else if (sameWay) {
                 trafficScale = min(3.0, max(0.5, fresh.durationSeconds / planned))
-                if (fresh.source == "mapbox") {
+                if (fresh.source == "mapbox" || fresh.source == "google") {
                     val updated = withContext(Dispatchers.Default) {
-                        MapboxDirections.refreshTraffic(existingRoute.polyline, previousTraffic, fresh, p.alongMeters)
+                        if (fresh.trafficSpans.isEmpty() && fresh.source == "google" &&
+                            fresh.durationSeconds > fresh.typicalSeconds * 1.12) null
+                        else MapboxDirections.refreshTraffic(existingRoute.polyline, previousTraffic, fresh, p.alongMeters)
                     }
                     if (updated != null && route.id == id && !stopped && !rerouting) currentTraffic = updated
                 }
@@ -1109,12 +1112,12 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
         scope.launch {
             var r = runCatching {
                 Directions.routes(from, to, mode, avoidHighways, avoidTolls, !AppSettings.noGoogle, waypoints, course,
-                    mapboxToken = AppSettings.activeMapboxToken)
+                    mapboxToken = AppSettings.activeMapboxToken, engine = AppSettings.routeEngine(mode))
             }.getOrNull()
             // The new way goes back along a road tapped away on the plan: the way round it instead,
             // when there is one (otherwise the usual route, rather than none at all).
             val first = r?.routes?.firstOrNull()
-            if (avoid.isNotEmpty() && first != null && Directions.touches(first.polyline, avoid) && req == rerouteRequest) {
+            if (AppSettings.routeEngine(mode) == RouteEngine.AUTO && avoid.isNotEmpty() && first != null && Directions.touches(first.polyline, avoid) && req == rerouteRequest) {
                 runCatching { Directions.avoiding(from, to, waypoints, avoid) }.getOrNull()?.let { r = r?.copy(routes = listOf(it)) }
             }
             if (stopped || req != rerouteRequest) return@launch

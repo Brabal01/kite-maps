@@ -62,6 +62,10 @@ data class Place(
     }
 }
 
+enum class RouteEngine(val label: String) {
+    AUTO("Automatic"), OPENSTREETMAP("OpenStreetMap · OSRM"), GOOGLE("Google Maps"), MAPBOX("Mapbox"),
+}
+
 enum class TravelMode(val raw: Int, val label: String, val osrmBackend: String, val osrmProfile: String) {
     DRIVE(0, "Drive", "routed-car", "driving"),
     BIKE(1, "Bike", "routed-bike", "bike"),

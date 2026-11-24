@@ -51,6 +51,8 @@ import kotlin.math.*
  */
 class KiteMap(private val model: AppModel, private val context: Context) {
     companion object {
+        const val INDOOR = "kite-indoor"
+        const val PROFILE_PROBE = "kite-profile-probe"
         const val STREET_VIEW = "kite-street-view"
         const val STYLE_URL = "https://tiles.openfreemap.org/styles/liberty"
         /** How see-through cameras and reports off your route are while driving. */
@@ -95,6 +97,33 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         try {
             m.moveCamera(org.maplibre.android.camera.CameraUpdateFactory.newCameraPosition(camera))
         } finally { syncingClassic = false }
+    }
+
+    fun refreshProfileProbe() {
+        val style = map?.style?.takeIf { styleReady }
+        setShape(style, PROFILE_PROBE, listOfNotNull((model.profileProbe ?: model.stationEntrance)?.let { point(it, emptyMap()) }))
+    }
+
+    fun refreshIndoor() {
+        val style = map?.style?.takeIf { styleReady }
+        val view = model.indoorView
+        val features = if (view == null) emptyList() else buildList {
+            for (item in view.plan.features) {
+                if (view.floor !in item.floors) continue
+                val geometry = item.geometry
+                val props = mapOf("role" to "area", "kind" to item.kind)
+                if (geometry.size >= 4 && geometry.first() == geometry.last()) {
+                    add(Feature.fromGeometry(Polygon.fromLngLats(listOf(geometry.map { Point.fromLngLat(it.lng, it.lat) }))).also {
+                        it.addStringProperty("role", "area")
+                        it.addStringProperty("kind", item.kind)
+                    })
+                } else if (geometry.size > 1) add(polyline(geometry, props))
+                val label = item.name ?: continue
+                val center = LatLng(geometry.map { it.lat }.average(), geometry.map { it.lng }.average())
+                add(point(center, mapOf("role" to "label", "label" to label)))
+            }
+        }
+        setShape(style, INDOOR, features)
     }
 
     fun refreshStreetView() {
@@ -142,6 +171,8 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         map?.let(::loadGooglePlaces)
         map?.style?.let { setShape(it, "vela-rail", railFeatures) }
         if (model.streetViewFrame != null) refreshStreetView()
+        refreshProfileProbe()
+        refreshIndoor()
         render()
     }
 
@@ -414,6 +445,8 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         addVelaLayers(style)
         styleReady = true
         if (model.streetViewFrame != null) refreshStreetView()
+        refreshProfileProbe()
+        refreshIndoor()
         applyPinSizes(style)
         heatTiles.styleReloaded()
         styledDriving = null
@@ -937,6 +970,16 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             textField(toString(get("rank"))), textFont(overlayFont), textSize(12f), textColor(Color.WHITE),
             textAllowOverlap(true), textIgnorePlacement(true)))
 
+        src(INDOOR)
+        style.addLayer(FillLayer("$INDOOR-fill", INDOOR).withProperties(
+            fillColor(0xFFE0DFEC.toInt()), fillOpacity(0.92f), fillOutlineColor(0xFF665886.toInt())))
+        style.addLayer(LineLayer("$INDOOR-lines", INDOOR).withFilter(eq(get("role"), literal("area"))).withProperties(
+            lineColor(0xFF706384.toInt()), lineWidth(1.6f)))
+        style.addLayer(SymbolLayer("$INDOOR-labels", INDOOR).withFilter(eq(get("role"), literal("label"))).withProperties(
+            textField(get("label")), textFont(overlayFont), textSize(12f), textColor(0xFF352746.toInt()), textHaloColor(Color.WHITE), textHaloWidth(1.3f)))
+        src(PROFILE_PROBE)
+        style.addLayer(CircleLayer(PROFILE_PROBE, PROFILE_PROBE).withProperties(
+            circleRadius(8f), circleColor(0xFF7C3AED.toInt()), circleStrokeColor(Color.WHITE), circleStrokeWidth(3f)))
         src(STREET_VIEW)
         style.addLayer(FillLayer("$STREET_VIEW-cone", STREET_VIEW).withProperties(
             fillColor(c(0x0EA5A4)), fillOpacity(0.35f), fillOutlineColor(c(0x15807C))))
@@ -1084,9 +1127,9 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             if (m.locationComponent.isLocationComponentEnabled != showPosition) m.locationComponent.isLocationComponentEnabled = showPosition
         } else if (LocationService.authorized) enableLocation(style)
         // Not before the welcome screen's choice: "Open data only" means nothing ever went to Google.
-        visible(style, "vela-traffic", !showingMapbox && s.traffic && !navigating && !s.noGoogle && s.welcomed)
+        visible(style, "vela-traffic", !showingMapbox && s.traffic && !s.noGoogle && s.welcomed)
         if (showingMapbox) {
-            mapboxTrafficLayers(style).forEach { visible(style, it.id, s.traffic && !navigating) }
+            mapboxTrafficLayers(style).forEach { visible(style, it.id, s.traffic) }
         }
         // The Surveillance layer just switched on: fetch it now, not at the next pan (only on the
         // switch, so a failed fetch keeps its 30-second pause).
@@ -1516,7 +1559,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         val traffic = n?.roadTraffic ?: main?.trafficSpans.orEmpty().takeIf { AppSettings.traffic }.orEmpty()
         val context = "${trip?.id}|${session?.legIndex}|$overview|${main?.id}|${alts.joinToString { it.id }}"
         val follows = n?.following == true
-        val highlight = model.pathSectionHighlight.takeIf { n == null && main != null && it?.first == main.id }
+        val highlight = model.pathSectionHighlight.takeIf { main != null && it?.first == main.id }
         if (visiblePathSection != highlight || routeContext.isEmpty()) {
             visiblePathSection = highlight
             val points = highlight?.second?.let { section -> main?.let { Geo.slice(it.polyline, section.from, section.to) } }.orEmpty()
@@ -1778,7 +1821,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         if (model.positionEndpointPin(at.kite())) return
         pinDroppedAt = now()
         if (model.nav != null) {
-            val place = navigationPlaceAt(m, at) ?: return
+            val place = navigationPlaceAt(m, at) ?: if (AppSettings.navigationHoldAnywhere) model.navigationPin(at.kite()) else return
             view?.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
             model.addNavigationPlace(place)
             return

@@ -1,6 +1,14 @@
 package app.kite
 
 import android.graphics.BitmapFactory
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import app.kite.core.Valhalla
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import app.kite.core.Geo
 import app.kite.core.Http
 import app.kite.core.LatLng
@@ -63,5 +71,69 @@ object ElevationProfile {
         val x = floor((at.lng + 180.0) / 360.0 * world).toInt().mod(world)
         val y = floor((1.0 - asinh(tan(lat)) / PI) * world / 2).toInt().coerceIn(0, world - 1)
         return Pixel(Tile(x / 256, y / 256), x % 256, y % 256)
+    }
+}
+
+internal const val PREFETCH_SURFACE_METERS = 32_000.0
+
+class RouteProfiles(private val scope: CoroutineScope) {
+    class Entry {
+        var elevation by mutableStateOf<ElevationProfile.Result?>(null)
+        var elevationDone by mutableStateOf(false)
+        var surfaces by mutableStateOf<List<Valhalla.PathSection>?>(null)
+        var fullSurface by mutableStateOf(false)
+        var loadingSurface by mutableStateOf(false)
+    }
+
+    private val entries = mutableStateMapOf<String, Entry>()
+    operator fun get(route: Route): Entry? = entries[route.id]
+
+    fun load(route: Route, entireSurface: Boolean = false) {
+        val existing = entries[route.id]
+        val entry = existing ?: Entry().also {
+            if (entries.size >= 5) entries.remove(entries.keys.first())
+            entries[route.id] = it
+        }
+        if (existing == null) scope.launch {
+            entry.elevation = try {
+                ElevationProfile.sample(route)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
+            entry.elevationDone = true
+        }
+        if (entry.loadingSurface || entry.fullSurface || !entireSurface && entry.surfaces != null) return
+        entry.loadingSurface = true
+        scope.launch {
+            val max = if (entireSurface) Double.POSITIVE_INFINITY else PREFETCH_SURFACE_METERS
+            try {
+                entry.surfaces = Valhalla.pathSections(route, max).fold(mutableListOf<Valhalla.PathSection>()) { merged, raw ->
+                    val category = when (raw.surface) {
+                        "paved_smooth" -> "Smooth pavement"
+                        "paved" -> "Pavement"
+                        "paved_rough" -> "Rough pavement"
+                        "compacted", "gravel" -> "Gravel and compacted"
+                        "dirt", "path", "grass" -> "Natural surface"
+                        else -> null
+                    }
+                    val previous = merged.lastOrNull()
+                    if (category != null && previous?.surface == category && raw.from - previous.to < 2.0) {
+                        merged[merged.lastIndex] = previous.copy(to = raw.to)
+                    } else if (category != null) {
+                        merged += raw.copy(surface = category, type = null)
+                    }
+                    merged
+                }
+                entry.fullSurface = entireSurface || route.distanceMeters <= PREFETCH_SURFACE_METERS
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                if (entry.surfaces == null) entry.surfaces = emptyList()
+            } finally {
+                entry.loadingSurface = false
+            }
+        }
     }
 }

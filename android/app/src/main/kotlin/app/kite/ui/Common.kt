@@ -331,27 +331,26 @@ fun CompassNeedle(heading: Double, onClick: () -> Unit) {
     }
 }
 
-/**
- * The map's view button: "3D", "2D", or a compass needle for north up. It shows the view the map is in
- * now, and a tap goes on to the next one. The needle turns with the map, so it always points north.
- */
 @Composable
-fun MapLookButton(look: MapLook, heading: Double = 0.0, size: Dp = 52.dp, onClick: () -> Unit) {
+fun MapLookButton(look: MapLook, size: Dp = 52.dp, onClick: () -> Unit) {
+    val label = if (look == MapLook.TILTED) "3D" else "2D"
+    Box(Modifier.size(size).glass(CircleShape, solid = true).clickable(onClick = onClick)
+        .semantics { contentDescription = "Map view: $label" }, contentAlignment = Alignment.Center) {
+        Text(label, fontSize = (size.value * 0.34f).sp, fontWeight = FontWeight.Black, color = mapControlTint)
+    }
+}
+
+@Composable
+fun CompassButton(heading: Double, northUp: Boolean, size: Dp = 44.dp, onClick: () -> Unit) {
     val gray = secondaryText
     Box(Modifier.size(size).glass(CircleShape, solid = true).clickable(onClick = onClick)
-        .semantics { contentDescription = "Map view: ${look.title}" }, contentAlignment = Alignment.Center) {
-        when (look) {
-            MapLook.TILTED, MapLook.FLAT -> Text(if (look == MapLook.TILTED) "3D" else "2D", fontSize = (size.value * 0.34f).sp,
-                fontWeight = FontWeight.Black, color = mapControlTint)
-            MapLook.NORTH -> Box(Modifier.size(size).rotate(-heading.toFloat()), contentAlignment = Alignment.Center) {
-                Canvas(Modifier.size(9.dp, 25.dp)) {
-                    val w = this.size.width; val h = this.size.height
-                    drawPath(Path().apply { moveTo(w / 2, 0f); lineTo(w, h / 2); lineTo(0f, h / 2); close() }, Color(0xFFEA4335))
-                    drawPath(Path().apply { moveTo(0f, h / 2); lineTo(w, h / 2); lineTo(w / 2, h); close() }, gray)
-                }
-                Text("N", fontSize = (size.value * 0.2f).sp, fontWeight = FontWeight.Black, color = Color(0xFFEA4335),
-                    modifier = Modifier.offset(y = -size * 0.33f))
-            }
+        .semantics { contentDescription = if (northUp) "North up. Switch heading mode" else "Heading up. Face north" },
+        contentAlignment = Alignment.Center) {
+        Canvas(Modifier.size(9.dp, 23.dp).rotate(-heading.toFloat())) {
+            val w = this.size.width
+            val h = this.size.height
+            drawPath(Path().apply { moveTo(w / 2, 0f); lineTo(w, h / 2); lineTo(0f, h / 2); close() }, Color(0xFFEA4335))
+            drawPath(Path().apply { moveTo(0f, h / 2); lineTo(w, h / 2); lineTo(w / 2, h); close() }, gray)
         }
     }
 }

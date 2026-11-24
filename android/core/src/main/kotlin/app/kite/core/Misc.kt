@@ -503,7 +503,7 @@ object Valhalla {
 
     data class PathSection(val from: Double, val to: Double, val surface: String?, val type: String?)
 
-    suspend fun pathSections(route: Route): List<PathSection> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+    suspend fun pathSections(route: Route, maxMeters: Double = Double.POSITIVE_INFINITY): List<PathSection> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
         val line = route.polyline
         if (line.size < 2) return@withContext emptyList()
         val costing = when (route.mode) {
@@ -512,7 +512,7 @@ object Valhalla {
             TravelMode.DRIVE -> "auto"
         }
         val distances = Geo.cumulative(line)
-        val total = distances.last()
+        val total = distances.last().coerceAtMost(maxMeters)
         val sections = mutableListOf<PathSection>()
         val attributes = listOf("shape", "edge.use", "edge.surface", "edge.begin_shape_index", "edge.end_shape_index")
         var from = 0.0

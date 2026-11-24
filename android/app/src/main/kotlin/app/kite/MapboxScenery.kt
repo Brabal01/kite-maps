@@ -253,7 +253,10 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
             if (!longPress) addAll(listOf("kite-vela-waze", "kite-vela-waze-group"))
             if (AppSettings.navigationPlaces) addAll(listOf(GOOGLE_PLACES, KiteMap.GOOGLE_UNREVIEWED, OpenMapStyle.POIS))
         }
-        if (layers.isEmpty()) return
+        if (layers.isEmpty()) {
+            if (longPress && AppSettings.navigationHoldAnywhere) model.addNavigationPlace(model.navigationPin(point.kite()))
+            return
+        }
         map.queryRenderedFeatures(RenderedQueryGeometry(hitbox), RenderedQueryOptions(layers, null)) { result ->
             if (view !== mapView || model.nav !== nav || model.stopSearch != null || model.placingStop) return@queryRenderedFeatures
             for (hit in result.value.orEmpty()) {
@@ -274,6 +277,7 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
                 return@queryRenderedFeatures
             }
             if (!longPress) model.showNavigationPlace(null)
+            else if (AppSettings.navigationHoldAnywhere) model.addNavigationPlace(model.navigationPin(point.kite()))
         }
     }
 
@@ -740,6 +744,17 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
     }
 
     private fun addSelectionAndStreetView(st: Style) {
+        val indoor = KiteMap.INDOOR
+        st.addLayer(FillLayer("$indoor-fill", indoor).slot("top")
+            .fillColor(0xFFE0DFEC.toInt()).fillOpacity(0.92).fillOutlineColor(0xFF665886.toInt()).fillEmissiveStrength(1.0))
+        st.addLayer(LineLayer("$indoor-lines", indoor).slot("top").lineColor(0xFF706384.toInt()).lineWidth(1.6)
+            .filter(Expression.fromRaw("""["==",["get","role"],"area"]""")).lineEmissiveStrength(1.0))
+        st.addLayer(SymbolLayer("$indoor-labels", indoor).slot("top").textField(Expression.get("label")).textSize(12.0)
+            .textColor(0xFF352746.toInt()).textHaloColor(Color.WHITE).textHaloWidth(1.3)
+            .filter(Expression.fromRaw("""["==",["get","role"],"label"]""")).textEmissiveStrength(1.0))
+        val probe = KiteMap.PROFILE_PROBE
+        st.addLayer(CircleLayer(probe, probe).slot("top").circleRadius(8.0)
+            .circleColor(0xFF7C3AED.toInt()).circleStrokeColor(Color.WHITE).circleStrokeWidth(3.0).circleEmissiveStrength(1.0))
         val pano = KiteMap.STREET_VIEW
         st.addLayer(FillLayer("$pano-cone", pano).slot("top")
             .fillColor(0xFF0EA5A4.toInt()).fillOpacity(0.35).fillOutlineColor(0xFF15807C.toInt()).fillEmissiveStrength(1.0))
@@ -952,6 +967,6 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
         private const val LAMP_POOL = "kite-lamp-pool"
         private val overlaySources = setOf(LOCATION, NavGlide.PUCK, "vela-route", "vela-route-alt", "kite-path-section",
             "vela-route-traffic", "vela-turn-arrow", "vela-turn-head", "vela-transit", "vela-results", "vela-selected",
-            "vela-road-name", "vela-mine", "vela-waze", "vela-waze-group", "vela-cameras", "vela-livecams", "vela-signals", "vela-waze-heat", "kite-google-places", "kite-measure", "vela-rail", KiteMap.TRANSIT_STOPS, KiteMap.RIDE_STOPS, KiteMap.TRANSIT_VEHICLES, KiteMap.STREET_VIEW, StopSearch.PINS)
+            "vela-road-name", "vela-mine", "vela-waze", "vela-waze-group", "vela-cameras", "vela-livecams", "vela-signals", "vela-waze-heat", "kite-google-places", "kite-measure", "vela-rail", KiteMap.TRANSIT_STOPS, KiteMap.RIDE_STOPS, KiteMap.TRANSIT_VEHICLES, KiteMap.STREET_VIEW, KiteMap.PROFILE_PROBE, KiteMap.INDOOR, StopSearch.PINS)
     }
 }

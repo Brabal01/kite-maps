@@ -168,6 +168,7 @@ fun PlaceBody(model: AppModel, place: Place) {
     if (place.id.startsWith("transit:")) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 72.dp)) {
             DepartureBoard(place)
+            IndoorPlaceActions(model, place, station = true)
         }
         return
     }
@@ -279,6 +280,9 @@ fun PlaceBody(model: AppModel, place: Place) {
                 }
                 PhotoStrip(photos.take(6), 156.dp, opensViewer = true, streetView = place, model = model)
                 PlaceOverview(place)
+                if (ArrivalHelp.isBigPlace(place.category) || isStop(place)) {
+                    IndoorPlaceActions(model, place, station = isStop(place))
+                }
                 if (reviews.orEmpty().isNotEmpty() || canReview && !place.featuredReview.isNullOrBlank()) {
                     Text("Reviews", fontWeight = FontWeight.Bold, color = primaryText, fontSize = KType.headline)
                     if (reviews.orEmpty().isEmpty()) place.featuredReview?.let { Text(it, color = secondaryText) }
@@ -541,9 +545,17 @@ fun DepartureBoard(place: Place) {
         val b = board
         when {
             b != null -> {
-                for (d in b.departures.take(8)) Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                for (d in b.departures.take(8)) Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                    .background(interfaceSurface).padding(horizontal = 10.dp, vertical = 7.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                     LineChip(TransitLeg(isWalk = false, mode = d.mode, line = d.line, color = d.color, textColor = d.textColor))
-                    Text(d.headsign, fontSize = KType.subheadline, color = primaryText, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    Column(Modifier.weight(1f)) {
+                        Text(d.headsign, fontSize = KType.subheadline, color = primaryText, maxLines = 2,
+                            overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+                        d.platform?.takeIf(String::isNotBlank)?.let {
+                            Text("Platform $it", fontSize = KType.caption, color = secondaryText)
+                        }
+                    }
                     Column(horizontalAlignment = Alignment.End) {
                         Text(countdown(d.time), fontSize = KType.subheadline, fontWeight = FontWeight.SemiBold,
                             color = if (d.delayMinutes != null) Vela.open else primaryText)
@@ -553,7 +565,7 @@ fun DepartureBoard(place: Place) {
                         }
                     }
                 }
-                Text("Live times in green · from Transitous", fontSize = KType.caption, color = secondaryText)
+                Text("Live times in green · Transitous", fontSize = KType.caption, color = secondaryText)
             }
             loaded -> Text("No departures found here.", fontSize = KType.subheadline, color = secondaryText)
             else -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {

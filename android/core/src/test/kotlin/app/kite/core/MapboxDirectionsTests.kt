@@ -91,6 +91,18 @@ class MapboxDirectionsTests {
         assertTrue(route.speedLimits.isEmpty())
     }
 
+    @Test fun refreshesLongTrafficSpansWithoutDroppingLaterCongestion() {
+        val line = (0..20).map { LatLng(0.0, it * 0.009) }
+        val fresh = Route(TravelMode.DRIVE, line, Geo.length(line), 1300.0, 1500.0, null, mutableListOf(),
+            trafficSpans = listOf(TrafficSpan(3, 3800.0, 4400.0)), source = "google")
+        val previous = listOf(TrafficSpan(2, 17500.0, 500.0))
+        val spans = requireNotNull(MapboxDirections.refreshTraffic(line, previous, fresh, 0.0))
+        assertEquals(2, spans.size)
+        assertEquals(3800.0, spans.first().startMeters, 1.0)
+        assertEquals(4400.0, spans.first().lengthMeters, 1.0)
+        assertEquals(previous.single(), spans.last())
+    }
+
     @Test fun rejectsApiErrorsAndIncompleteTurnLists() {
         assertTrue(MapboxDirections.parse("""{"code":"NoRoute"}""".toByteArray()).isEmpty())
         assertTrue(MapboxDirections.parse(fixture.replace("\"arrive\"", "\"continue\"").toByteArray()).isEmpty())

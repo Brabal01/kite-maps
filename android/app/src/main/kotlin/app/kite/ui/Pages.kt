@@ -260,7 +260,7 @@ private fun SavedRow(p: Place, icon: ImageVector, color: Color, distance: String
 
 private enum class SettingsScreen(val title: String) {
     MENU("Settings"), DRIVING("Voice & driving"), CAMERAS("Cameras & speed"), WAZE("Road alerts"), LIVECAMS("Live cameras"), MAP("Map & display"),
-    PLACES("My places"), PRIVACY("Privacy"), ABOUT("About"), DIAGNOSTICS("Diagnostics");
+    ROUTING("Route engines"), OFFLINE("Offline maps"), PLACES("My places"), PRIVACY("Privacy"), ABOUT("About"), DIAGNOSTICS("Diagnostics");
 
     /** Where the back button goes. */
     val parent: SettingsScreen get() = if (this == DIAGNOSTICS) ABOUT else MENU
@@ -300,6 +300,8 @@ fun SettingsPage(model: AppModel) {
                         SettingsScreen.WAZE -> WazeSettings()
                         SettingsScreen.LIVECAMS -> LiveCamSettings()
                         SettingsScreen.MAP -> MapSettings()
+                        SettingsScreen.ROUTING -> RouteEngineSettings()
+                        SettingsScreen.OFFLINE -> OfflineMapsPage(model)
                         SettingsScreen.PLACES -> PlacesSettings(model)
                         SettingsScreen.PRIVACY -> PrivacySettings()
                         SettingsScreen.ABOUT -> AboutSettings { screen = SettingsScreen.DIAGNOSTICS }
@@ -394,6 +396,8 @@ private fun SettingsMenu(open: (SettingsScreen) -> Unit) {
             if (s.wazeOn) "On" else "Off", Icons.Filled.Warning, 0x7C3AED)
         item(SettingsScreen.LIVECAMS, "Road camera photos and scenic webcams", if (s.liveCams) "On" else "Off", Icons.Filled.Videocam, 0x0284C7)
         item(SettingsScreen.MAP, "Theme, units, map zoom, parking button", null, Icons.Filled.Contrast, 0x334155)
+        item(SettingsScreen.ROUTING, "Driving, walking and cycling", null, Icons.Filled.AltRoute, 0x0F766E)
+        item(SettingsScreen.OFFLINE, "Download and manage map areas", null, Icons.Filled.Download, 0x315E91)
         item(SettingsScreen.PLACES, "Home and work", null, Icons.Filled.Home, 0x16A34A)
         item(SettingsScreen.PRIVACY, "Use Kite without Google", if (s.noGoogle) "On" else null, Icons.Filled.Lock, 0x475569)
         item(SettingsScreen.ABOUT, "Version ${BuildConfig.VERSION_NAME}", null, Icons.Filled.Info, 0x64748B, last = true)
@@ -467,6 +471,31 @@ private fun LiveCamSettings() {
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun MapSettingLink(title: String, icon: ImageVector, tint: Long, open: () -> Unit) {
+    Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).tap(open).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+        SettingLabel(title, icon, tint, Modifier.weight(1f))
+        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = secondaryText)
+    }
+}
+
+@Composable
+private fun RouteEngineSettings() {
+    val s = AppSettings
+    val engines = RouteEngine.entries.filter { !s.noGoogle || it != RouteEngine.GOOGLE }
+    SettingsGroup(header = "Navigation routing",
+        footer = "Automatic chooses a provider. A manual choice is used for plans and reroutes. Mapbox requires a token.") {
+        PickRow("Driving", Icons.Filled.DirectionsCar, 0x0F766E, s.driveEngine, engines, { it.label }) { s.driveEngine = it }
+        RowDivider()
+        PickRow("Walking", Icons.AutoMirrored.Filled.DirectionsWalk, 0x0F766E, s.walkEngine, engines, { it.label }) { s.walkEngine = it }
+        RowDivider()
+        PickRow("Cycling", Icons.Filled.DirectionsBike, 0x0F766E, s.bikeEngine, engines, { it.label }) { s.bikeEngine = it }
+    }
+    SettingsGroup(header = "Route profile") {
+        ToggleRow("Prepare profile when guidance starts", Icons.Filled.Terrain, 0x0F766E, s.preloadRouteProfile) { s.preloadRouteProfile = it }
     }
 }
 
@@ -578,11 +607,13 @@ private fun MapSettings() {
         ToggleRow("Picture-in-picture", Icons.Filled.PictureInPictureAlt, 0x2563EB, s.navigationPictureInPicture) {
             s.navigationPictureInPicture = it
         }
+        if (s.navigationPictureInPicture) ToggleRow("Portrait picture-in-picture", Icons.Filled.CropPortrait, 0x2563EB, s.portraitPip) { s.portraitPip = it }
         RowDivider()
-        IconRow(Icons.Filled.Place, "Places while navigating",
-            if (s.navigationPlaces) s.navigationPlaceGroups.size.toString() + " selected categories" else "Off") { editNavigationPlaces = true }
+        ToggleRow("Hold anywhere to add a stop", Icons.Filled.AddLocationAlt, 0x0F766E, s.navigationHoldAnywhere) { s.navigationHoldAnywhere = it }
         RowDivider()
-        IconRow(Icons.Filled.Traffic, "Road ahead and map alerts", "Traffic, crossings and reports") { editRoadAhead = true }
+        MapSettingLink("Places while navigating", Icons.Filled.Place, 0x0F766E) { editNavigationPlaces = true }
+        RowDivider()
+        MapSettingLink("Road ahead and map alerts", Icons.Filled.Traffic, 0xAD362C) { editRoadAhead = true }
     }
     if (editNavigationPlaces) TripSheet("Places while navigating", "Done", { editNavigationPlaces = false }) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp),

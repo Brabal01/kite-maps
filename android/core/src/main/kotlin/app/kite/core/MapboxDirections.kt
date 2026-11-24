@@ -11,47 +11,64 @@ object MapboxDirections {
 
     suspend fun routes(
         from: LatLng, to: LatLng, via: List<LatLng>, heading: Double?,
-        avoidHighways: Boolean, avoidTolls: Boolean, alternatives: Boolean, token: String,
+        avoidHighways: Boolean, avoidTolls: Boolean, alternatives: Boolean, token: String, mode: TravelMode = TravelMode.DRIVE,
     ): List<Route> {
         if (!isPublicToken(token) || via.size > 23) return emptyList()
         val points = listOf(from) + via + to
         val coordinates = points.joinToString(";") { "${it.lng.plain()},${it.lat.plain()}" }
         val query = mutableListOf(
             "access_token=$token", "overview=full", "geometries=polyline6", "steps=true",
-            "roundabout_exits=true", "annotations=congestion,maxspeed", "alternatives=$alternatives",
+            "roundabout_exits=true", "alternatives=$alternatives",
         )
+        if (mode == TravelMode.DRIVE) query += "annotations=congestion,maxspeed"
+        val profile = when (mode) {
+            TravelMode.DRIVE -> "driving-traffic"
+            TravelMode.WALK -> "walking"
+            TravelMode.BIKE -> "cycling"
+        }
         val exclusions = listOfNotNull("motorway".takeIf { avoidHighways }, "toll".takeIf { avoidTolls })
-        if (exclusions.isNotEmpty()) query += "exclude=${exclusions.joinToString(",")}"
+        if (mode == TravelMode.DRIVE && exclusions.isNotEmpty()) query += "exclude=${exclusions.joinToString(",")}"
         if (heading != null) query += "bearings=${Math.floorMod(heading.roundToInt(), 360)},60" + ";".repeat(points.lastIndex)
-        val url = "https://api.mapbox.com/directions/v5/mapbox/driving-traffic/$coordinates?${query.joinToString("&")}"
+        val url = "https://api.mapbox.com/directions/v5/mapbox/$profile/$coordinates?${query.joinToString("&")}"
         val response = Http.getOrNull(url, client = client)?.takeIf { it.ok } ?: return emptyList()
-        return parse(response.body)
+        return parse(response.body, mode)
     }
 
-    internal fun parse(body: ByteArray): List<Route> {
+    internal fun parse(body: ByteArray, mode: TravelMode = TravelMode.DRIVE): List<Route> {
         val root = Json.obj(body)?.takeIf { it["code"] == "Ok" } ?: return emptyList()
-        return OSRM.parseRoot(root, TravelMode.DRIVE, source = "mapbox")
+        return OSRM.parseRoot(root, mode, source = "mapbox")
     }
 
     /** Refresh congestion on the next stretch only if the new route follows the same roads. */
     fun refreshTraffic(line: List<LatLng>, previous: List<TrafficSpan>, fresh: Route, from: Double): List<TrafficSpan>? {
         if (line.size < 2 || fresh.polyline.size < 2) return null
-        val end = minOf(4500.0, Geo.length(fresh.polyline))
-        if (end < 60) return null
         val cum = Geo.cumulative(line)
+        val fc = Geo.cumulative(fresh.polyline)
+        // When the provider gives no later congestion measurements, retain the previous ones beyond
+        // the routine refresh window. Extend the match when the response explicitly marks more of the road.
+        val measuredEnd = fresh.trafficSpans.maxOfOrNull { it.startMeters + it.lengthMeters } ?: 0.0
+        val maxDistance = minOf(maxOf(4500.0, measuredEnd), 16_000.0, fc.last())
+        if (maxDistance < 60) return null
         val start = (from - 300).coerceAtLeast(0.0)
-        val window = Geo.slice(line, start, minOf(cum.last(), from + end + 300), cum)
+        val window = Geo.slice(line, start, minOf(cum.last(), from + maxDistance + 300), cum)
         if (window.size < 2) return null
         val wc = Geo.cumulative(window)
-        val fc = Geo.cumulative(fresh.polyline)
-        val count = kotlin.math.ceil(end / 200.0).toInt()
-        val matches = (0..count).map { i ->
-            Geo.project(Geo.point(fresh.polyline, end * i / count, fc), window, wc)
+        val begin = Geo.project(fresh.polyline.first(), window, wc)
+        if (begin.offset > 22 || kotlin.math.abs(begin.along + start - from) > 160) return null
+        val count = kotlin.math.ceil(maxDistance / 150.0).toInt()
+        var end = 0.0
+        var lastMatch = begin.along
+        for (i in 1..count) {
+            val distance = maxDistance * i / count
+            val match = Geo.project(Geo.point(fresh.polyline, distance, fc), window, wc)
+            if (match.offset > 22 || match.along < lastMatch ||
+                kotlin.math.abs(match.along - begin.along - distance) > 140) break
+            end = distance
+            lastMatch = match.along
         }
-        if (matches.any { it.offset > 22 } || matches.zipWithNext().any { (a, b) -> b.along - a.along < 0 }) return null
-        val first = matches.first().along + start
-        val last = matches.last().along + start
-        if (kotlin.math.abs(last - first - end) > 140) return null
+        if (end + 0.01 < minOf(4500.0, maxDistance)) return null
+        val first = begin.along + start
+        val last = lastMatch + start
         fun along(distance: Double) = first + (last - first) * distance / end
         val kept = previous.flatMap { span ->
             val stop = span.startMeters + span.lengthMeters
