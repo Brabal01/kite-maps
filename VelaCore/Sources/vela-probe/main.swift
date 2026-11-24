@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import VelaCore
 
 // Live check of the Google search and parser, run by the build workflow.
