@@ -23,7 +23,7 @@ public enum RouteEngine: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-enum MapboxRoutes {
+public enum MapboxRoutes {
     static func plan(from: LatLng, to: LatLng, via: [LatLng], mode: TravelMode,
                      heading: Double?, alternatives: Bool, avoidHighways: Bool, avoidTolls: Bool, token: String) async -> [Route] {
         guard RouteEngine.isMapboxPublicToken(token), via.count <= 23 else { return [] }
@@ -82,4 +82,54 @@ enum MapboxRoutes {
         }
         return spans
     }
+
+    /// Replace live traffic only on the portion of the current route that matches the fresh geometry.
+    public static func refreshedTraffic(line: [LatLng], previous: [TrafficSpan],
+                                        fresh: Route, from: Double) -> [TrafficSpan]? {
+        guard fresh.source == "mapbox", line.count >= 2, fresh.polyline.count >= 2 else { return nil }
+        let routeDistances = Geo.cumulative(line)
+        let freshDistances = Geo.cumulative(fresh.polyline)
+        let measuredEnd = fresh.trafficSpans.map { $0.startMeters + $0.lengthMeters }.max() ?? 0
+        let distance = min(max(4500, measuredEnd), 16_000, freshDistances.last ?? 0)
+        guard distance >= 60 else { return nil }
+        let origin = max(0, from - 300)
+        let window = Geo.slice(line, from: origin, to: min(routeDistances.last ?? 0, from + distance + 300),
+                               cumulative: routeDistances)
+        guard window.count >= 2 else { return nil }
+        let windowDistances = Geo.cumulative(window)
+        let begin = Geo.project(fresh.polyline[0], on: window, cumulative: windowDistances)
+        guard begin.offset <= 22, abs(begin.along + origin - from) <= 160 else { return nil }
+
+        let count = Int(ceil(distance / 150))
+        var end = 0.0
+        var lastMatch = begin.along
+        for index in 1...count {
+            let meters = distance * Double(index) / Double(count)
+            let position = Geo.point(along: fresh.polyline, meters: meters, cumulative: freshDistances)
+            let match = Geo.project(position, on: window, cumulative: windowDistances)
+            guard match.offset <= 22, match.along >= lastMatch, abs(match.along - begin.along - meters) <= 140 else { break }
+            end = meters
+            lastMatch = match.along
+        }
+        guard end + 0.01 >= min(4500, distance) else { return nil }
+        let first = begin.along + origin
+        let last = lastMatch + origin
+        let retained: [TrafficSpan] = previous.flatMap { span in
+            let end = span.startMeters + span.lengthMeters
+            let before = min(end, first) - span.startMeters
+            let afterStart = max(span.startMeters, last)
+            return [
+                before > 0 ? TrafficSpan(level: span.level, startMeters: span.startMeters, lengthMeters: before) : nil,
+                end > afterStart ? TrafficSpan(level: span.level, startMeters: afterStart, lengthMeters: end - afterStart) : nil
+            ].compactMap { $0 }
+        }
+        let updated: [TrafficSpan] = fresh.trafficSpans.compactMap { span in
+            guard span.startMeters < end else { return nil }
+            let factor = (last - first) / end
+            return TrafficSpan(level: span.level, startMeters: first + span.startMeters * factor,
+                               lengthMeters: min(span.lengthMeters, end - span.startMeters) * factor)
+        }
+        return (retained + updated).sorted { $0.startMeters < $1.startMeters }
+    }
+
 }

@@ -144,7 +144,8 @@ public enum OSRM {
             guard let geo = r["geometry"] as? String,
                   let distance = r["distance"] as? Double,
                   let duration = r["duration"] as? Double else { return nil }
-            let typical = source == "mapbox" && mode == .drive ? r["duration_typical"] as? Double : nil
+            let typical = source == "mapbox" && mode == .drive
+                ? (r["duration_typical"] as? Double).flatMap { $0 > 0 ? $0 : nil } : nil
             let line = Geo.decodePolyline(geo, precision: 1e6)
             guard line.count >= 2 else { return nil }
             let cum = Geo.cumulative(line)
@@ -182,16 +183,19 @@ public enum OSRM {
                     let stepRoad = leftMotorway != nil ? nil : name ?? ref
                     let dist = step["distance"] as? Double ?? 0
                     if let n = name ?? ref { roads[n, default: 0] += dist }
-                    let loc = (m["location"] as? [Double]).map { LatLng($0[1], $0[0]) } ?? Geo.point(along: line, meters: along, cumulative: cum)
+                    let loc = (m["location"] as? [Double]).flatMap { $0.count >= 2 ? LatLng($0[1], $0[0]) : nil } ?? Geo.point(along: line, meters: along, cumulative: cum)
                     let mt = maneuverType(type, modifier, leftTraffic: Geo.drivesOnLeft(loc))
                     let signs = Signs(destinations: step["destinations"] as? String, exits: step["exits"] as? String,
                                       from: maneuvers.last?.road)
-                    var man = Maneuver(type: mt, instruction: instruction(type: type, modifier: modifier, road: stepRoad,
-                                                                         exit: m["exit"] as? Int, mode: mode, signs: signs),
+                    let providerInstruction = (m["instruction"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let exit = m["exit"] as? Int ?? step["exit"] as? Int
+                    let generated = instruction(type: type, modifier: modifier, road: stepRoad, exit: exit, mode: mode, signs: signs)
+                    let text = source == "mapbox" && providerInstruction?.isEmpty == false ? providerInstruction ?? generated : generated
+                    var man = Maneuver(type: mt, instruction: text,
                                        location: loc, alongMeters: min(along, cum.last ?? along),
                                        distanceMeters: dist, road: stepRoad, laneHint: nil)
                     man.lanes = lanes(step)
-                    man.exit = m["exit"] as? Int
+                    man.exit = exit
                     if type == "roundabout" || type == "rotary" {
                         // The lanes for a roundabout are sometimes mapped on the road leading up to it.
                         if man.lanes.isEmpty, si > 0, let last = (steps[si - 1]["intersections"] as? [[String: Any]])?.last {
@@ -205,9 +209,14 @@ public enum OSRM {
                         // Still going round: keep the roundabout's exit number until off it.
                         man.leavesRoundabout = true
                         man.lanes = []
-                        if let prev = maneuvers.last, prev.type == .roundabout {
-                            man.exit = man.exit ?? prev.exit
-                            man.roundabout = prev.roundabout
+                        if let last = maneuvers.indices.last, maneuvers[last].type == .roundabout {
+                            if source == "mapbox", let exit = man.exit, maneuvers[last].exit == nil {
+                                maneuvers[last].exit = exit
+                                maneuvers[last].instruction = instruction(type: "roundabout", modifier: nil,
+                                    road: maneuvers[last].road, exit: exit, mode: mode)
+                            }
+                            man.exit = man.exit ?? maneuvers[last].exit
+                            man.roundabout = maneuvers[last].roundabout
                         }
                     }
                     if type == "merge", let modifier { mergeSides[maneuvers.count] = modifier }
@@ -221,14 +230,20 @@ public enum OSRM {
             if let last = maneuvers.indices.last {
                 maneuvers[last].alongMeters = cum.last ?? along
             }
+            if source == "mapbox", maneuvers.first?.type != .depart || maneuvers.last?.type != .arrive { return nil }
             let via = roads.max { $0.value < $1.value }?.key
             var route = Route(mode: mode, polyline: line, distanceMeters: distance, typicalSeconds: typical ?? duration,
-                              trafficSeconds: source == "mapbox" && mode == .drive ? duration : nil,
+                              trafficSeconds: typical == nil ? nil : duration,
                               summary: via, maneuvers: maneuvers, source: source)
             if source == "mapbox", mode == .drive {
                 route.trafficSpans = MapboxRoutes.trafficSpans(legs, cumulative: cum)
             }
-            route.speedLimits = speedLimits(legs, line: line, cumulative: cum)
+            let annotatedSegments = legs.reduce(0) { count, leg in
+                count + (((leg["annotation"] as? [String: Any])?["maxspeed"] as? [Any])?.count ?? 0)
+            }
+            if source != "mapbox" || annotatedSegments == cum.count - 1 {
+                route.speedLimits = speedLimits(legs, line: line, cumulative: cum)
+            }
             return route
         }
     }
