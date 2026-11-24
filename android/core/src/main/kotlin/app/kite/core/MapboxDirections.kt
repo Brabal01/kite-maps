@@ -4,7 +4,7 @@ import kotlin.math.roundToInt
 
 /** Mapbox's traffic-aware car routes use the same turn and lane objects as the open router. */
 object MapboxDirections {
-    private val client = Http.client(8)
+    private val client by lazy { Http.client(8) }
     private val publicToken = Regex("pk\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+")
 
     fun isPublicToken(token: String): Boolean = publicToken.matches(token)
