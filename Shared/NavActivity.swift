@@ -19,6 +19,7 @@ struct NavActivityAttributes: ActivityAttributes {
         /** "8:14 am", when you'll get there. */
         var arrival: String
         var arrived: Bool
+        var remaining: String?
     }
 
     var destination: String
