@@ -2,7 +2,7 @@ name: Build Kite Driving for iPhone
 
 on:
   push:
-    branches: [ios/kite-driving-native]
+    branches: [ios/kite-driving-native, ios/android-parity]
     paths: [App/**, Shared/**, Widget/**, VelaCore/**, project.yml, .github/workflows/kite-ios-native.yml]
   workflow_dispatch:
 
@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   ipa:
-    runs-on: xcode-27
+    runs-on: ${{ github.ref_name == 'ios/android-parity' && 'macos-15' || 'xcode-27' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -25,6 +25,12 @@ jobs:
         run: |
           brew install xcodegen
           xcodegen generate
+      - name: Compile the simulator app
+        run: |
+          set -o pipefail
+          xcodebuild -project Kite.xcodeproj -scheme Kite -configuration Debug -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath simbuild \
+            CODE_SIGNING_ALLOWED=NO build | tee simulator-build.log
       - name: Compile the device app
         run: |
           set -o pipefail
@@ -38,13 +44,50 @@ jobs:
           for item in "$app"/Frameworks/*.framework "$app"/PlugIns/*.appex; do
             test ! -d "$item" || codesign --force --sign - --timestamp=none "$item"
           done
+          test -f "$app/PlugIns/KiteWidget.appex/Info.plist"
           codesign --force --sign - --timestamp=none "$app"
           codesign --verify --deep --strict "$app"
           mkdir Payload
           ditto "$app" Payload/Kite.app
           zip -qr -X Kite-Driving.ipa Payload
           unzip -tq Kite-Driving.ipa
+          wc -c Kite-Driving.ipa
+          du -sk "$app"
+          shasum -a 256 Kite-Driving.ipa
       - uses: actions/upload-artifact@v4
         with:
           name: Kite-Driving-iPhone
           path: Kite-Driving.ipa
+      - name: Upload Xcode build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kite-Driving-build-logs
+          path: |
+            simulator-build.log
+            xcodebuild.log
+          if-no-files-found: ignore
+      - name: Capture simulator smoke screenshots
+        if: github.ref_name == 'ios/android-parity'
+        run: |
+          set -euo pipefail
+          device=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; devices=json.load(sys.stdin)["devices"]; print(next(d["udid"] for r in sorted(devices, reverse=True) if ".iOS-" in r for d in devices[r] if d["name"].startswith("iPhone")))')
+          xcrun simctl boot "$device"
+          xcrun simctl bootstatus "$device" -b
+          xcrun simctl install "$device" simbuild/Build/Products/Debug-iphonesimulator/Kite.app
+          xcrun simctl privacy "$device" grant location app.vela.ios
+          mkdir -p screenshots
+          xcrun simctl location "$device" set 49.592,17.252
+          xcrun simctl launch "$device" app.vela.ios -demo browse
+          sleep 12
+          xcrun simctl io "$device" screenshot screenshots/olomouc-first-fix.png
+          xcrun simctl location "$device" set 49.595,17.259
+          xcrun simctl launch --terminate-running-process "$device" app.vela.ios -demo go -demoTo 49.613,17.235
+          sleep 25
+          xcrun simctl io "$device" screenshot screenshots/olomouc-go.png
+      - name: Upload simulator screenshots
+        if: github.ref_name == 'ios/android-parity'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kite-Driving-simulator
+          path: screenshots/
