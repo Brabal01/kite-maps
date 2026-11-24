@@ -174,6 +174,15 @@ struct SettingsView: View {
                     ForEach(TravelMode.allCases) { Text($0.label).tag($0) }
                 } label: { SettingLabel("Default travel mode", icon: "car.fill", color: 0x2563EB) }
             }
+            Section("Transit") {
+                Toggle("Exit reminders", isOn: $settings.transitExitAlerts)
+                Toggle("Learn my walking pace", isOn: $settings.learnWalkingPace)
+                if let pace = settings.personalPace {
+                    Button("Reset walking pace · \((pace * 3.6).formatted(.number.precision(.fractionLength(1)))) km/h") {
+                        settings.walkingPace = 0
+                    }
+                }
+            }
             Section("Routes") {
                 Toggle(isOn: $settings.avoidTolls) { SettingLabel("Avoid tolls", icon: "sterlingsign.circle.fill", color: 0xF59E0B) }
                 Toggle(isOn: $settings.avoidHighways) {

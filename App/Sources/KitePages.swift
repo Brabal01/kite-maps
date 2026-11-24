@@ -111,6 +111,13 @@ struct SavedPage: View {
                             row(car, icon: "parkingsign", color: Vela.routeBlue, editable: false)
                                 .background(card)
                         }
+                        if !settings.savedTransit.isEmpty {
+                            Text("Saved transit trips").font(.headline).padding(.horizontal, 4)
+                            ForEach(settings.savedTransit) { plan in
+                                SavedTransitRow(model: model, plan: plan)
+                                    .background(card)
+                            }
+                        }
                         if settings.saved.isEmpty {
                             VStack(spacing: 10) {
                                 Image(systemName: "bookmark").font(.system(size: 40, weight: .semibold)).foregroundColor(Vela.muted(scheme))

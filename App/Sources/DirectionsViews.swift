@@ -768,6 +768,9 @@ struct TransitBody: View {
 
     @State private var kind = 0
     @State private var when = Date()
+    @State private var detailsExpanded = false
+    @State private var saved: UUID?
+    @State private var refreshed: TransitTrip?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -789,6 +792,16 @@ struct TransitBody: View {
         .onChange(of: kind) { k in model.setTransitTime(kind: k, at: when) }
         .onChange(of: when) { w in if kind != 0 { model.setTransitTime(kind: kind, at: w) } }
         trips
+            .task(id: state.pickedTrip?.id) {
+                refreshed = nil
+                detailsExpanded = false
+                guard let trip = state.pickedTrip, let depart = trip.depart,
+                      abs(depart.timeIntervalSinceNow) < 3600 else { return }
+                while !Task.isCancelled {
+                    if let updated = await Transitous.refresh(trip), !Task.isCancelled { refreshed = updated }
+                    try? await Task.sleep(nanoseconds: 45_000_000_000)
+                }
+            }
     }
 
     @ViewBuilder
@@ -802,8 +815,29 @@ struct TransitBody: View {
                 }
             }
             if let t = state.pickedTrip {
-                Text("Steps").font(.headline).padding(.top, 6)
-                TransitSteps(trip: t)
+                let shown = refreshed?.id == t.id ? (refreshed ?? t) : t
+                TransitDurationRibbon(trip: shown)
+                ForEach(shown.transferWarnings(walkingPace: AppSettings.shared.personalPace)) { item in
+                    Label(item.cancelled ? "Service cancelled near \(item.station)" :
+                          item.missed ? "Transfer at \(item.station) may be missed" :
+                          "\(Fmt.duration(Double(item.secondsLeft))) to change at \(item.station)",
+                          systemImage: "exclamationmark.triangle")
+                        .font(.subheadline).foregroundStyle(item.missed || item.cancelled ? Color.red : Color.orange)
+                }
+                DisclosureGroup("Trip steps", isExpanded: $detailsExpanded) {
+                    TransitSteps(trip: shown)
+                }
+                HStack {
+                    Button { model.startTransit(shown) } label: { Label("Start guidance", systemImage: "location.fill") }
+                        .buttonStyle(.borderedProminent).disabled(shown.rides.contains(where: \.cancelled))
+                    Button {
+                        model.saveTransit(t)
+                        saved = t.id
+                    } label: {
+                        Label(saved == t.id ? "Saved" : "Save for later",
+                              systemImage: saved == t.id ? "bookmark.fill" : "bookmark")
+                    }.buttonStyle(.bordered).disabled(saved == t.id || t.depart == nil)
+                }
             }
             Text("Timetables from Transitous").font(.caption).foregroundColor(.secondary).padding(.top, 4)
         } else if state.trips == nil {
@@ -812,6 +846,26 @@ struct TransitBody: View {
         } else {
             Text(state.tripsError ?? "No transit trips found.").foregroundColor(.secondary).padding(.vertical, 20)
         }
+    }
+}
+
+private struct TransitDurationRibbon: View {
+    let trip: TransitTrip
+    private var total: Double { trip.legs.reduce(0) { $0 + max($1.durationSeconds, 1) } }
+
+    var body: some View {
+        GeometryReader { geo in
+            HStack(spacing: 2) {
+                ForEach(Array(trip.legs.enumerated()), id: \.offset) { _, leg in
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(leg.isWalk ? Color.secondary.opacity(0.35) : (leg.color.map { Color(hex: $0) } ?? Vela.routeBlue))
+                        .frame(width: max(0, geo.size.width - 2 * CGFloat(max(trip.legs.count - 1, 0))) *
+                            CGFloat(max(leg.durationSeconds, 1) / max(total, 1)))
+                }
+            }
+        }
+        .frame(height: 8)
+        .accessibilityHidden(true)
     }
 }
 
@@ -968,9 +1022,19 @@ struct TransitSteps: View {
                                 if let h = leg.headsign { Text("to \(h)").font(.subheadline).lineLimit(1) }
                             }
                             Text(times(leg.depart, leg.fromName)).font(.subheadline)
+                            if let platform = leg.calls.first?.platform {
+                                Text("Platform \(platform)").font(.caption).foregroundStyle(.secondary)
+                            }
                             Text("Ride \(leg.stops) stop\(leg.stops == 1 ? "" : "s") · \(Fmt.duration(leg.durationSeconds))")
                                 .font(.caption).foregroundColor(.secondary)
                             Text(times(leg.arrive, "Get off at \(leg.toName)")).font(.caption).foregroundColor(.secondary)
+                            if leg.calls.count > 2 {
+                                DisclosureGroup("Intermediate stops") {
+                                    ForEach(Array(leg.calls.dropFirst().dropLast().enumerated()), id: \.offset) { _, call in
+                                        Text(times(call.arrival, call.name)).font(.caption).foregroundStyle(.secondary)
+                                    }
+                                }.font(.caption)
+                            }
                         }
                     }
                     Spacer()

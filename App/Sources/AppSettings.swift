@@ -104,6 +104,11 @@ final class AppSettings: ObservableObject {
     @Published var welcomed: Bool { didSet { d.set(welcomed, forKey: "welcomed") } }
     @Published var defaultMode: TravelMode { didSet { d.set(defaultMode.rawValue, forKey: "defaultMode") } }
     @Published var saved: [Place] { didSet { save(saved, "saved") } }
+    @Published var savedTransit: [SavedTransitPlan] { didSet { save(savedTransit, "kite.savedTransit") } }
+    @Published var learnWalkingPace: Bool { didSet { d.set(learnWalkingPace, forKey: "kite.learnWalkingPace") } }
+    @Published var walkingPace: Double { didSet { d.set(walkingPace, forKey: "kite.walkingPace") } }
+    @Published var transitExitAlerts: Bool { didSet { d.set(transitExitAlerts, forKey: "kite.transitExitAlerts") } }
+    var personalPace: Double? { learnWalkingPace && (0.65...2.2).contains(walkingPace) ? walkingPace : nil }
     @Published var recents: [String] { didSet { d.set(recents, forKey: "recents") } }
     /** Places you opened lately, newest first. */
     @Published var recentPlaces: [Place] { didSet { save(recentPlaces, "recentPlaces") } }
@@ -113,6 +118,10 @@ final class AppSettings: ObservableObject {
         units = UnitsMode(rawValue: d.string(forKey: "units") ?? "") ?? .auto
         voice = d.object(forKey: "voice") as? Bool ?? true
         voiceAlertsOnly = d.bool(forKey: "voiceAlertsOnly")
+        savedTransit = d.data(forKey: "kite.savedTransit").flatMap { try? JSONDecoder().decode([SavedTransitPlan].self, from: $0) } ?? []
+        learnWalkingPace = d.object(forKey: "kite.learnWalkingPace") as? Bool ?? true
+        walkingPace = d.double(forKey: "kite.walkingPace")
+        transitExitAlerts = d.object(forKey: "kite.transitExitAlerts") as? Bool ?? true
         traffic = d.object(forKey: "traffic") as? Bool ?? true
         satellite = d.bool(forKey: "satellite")
         terrain = d.bool(forKey: "terrain")

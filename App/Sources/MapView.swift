@@ -293,6 +293,14 @@ struct VelaMapView: UIViewRepresentable {
             ride.predicate = NSPredicate(format: "walk == 0")
             ride.lineColor = NSExpression(mglJSONObject: ["to-color", ["get", "color"]])
             [walk, rideEdge, ride].forEach(insert)
+            let vehicleSrc = MLNShapeSource(identifier: "kite-transit-vehicle", shape: nil, options: nil)
+            style.addSource(vehicleSrc)
+            let vehicle = MLNCircleStyleLayer(identifier: "kite-transit-vehicle", source: vehicleSrc)
+            vehicle.circleRadius = NSExpression(forConstantValue: 8)
+            vehicle.circleColor = NSExpression(forConstantValue: UIColor(hex: 0x0F766E))
+            vehicle.circleStrokeColor = NSExpression(forConstantValue: UIColor.white)
+            vehicle.circleStrokeWidth = NSExpression(forConstantValue: 2)
+            insert(vehicle)
             for (level, color) in [(1, 0xF59E0B), (2, 0xEF4444), (3, 0xB91C1C)] {
                 let l = line("vela-route-traffic-\(level)", spanSrc, UIColor(hex: UInt32(color)), width: 10)
                 l.predicate = NSPredicate(format: "level == %d", level)
@@ -576,7 +584,7 @@ struct VelaMapView: UIViewRepresentable {
         func render(_ map: MLNMapView) {
             guard styleReady, let style = map.style else { return }
             let s = model.settings
-            let navigating = model.nav != nil
+            let navigating = model.mapNavigator != nil
             // The navigation arrow replaces the blue dot.
             if map.showsUserLocation == navigating { map.showsUserLocation = !navigating }
             // Not before the welcome screen's choice: "Open data only" means nothing ever went to Google.
@@ -585,7 +593,7 @@ struct VelaMapView: UIViewRepresentable {
             style.layer(withIdentifier: "vela-terrain")?.isVisible = s.terrain && !s.satellite
             for id in ["vela-rail", "vela-rail-case"] { style.layer(withIdentifier: id)?.isVisible = s.transitLines && !navigating }
             // The driving view with no route gets the driving map too, without the route line.
-            let driving = navigating || model.cruise != nil
+            let driving = model.nav?.route.mode == .drive || model.cruise != nil
             if styledDriving != driving {
                 MapStyler.drive(style, on: driving)
                 styledDriving = driving
@@ -596,6 +604,15 @@ struct VelaMapView: UIViewRepresentable {
             for id in ["building", "building-3d"] { style.layer(withIdentifier: id)?.isVisible = !s.satellite && !driving }
             renderResults(style)
             renderRoutes(style)
+            if let source = style.source(withIdentifier: "kite-transit-vehicle") as? MLNShapeSource {
+                if let at = model.transitJourney?.vehicle?.location {
+                    if (source.shape as? MLNPointFeature).map({ $0.coordinate.latitude == at.lat && $0.coordinate.longitude == at.lng }) != true {
+                        let marker = MLNPointFeature()
+                        marker.coordinate = CLLocationCoordinate2D(latitude: at.lat, longitude: at.lng)
+                        source.shape = marker
+                    }
+                } else if source.shape != nil { source.shape = nil }
+            }
             renderPuck(style)
             renderCameras(style)
             renderLiveCams(map, style)
@@ -1042,15 +1059,15 @@ struct VelaMapView: UIViewRepresentable {
             var alts: [Route] = []
             var main: Route?
             var from = 0.0
-            if let n = model.nav {
+            if let n = model.mapNavigator {
                 main = n.route
                 from = n.progress?.alongMeters ?? 0
             } else if let d = model.directions {
                 main = d.route
                 alts = d.current.filter { $0.id != main?.id }
             }
-            let trip = model.nav == nil ? model.directions?.pickedTrip : nil
-            let key = (model.nav == nil ? "" : "nav") + (trip?.id.uuidString ?? "") + (main?.id.uuidString ?? "") + alts.map(\.id.uuidString).joined() + "\(Int(from / 5))"
+            let trip = model.transitJourney?.trip ?? (model.nav == nil ? model.directions?.pickedTrip : nil)
+            let key = (model.mapNavigator == nil ? "" : "nav") + (trip?.id.uuidString ?? "") + (main?.id.uuidString ?? "") + alts.map(\.id.uuidString).joined() + "\(Int(from / 5))"
             guard key != lastRouteKey else { return }
             lastRouteKey = key
 
@@ -1148,7 +1165,7 @@ struct VelaMapView: UIViewRepresentable {
 
         /** While navigating, NavGlide draws the arrow every frame; this only clears it afterwards. */
         private func renderPuck(_ style: MLNStyle) {
-            if model.nav != nil { lastPuckKey = "nav"; return }
+            if model.mapNavigator != nil { lastPuckKey = "nav"; return }
             guard lastPuckKey != "" else { return }
             (style.source(withIdentifier: "vela-puck") as? MLNShapeSource)?.shape = nil
             lastPuckKey = ""
@@ -1264,7 +1281,8 @@ struct VelaMapView: UIViewRepresentable {
                                                   .gestureZoomOut, .gestureOneFingerZoom, .gestureTilt]
             guard !reason.intersection(gesture).isEmpty else { return }
             Task { @MainActor in
-                if let n = self.model.nav, n.following { n.following = false }
+                if let n = self.model.mapNavigator, n.following { n.following = false }
+                self.model.transitJourney?.following = false
                 // Off a route in 3D or 2D, dragging or turning the map stops following; zooming doesn't.
                 let moved: MLNCameraChangeReason = [.gesturePan, .gestureRotate]
                 if self.model.nav == nil, self.model.browseFollowing, !reason.intersection(moved).isEmpty {

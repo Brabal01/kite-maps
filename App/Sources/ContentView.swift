@@ -21,7 +21,9 @@ struct ContentView: View {
         ZStack {
             VelaMapView(model: model, settings: settings, dark: dark)
                 .ignoresSafeArea()
-            if let nav = model.nav {
+            if let journey = model.transitJourney {
+                TransitJourneyView(model: model, journey: journey)
+            } else if let nav = model.nav {
                 NavigationOverlay(model: model, nav: nav)
             } else if let cruise = model.cruise {
                 CruiseOverlay(model: model, cruise: cruise)
@@ -109,6 +111,9 @@ struct ContentView: View {
         .sheet(isPresented: $model.showLayers) {
             LayersSheet(settings: settings, liveCount: model.wazeLiveCount).kiteType()
         }
+        .sheet(isPresented: $model.showNearbyDepartures) {
+            NearbyDeparturesView(model: model).kiteType()
+        }
         .fullScreenCover(isPresented: .constant(DemoScript.step?.hasPrefix("svtest") == true)) {
             // Screenshot run only: the viewer on a test pattern, turned right by the step's number.
             GoogleStreetViewScreen(name: "Test pattern", pano: StreetView.Panorama(id: PanoramaViewer.testID, location: LatLng(0, 0)),
@@ -166,6 +171,12 @@ struct BrowseOverlay: View {
                         VStack(spacing: 10) {
                             MapFab(icon: "square.3.layers.3d", size: 48) { model.showLayers = true }
                                 .accessibilityLabel("Map layers")
+                            if idle {
+                                MapFab(icon: "tram.fill", size: 48) {
+                                    model.location.start()
+                                    model.showNearbyDepartures = true
+                                }.accessibilityLabel("Nearby departures")
+                            }
                             if settings.parkingButton || settings.parking != nil {
                                 MapFab(icon: "parkingsign", tint: settings.parking != nil ? Vela.routeBlue : .primary, size: 48) {
                                     if let p = settings.parking { model.select(p) } else { model.saveParking() }

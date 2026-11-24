@@ -91,6 +91,7 @@ struct DirectionsState {
     var transitTime: Date?
     var arriveBy = false
     var trip = 0
+    var preferredTransitLines: [String] = []
 
     var current: [Route] { transit ? [] : routes[mode] ?? [] }
     /** Just looking: the trip doesn't start where you are, so there's no Go. */
@@ -125,6 +126,10 @@ final class AppModel: ObservableObject {
     @Published var rating4Only = false
     @Published var sort: SortMode = .relevance
     @Published var directions: DirectionsState?
+    @Published var transitJourney: TransitJourney?
+    @Published var showNearbyDepartures = false
+    var mapNavigator: Navigator? { nav ?? transitJourney?.walking }
+    private var transitWalkingTask: Task<Void, Never>?
     @Published var nav: Navigator?
     @Published var showLayers = false
     /** Which page of the dock is open. */
@@ -695,6 +700,7 @@ final class AppModel: ObservableObject {
     /** 0 leave now, 1 depart at, 2 arrive by. */
     func setTransitTime(kind: Int, at date: Date) {
         directions?.transitTime = kind == 0 ? nil : date
+        directions?.preferredTransitLines = []
         directions?.arriveBy = kind == 2
         loadTransit()
     }
@@ -802,6 +808,10 @@ final class AppModel: ObservableObject {
                 let trips = try await Transitous.plan(from: from, to: to, time: time, arriveBy: arriveBy)
                 guard directions?.destination.id == destId, transitRequest == req else { return }
                 directions?.trips = trips
+                if !d.preferredTransitLines.isEmpty,
+                   let index = trips.firstIndex(where: { $0.lineKeys == d.preferredTransitLines }) {
+                    directions?.trip = index
+                }
                 if trips.isEmpty { directions?.tripsError = "No transit trips found here." }
             } catch {
                 guard directions?.destination.id == destId, transitRequest == req else { return }
@@ -836,6 +846,116 @@ final class AppModel: ObservableObject {
     }
 
     // MARK: Navigation
+
+    func saveTransit(_ selected: TransitTrip) {
+        guard let d = directions, let depart = selected.depart,
+              let location = userLatLng ?? d.origin?.location else { return }
+        let here = Place(id: "saved-origin:\(location.lat),\(location.lng)", name: "Your location", location: location, source: "pin")
+        let origin = d.reversed ? d.destination : (d.origin ?? here)
+        let destination = d.reversed ? here : d.destination
+        guard !settings.savedTransit.contains(where: {
+            $0.departure == depart && $0.lines == selected.lineKeys && $0.origin.id == origin.id && $0.destination.id == destination.id
+        }) else { return }
+        settings.savedTransit.insert(SavedTransitPlan(origin: origin, destination: destination, departure: depart,
+                                                     lines: selected.lineKeys), at: 0)
+    }
+
+    func openTransit(_ plan: SavedTransitPlan) {
+        let future = plan.departure > Date()
+        tab = .map
+        directions = DirectionsState(destination: plan.destination, mode: .walk, transit: true,
+                                     origin: plan.origin, transitTime: future ? max(Date(), plan.departure.addingTimeInterval(-60)) : nil,
+                                     preferredTransitLines: future ? plan.lines : [])
+        loadTransit()
+    }
+
+    func startTransit(_ selected: TransitTrip) {
+        guard let d = directions, !selected.legs.isEmpty, nav == nil, transitJourney == nil else { return }
+        let destination = d.reversed ? userLatLng.map {
+            Place(id: "transit-home", name: "Your location", location: $0, source: "pin")
+        } : d.destination
+        guard let destination else { return }
+        endCruise()
+        transitRequest += 1
+        directions = nil
+        browseFollowing = false
+        let journey = TransitJourney(trip: selected, destination: destination)
+        transitJourney = journey
+        location.setNavigating(true, mode: TravelMode.walk.rawValue)
+        prepareTransitLeg(journey)
+        if settings.transitExitAlerts { Task { _ = await TransitReminders.authorize() } }
+    }
+
+    func advanceTransit() {
+        guard let journey = transitJourney, journey.phase != .complete else { return }
+        journey.advance()
+        prepareTransitLeg(journey)
+    }
+
+    func boardTransit() {
+        transitJourney?.board()
+        mapTick += 1
+    }
+
+    func endTransit() {
+        transitWalkingTask?.cancel()
+        transitJourney?.walking?.stop()
+        transitJourney = nil
+        glide.stop()
+        map?.showsUserLocation = true
+        location.setNavigating(false)
+        resetCamera()
+        mapTick += 1
+    }
+
+    func showTransitOverview() {
+        guard let journey = transitJourney else { return }
+        journey.following = false
+        journey.walking?.following = false
+        frame(journey.trip.path, bottomFraction: 0.24, top: 105)
+    }
+
+    func followTransit() {
+        guard let journey = transitJourney else { return }
+        journey.following = true
+        if let n = journey.walking, let fix = location.last {
+            n.following = true
+            followCamera(n, fix, animated: false)
+        } else if let leg = journey.leg {
+            frame(journey.phase == .board ? Array(leg.path.prefix(1)) : leg.path, bottomFraction: 0.24, top: 100)
+        }
+    }
+
+    private func prepareTransitLeg(_ journey: TransitJourney) {
+        transitWalkingTask?.cancel()
+        glide.stop()
+        map?.showsUserLocation = true
+        mapTick += 1
+        guard let leg = journey.leg else { location.setNavigating(false); return }
+        guard leg.isWalk else { frame(Array(leg.path.prefix(1)), bottomFraction: 0.24); return }
+        guard let start = userLatLng ?? leg.path.first,
+              let goal = journey.trip.legs.dropFirst(journey.index + 1).first?.calls.first?.location ?? leg.path.last else { return }
+        let index = journey.index
+        let useGoogle = !settings.noGoogle
+        transitWalkingTask = Task {
+            let result = await Directions.routes(from: start, to: goal, mode: .walk, useGoogle: useGoogle)
+            guard !Task.isCancelled, transitJourney === journey, journey.index == index else { return }
+            guard let route = result.routes.first else {
+                journey.walkingUnavailable = true
+                frame(leg.path, bottomFraction: 0.24)
+                return
+            }
+            let stop = Place(id: "transit-step:\(index)", name: leg.toName, location: goal, source: "transit")
+            let n = Navigator(route: route, destination: stop, stops: [], settings: settings)
+            journey.walking = n
+            map?.showsUserLocation = false
+            if let fix = location.last {
+                n.handle(fix)
+                followCamera(n, fix, animated: false)
+            }
+            mapTick += 1
+        }
+    }
 
     func startNavigation() {
         guard let d = directions, let route = d.route, !d.previewOnly else { return }
@@ -943,6 +1063,12 @@ final class AppModel: ObservableObject {
 
     private func locationChanged(_ loc: CLLocation) {
         if location.reducedAccuracy || loc.horizontalAccuracy > 200 { areaRisk = nil }
+        if let journey = transitJourney {
+            if journey.observe(loc, settings: settings) { advanceTransit() }
+            else if let walking = journey.walking { followCamera(walking, loc, animated: true) }
+            mapTick += 1
+            return
+        }
         guard let n = nav else {
             cruiseCheck(loc)
             followBrowse(loc, entering: false)
