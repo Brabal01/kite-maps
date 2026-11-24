@@ -3,6 +3,14 @@
 Every version of Kite Maps, newest first. The small number goes up for fixes and polish, and
 the middle number for big milestones.
 
+## 0.8.1 Android navigation port (iOS)
+
+- Driving has separate 2D/3D and north-up controls. Route planning frames all alternatives with their duration labels.
+- Map & display includes offline OpenFreeMap downloads from the Android catalogue (including Czech regions), three road-event strip styles, and separate Waze icon sizes for the map and navigation strip.
+- Transit guidance frames the remaining journey and distinguishes recent vehicle reports from positions estimated from arrival and departure times.
+
+The offline catalogue comes from the GPLv3 [Kite Driving 0.8.1 release](https://github.com/Gordicek/kite-maps/releases/tag/v0.8.1-android). The catalogue credits Geofabrik and Eurostat GISCO.
+
 ## v36 roundabout accuracy, live traffic and simulator fix (branch `iphone-custom-v36-traffic-roundabout-accuracy`)
 
 Built on the verified v35 `a616f490`; PR #14 targets the v35 branch. Details in

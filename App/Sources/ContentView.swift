@@ -127,6 +127,14 @@ struct ContentView: View {
                 }
             }
         }
+        .task(id: model.transitJourney?.trip.id) {
+            guard model.transitJourney != nil else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 15_000_000_000)
+                guard !Task.isCancelled else { break }
+                model.mapTick += 1
+            }
+        }
         .overlay(alignment: .center) {
             if model.layerInspectionEnabled && (model.tab == .map || model.hasActiveJourney) {
                 MapLayerInspectorPanel(model: model)
@@ -785,7 +793,8 @@ enum DemoScript {
         }
         #endif
         // The map button's choice and the zoom setting are kept between runs: start each shot from the usual view.
-        model.settings.driveLook = .tilted
+        model.settings.driveLook = .flat
+        model.settings.driveTilt = true
         model.settings.mapZoom = .normal
         await wait(6)
         if step == "browse" { return }
@@ -1139,8 +1148,8 @@ enum DemoScript {
             model.startNavigation()
             await wait(5)
             if step == "nextlimit" { model.nav?.showDemoLimitDrop() } else { model.nav?.showDemoSpeed(limitKmh: 96.6, mph: 57) }
-            if step == "flat" { model.cycleDriveLook() }
-            if step == "northup" { model.cycleDriveLook(); model.cycleDriveLook() }
+            if step == "flat" { model.toggleDriveTilt() }
+            if step == "northup" { model.toggleDriveNorth() }
             return
         }
         if step == "uk" {

@@ -1705,7 +1705,9 @@ final class AppModel: ObservableObject {
         guard let r = directions?.route else { mapTick += 1; return }
         let collapsed = detent == .collapsed
         let top: CGFloat = collapsed ? 32 : directions?.stops.isEmpty == false ? 250 : 205
-        frame(r.polyline, bottomFraction: collapsed ? 0.12 : 0.42, top: top)
+        let alternatives = directions?.current.flatMap(\.polyline) ?? []
+        frame(alternatives.isEmpty ? r.polyline : alternatives,
+              bottomFraction: collapsed ? 0.12 : 0.42, top: top, pitch: 0)
     }
 
     /** Police risk within about a kilometre of you, from remembered and live Waze police reports. */
@@ -1934,7 +1936,7 @@ final class AppModel: ObservableObject {
         location.setNavigating(true, mode: leg.isWalk ? TravelMode.walk.rawValue : TravelMode.drive.rawValue,
                                transit: true)
         map?.showsUserLocation = true
-        if leg.path.count >= 2 { frame(leg.path, bottomFraction: 0.25, top: 200) }
+        frameTransitJourney()
         mapTick += 1
         guard leg.isWalk, let target = leg.arrivalPoint, let from = userLatLng ?? leg.path.first else { return }
         if from.distance(to: target) < 25 { advanceTransit(); return }
@@ -1949,6 +1951,14 @@ final class AppModel: ObservableObject {
                 beginNavigation(route, to: destination)
             }
         }
+    }
+
+    func frameTransitJourney() {
+        guard let journey = transitJourney else { return }
+        let remaining = journey.trip.legs.dropFirst(journey.index).flatMap { leg in
+            leg.path.isEmpty ? [leg.boardStop?.location, leg.arrivalPoint].compactMap { $0 } : leg.path
+        }
+        if !remaining.isEmpty { frame(remaining, bottomFraction: 0.08, top: 260, pitch: 0) }
     }
 
     func startJustDrive() {
@@ -2375,19 +2385,26 @@ final class AppModel: ObservableObject {
         let p = n.progress
         // Further out on long stretches, closer in and flatter just before a turn (see NavZoom).
         // Then the zoom setting (Closer, Normal, Wider) and the 3D, 2D or north-up button.
+        let look = settings.effectiveDriveLook
         let view = NavZoom.view(speed: loc.speed, toNext: p?.distanceToNext, next: n.nextManeuver?.type, driving: n.route.mode == .drive)
-            .applying(settings.mapZoom, settings.driveLook)
-        glide.look = settings.driveLook
+            .applying(settings.mapZoom, look)
+        glide.look = look
         glide.fix(n, loc, across: view.across, pitch: view.pitch, jump: !animated)
     }
 
-    /** The map button while driving: 3D, then 2D, then north up. Kept for the next drive. */
-    func cycleDriveLook() {
-        settings.driveLook = settings.driveLook.next
-        guard let n = nav else { return }
-        n.showingOverview = false
-        n.following = true
-        if let loc = location.last { followCamera(n, loc, animated: true) }
+    func toggleDriveTilt() {
+        settings.driveTilt.toggle()
+        updateDriveLook()
+    }
+
+    func toggleDriveNorth() {
+        settings.driveLook = settings.driveLook == .north ? .flat : .north
+        updateDriveLook()
+    }
+
+    private func updateDriveLook() {
+        guard let n = nav, let loc = location.last else { return }
+        followCamera(n, loc, animated: true)
     }
 
     // MARK: Map
@@ -2417,11 +2434,12 @@ final class AppModel: ObservableObject {
         map.setCamera(cam, withDuration: 0.5, animationTimingFunction: nil, edgePadding: .zero, completionHandler: nil)
     }
 
-    func frame(_ points: [LatLng], bottomFraction: CGFloat = 0.45, top: CGFloat = 130) {
+    func frame(_ points: [LatLng], bottomFraction: CGFloat = 0.45, top: CGFloat = 130,
+               pitch: CGFloat? = nil) {
         guard let map, !points.isEmpty else { return }
         // Showing a place or a route: stop following, or the next fix would pull the map away.
         browseFollowing = false
-        let pitch = nav == nil ? browsePitch : 0
+        let pitch = pitch ?? (nav == nil ? browsePitch : 0)
         if points.count == 1 {
             let c = CLLocationCoordinate2D(latitude: points[0].lat, longitude: points[0].lng)
             map.setCamera(MLNMapCamera(lookingAtCenter: c, acrossDistance: 1200, pitch: pitch, heading: 0), withDuration: 0.3,

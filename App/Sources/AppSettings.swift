@@ -2,6 +2,18 @@ import Foundation
 import SwiftUI
 import VelaCore
 
+enum RoadStripStyle: String, CaseIterable {
+    case classic, minimal, contrast
+
+    var title: String {
+        switch self {
+        case .classic: return L10n.isCzech ? "Klasický" : "Classic"
+        case .minimal: return L10n.isCzech ? "Minimální" : "Minimal"
+        case .contrast: return L10n.isCzech ? "Vysoký kontrast" : "High contrast"
+        }
+    }
+}
+
 enum ThemeMode: String, CaseIterable, Identifiable {
     case system, light, dark
     var id: String { rawValue }
@@ -155,8 +167,19 @@ final class AppSettings: ObservableObject {
     @Published var mapZoom: MapZoom { didSet { d.set(mapZoom.rawValue, forKey: "mapZoom") } }
     /** The driving map's 3D, 2D or north-up choice from the map button, kept for the next drive. */
     @Published var driveLook: MapLook { didSet { d.set(driveLook.rawValue, forKey: "driveLook") } }
+    @Published var driveTilt: Bool { didSet { d.set(driveTilt, forKey: "driveTilt") } }
+    var effectiveDriveLook: MapLook { driveLook == .north ? .north : driveTilt ? .tilted : .flat }
     /** Show 2D footprints and 3D extrusions on the navigation map, not just while browsing. */
     @Published var navArrowScale: Double { didSet { d.set(navArrowScale, forKey: "navArrowScale") } }
+    @Published var roadStripStyle = RoadStripStyle(rawValue: UserDefaults.standard.string(forKey: "roadStripStyle") ?? "") ?? .classic {
+        didSet { d.set(roadStripStyle.rawValue, forKey: "roadStripStyle") }
+    }
+    @Published var wazeMapScale = min(1.5, max(0.7, UserDefaults.standard.object(forKey: "wazeMapScale") as? Double ?? 1)) {
+        didSet { d.set(wazeMapScale, forKey: "wazeMapScale") }
+    }
+    @Published var wazeStripScale = min(1.5, max(0.7, UserDefaults.standard.object(forKey: "wazeStripScale") as? Double ?? 1)) {
+        didSet { d.set(wazeStripScale, forKey: "wazeStripScale") }
+    }
     @Published var speedOnRight: Bool { didSet { d.set(speedOnRight, forKey: "speedOnRight") } }
     @Published var showNavSpeed: Bool { didSet { d.set(showNavSpeed, forKey: "showNavSpeed") } }
     @Published var showNavRoad: Bool { didSet { d.set(showNavRoad, forKey: "showNavRoad") } }
@@ -262,6 +285,8 @@ final class AppSettings: ObservableObject {
         speedingAlert = d.bool(forKey: "speedingAlert")
         mapZoom = MapZoom(rawValue: d.string(forKey: "mapZoom") ?? "") ?? .normal
         driveLook = MapLook(rawValue: d.string(forKey: "driveLook") ?? "") ?? .tilted
+        driveTilt = d.object(forKey: "driveTilt") as? Bool
+            ?? ((MapLook(rawValue: d.string(forKey: "driveLook") ?? "") ?? .tilted) == .tilted)
         navArrowScale = min(1.35, max(0.75, d.object(forKey: "navArrowScale") as? Double ?? 1))
         speedOnRight = d.bool(forKey: "speedOnRight")
         showNavSpeed = d.object(forKey: "showNavSpeed") as? Bool ?? true

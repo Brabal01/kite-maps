@@ -206,7 +206,7 @@ struct NavigationOverlay: View {
             if !nav.arrived {
                 HStack {
                     RoadControlTimeline(controls: nav.upcomingControls, emptyMessage: roadEventsStatus,
-                                        compactStatus: true)
+                                        compactStatus: true, waze: nav.wazeAhead)
                     Spacer(minLength: 0)
                 }
                 .padding(.horizontal, 12)
@@ -246,11 +246,20 @@ struct NavigationOverlay: View {
                             }
                             .accessibilityLabel(nav.showingOverview ? "Follow your location" : "Show remaining route")
                         }
-                        MapLookButton(look: settings.driveLook, size: 52) {
-                            model.cycleDriveLook()
-                            let look = settings.driveLook
-                            withAnimation(.easeOut(duration: 0.2)) { buttonNote = ButtonNote(title: look.title, detail: look.detail) }
+                        Button { model.toggleDriveTilt() } label: {
+                            Text(settings.driveTilt ? "3D" : "2D")
+                                .font(.system(size: 17, weight: .heavy, design: .rounded))
+                                .foregroundStyle(.primary)
+                                .frame(width: 52, height: 52)
+                                .glass(Circle())
                         }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(L10n.isCzech ? "Přepnout 2D a 3D" : "Toggle 2D and 3D")
+                        .disabled(settings.driveLook == .north)
+                        MapFab(icon: "location.north.line", tint: settings.driveLook == .north ? Vela.accentText(scheme) : .primary, size: 52) {
+                            model.toggleDriveNorth()
+                        }
+                        .accessibilityLabel(settings.driveLook == .north ? "Follow travel direction" : "North up")
                     }
                     HStack(spacing: 6) {
                         MapFab(icon: "minus", size: 44) { model.adjustNavZoom(wider: true) }

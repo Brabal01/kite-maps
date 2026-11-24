@@ -533,6 +533,7 @@ public enum Transitous {
                                scheduledTrack: string(value["scheduledTrack"]), stopCode: string(value["stopCode"]),
                                detail: string(value["description"]), skipped: value["cancelled"] as? Bool == true)
         call.stopId = string(value["stopId"]) ?? string(value["parentId"])
+        call.location = point(value)
         return call
     }
 

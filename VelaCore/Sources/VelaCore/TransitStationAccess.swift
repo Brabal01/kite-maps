@@ -12,6 +12,7 @@ public struct TransitCall: Hashable, Sendable {
     public var skipped: Bool
     /** The feed's own stop id, when it provides one, for joining GTFS-Realtime updates. */
     public var stopId: String? = nil
+    public var location: LatLng? = nil
 }
 
 public struct TransitWalkStep: Hashable, Sendable {

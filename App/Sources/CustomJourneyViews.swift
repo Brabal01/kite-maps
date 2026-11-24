@@ -110,16 +110,28 @@ struct ActiveTransitView: View {
                     Spacer()
                     Button("End") { model.endNavigation() }
                 }
-                Text(L10n.format("Leg %@ of %@", String(journey.index + 1), String(journey.trip.legs.count)))
-                    .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                HStack {
+                    Text(L10n.format("Leg %@ of %@", String(journey.index + 1), String(journey.trip.legs.count)))
+                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    Spacer()
+                    Button { model.frameTransitJourney() } label: {
+                        Label(L10n.isCzech ? "Přehled cesty" : "Trip overview",
+                              systemImage: "arrow.up.left.and.arrow.down.right")
+                            .font(.caption.weight(.semibold))
+                    }
+                }
                 if let direction = journey.leg.headsign { Text(L10n.format("Direction: %@", direction)).font(.headline) }
                 if !journey.leg.isWalk {
                     HStack(spacing: 6) {
                         Text(journey.leg.isRealtime ? "Live data" : "Scheduled timetable")
                             .font(.caption.weight(.semibold))
                             .foregroundColor(journey.leg.isRealtime ? Vela.open : .secondary)
-                        if let vehicle = journey.leg.liveVehicle, let updated = vehicle.updated {
+                        if let vehicle = journey.leg.liveVehicle, let updated = vehicle.updated,
+                           abs(Date().timeIntervalSince(updated)) <= 120 {
                             Text(L10n.format("Vehicle updated %@", updated.formatted(date: .omitted, time: .shortened)))
+                                .font(.caption).foregroundStyle(.secondary)
+                        } else {
+                            Text(L10n.isCzech ? "≈ Odhad podle jízdního řádu" : "≈ Timetable position estimate")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }

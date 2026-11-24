@@ -732,6 +732,11 @@ struct VelaMapView: UIViewRepresentable {
             let profile = MapPresetCatalog.profile(for: effectivePreset)
             (style.layer(withIdentifier: "vela-puck") as? MLNSymbolStyleLayer)?.iconScale =
                 NSExpression(forConstantValue: s.navArrowScale)
+            let wazeScale = NSExpression(mglJSONObject: ["interpolate", ["linear"], ["zoom"],
+                                                       11, 0.62 * s.wazeMapScale, 15, 0.95 * s.wazeMapScale])
+            for id in ["vela-waze", "vela-waze-group"] {
+                (style.layer(withIdentifier: id) as? MLNSymbolStyleLayer)?.iconScale = wazeScale
+            }
             style.layer(withIdentifier: "vela-sat")?.isVisible = s.satellite
             style.layer(withIdentifier: "vela-terrain")?.isVisible = s.terrain && !s.satellite
             for id in ["vela-rail", "vela-rail-case"] { style.layer(withIdentifier: id)?.isVisible = showsTransitNetwork }
@@ -1413,19 +1418,31 @@ struct VelaMapView: UIViewRepresentable {
             else { style.addLayer(layer) }
         }
 
-        /** Vehicles reported live by an optional GTFS-Realtime feed, on the active transit trip. */
+        /** Keep feed positions distinct from positions estimated from the active leg's timetable. */
         private func renderTransitVehicles() {
-            let trip = model.transitJourney?.trip ?? (model.nav == nil && !model.justDrive ? model.directions?.pickedTrip : nil)
-            let features: [MLNPointFeature] = (trip?.rides ?? []).compactMap { leg in
-                guard let vehicle = leg.liveVehicle else { return nil }
+            let journey = model.transitJourney
+            let trip = !model.justDrive && model.nav == nil ? model.directions?.pickedTrip : nil
+            let legs: [TransitLeg] = journey.map { [$0.leg] } ?? trip?.rides ?? []
+            let now = Date()
+            let bucket = Date(timeIntervalSince1970: (now.timeIntervalSince1970 / 15).rounded(.down) * 15)
+            let features: [MLNPointFeature] = legs.compactMap { leg in
+                guard !leg.isWalk else { return nil }
+                let live = leg.liveVehicle.flatMap { vehicle -> LatLng? in
+                    guard let updated = vehicle.updated,
+                          abs(now.timeIntervalSince(updated)) <= 120 else { return nil }
+                    return vehicle.location
+                }
+                let estimate = journey == nil || live != nil ? nil : TransitPositionEstimate.location(on: leg, at: bucket)
+                guard let point = live ?? estimate else { return nil }
                 let f = MLNPointFeature()
-                f.coordinate = CLLocationCoordinate2D(latitude: vehicle.location.lat, longitude: vehicle.location.lng)
-                f.attributes = ["icon": "transit-\(leg.identity.mode.rawValue)", "label": leg.line]
+                f.coordinate = CLLocationCoordinate2D(latitude: point.lat, longitude: point.lng)
+                f.attributes = ["icon": "transit-\(leg.identity.mode.rawValue)",
+                                "label": estimate == nil ? leg.line : "≈ \(leg.line)"]
                 return f
             }
             let key = features.map {
-                "\($0.coordinate.latitude),\($0.coordinate.longitude),\(($0.attributes["label"] as? String) ?? "")"
-            }.joined()
+                "\($0.coordinate.latitude),\($0.coordinate.longitude),\($0.attributes)"
+            }.joined(separator: "|")
             guard key != lastTransitVehicleKey else { return }
             lastTransitVehicleKey = key
             publish(features.isEmpty ? nil : MLNShapeCollectionFeature(shapes: features), to: "vela-transit-vehicle")

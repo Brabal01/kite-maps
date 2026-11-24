@@ -12,10 +12,12 @@ struct RoadControlTimeline: View {
     let controls: [UpcomingRoadControl]
     var emptyMessage = "Checking the route…"
     var compactStatus = false
+    var waze: WazeAhead?
+    @ObservedObject private var settings = AppSettings.shared
     @State private var expanded = false
 
     var body: some View {
-        if controls.isEmpty {
+        if controls.isEmpty && waze == nil {
             if compactStatus {
                 Image(systemName: emptyMessage == "Road data temporarily unavailable" ? "exclamationmark.circle" : "road.lanes")
                     .font(.system(size: 17, weight: .medium))
@@ -36,7 +38,7 @@ struct RoadControlTimeline: View {
                 VStack(spacing: 0) {
                     ForEach(Array(controls.prefix(expanded ? 6 : 3).enumerated()), id: \.element.id) { index, event in
                         if index > 0 {
-                            Capsule().fill(.secondary.opacity(0.32)).frame(width: 2, height: 10)
+                            connector
                         }
                         let kind = event.control.kind
                         VStack(spacing: 2) {
@@ -52,6 +54,13 @@ struct RoadControlTimeline: View {
                         .foregroundStyle(.primary)
                         .accessibilityLabel("\(L10n.text(kind.title)), \(Fmt.distance(event.meters))")
                     }
+                    if let waze {
+                        if !controls.isEmpty { connector }
+                        WazeBadge(kind: waze.alert.kind, size: CGFloat(23 * settings.wazeStripScale))
+                            .accessibilityLabel(L10n.text(waze.alert.title))
+                        Text(Fmt.distance(waze.meters))
+                            .accessibilityLabel(Fmt.distance(waze.meters))
+                    }
                     if controls.count > 3 {
                         Image(systemName: expanded ? "chevron.up" : "chevron.down")
                             .font(.caption2).foregroundStyle(.secondary).padding(.top, 4)
@@ -61,11 +70,21 @@ struct RoadControlTimeline: View {
                 .padding(.vertical, 8)
                 .padding(.horizontal, 4)
                 .glass(RoundedRectangle(cornerRadius: 16))
+                .overlay {
+                    if settings.roadStripStyle == .contrast {
+                        RoundedRectangle(cornerRadius: 16).strokeBorder(.primary, lineWidth: 2)
+                    }
+                }
             }
             .buttonStyle(.plain)
         }
     }
 
+    private var connector: some View {
+        let style = settings.roadStripStyle
+        return Capsule().fill(style == .contrast ? Color.primary : Color.secondary.opacity(0.32))
+            .frame(width: style == .contrast ? 5 : style == .minimal ? 1 : 2, height: 10)
+    }
 }
 
 struct RoadEventsList: View {

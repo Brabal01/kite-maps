@@ -467,6 +467,14 @@ struct SettingsView: View {
             Section("Map background") {
                 Toggle("Apple Maps", isOn: $settings.useAppleMaps)
             }
+            Section {
+                NavigationLink {
+                    OfflineMapsPage()
+                } label: {
+                    SettingLabel(L10n.isCzech ? "Offline mapy" : "Offline maps",
+                                 icon: "arrow.down.circle.fill", color: 0x0F766E)
+                }
+            }
             Section("Mapbox") {
                 MapboxSettings(settings: settings)
                     .disabled(settings.useAppleMaps)
@@ -505,6 +513,21 @@ struct SettingsView: View {
                 Text("Shown under the search field. Drag to change the order, use + to add and − to remove. Changes appear on the map immediately.")
             }
             Section {
+                Picker(L10n.isCzech ? "Vzhled lišty událostí" : "Road strip appearance", selection: $settings.roadStripStyle) {
+                    ForEach(RoadStripStyle.allCases, id: \.self) { style in
+                        Text(style.title).tag(style)
+                    }
+                }
+                VStack(alignment: .leading) {
+                    Text(L10n.isCzech ? "Velikost Waze ikon na mapě" : "Waze icon size on the map")
+                    Slider(value: $settings.wazeMapScale, in: 0.7...1.5, step: 0.1)
+                        .accessibilityLabel(L10n.isCzech ? "Velikost Waze ikon na mapě" : "Waze icon size on the map")
+                }
+                VStack(alignment: .leading) {
+                    Text(L10n.isCzech ? "Velikost Waze ikon v liště" : "Waze icon size in the road strip")
+                    Slider(value: $settings.wazeStripScale, in: 0.7...1.5, step: 0.1)
+                        .accessibilityLabel(L10n.isCzech ? "Velikost Waze ikon v liště" : "Waze icon size in the road strip")
+                }
                 Picker(selection: $settings.hudMode) {
                     ForEach(HUDMode.allCases) { mode in
                         Text(L10n.text(mode.title)).tag(mode)
