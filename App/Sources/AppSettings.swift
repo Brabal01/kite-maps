@@ -44,6 +44,34 @@ final class AppSettings: ObservableObject {
 
     @Published var theme: ThemeMode { didSet { d.set(theme.rawValue, forKey: "theme") } }
     @Published var mapLighting: MapLighting { didSet { d.set(mapLighting.rawValue, forKey: "kite.mapLighting") } }
+    @Published var dayMapPalette = AppSettings.loadPalette("kite.dayMapPalette", dark: false) {
+        didSet { d.set(dayMapPalette.stored.map(Int.init), forKey: "kite.dayMapPalette") }
+    }
+    @Published var nightMapPalette = AppSettings.loadPalette("kite.nightMapPalette", dark: true) {
+        didSet { d.set(nightMapPalette.stored.map(Int.init), forKey: "kite.nightMapPalette") }
+    }
+    @Published var mapUIAccent = AppSettings.loadRGB("kite.mapUIAccent") {
+        didSet { d.set(mapUIAccent.map(Int.init), forKey: "kite.mapUIAccent") }
+    }
+    @Published var mapUIDayPanel = AppSettings.loadRGB("kite.mapUIDayPanel") {
+        didSet { d.set(mapUIDayPanel.map(Int.init), forKey: "kite.mapUIDayPanel") }
+    }
+    @Published var mapUINightPanel = AppSettings.loadRGB("kite.mapUINightPanel") {
+        didSet { d.set(mapUINightPanel.map(Int.init), forKey: "kite.mapUINightPanel") }
+    }
+
+    func mapPalette(dark: Bool) -> MapPalette { dark ? nightMapPalette : dayMapPalette }
+
+    private static func loadPalette(_ key: String, dark: Bool) -> MapPalette {
+        let raw = UserDefaults.standard.array(forKey: key) as? [Int] ?? []
+        return MapPalette(stored: raw.compactMap(UInt32.init(exactly:))) ?? MapPalette.presets(dark: dark)[0].palette
+    }
+
+    private static func loadRGB(_ key: String) -> UInt32? {
+        guard let stored = UserDefaults.standard.object(forKey: key) as? Int, (0...0xFFFFFF).contains(stored) else { return nil }
+        return UInt32(stored)
+    }
+
     @Published var hikingTrails: Bool { didSet { d.set(hikingTrails, forKey: "kite.hikingTrails") } }
     @Published var cyclingTrails: Bool { didSet { d.set(cyclingTrails, forKey: "kite.cyclingTrails") } }
     @Published var units: UnitsMode { didSet { d.set(units.rawValue, forKey: "units") } }
@@ -186,7 +214,7 @@ final class AppSettings: ObservableObject {
         mapboxBasemap = d.object(forKey: "kite.mapboxBasemap") as? Bool ?? true
         offlineBasemap = d.bool(forKey: "kite.offlineBasemap")
         driveEngine = RouteEngine(rawValue: d.string(forKey: "kite.driveEngine") ?? "") ?? .automatic
-        walkEngine = RouteEngine(rawValue: d.string(forKey: "kite.walkEngine") ?? "") ?? .openStreetMap
+        walkEngine = RouteEngine(rawValue: d.string(forKey: "kite.walkEngine") ?? "") ?? .automatic
         bikeEngine = RouteEngine(rawValue: d.string(forKey: "kite.bikeEngine") ?? "") ?? .automatic
         terrain = d.bool(forKey: "terrain")
         transitLines = d.bool(forKey: "transitLines")

@@ -50,6 +50,7 @@ struct VelaMapView: UIViewRepresentable {
         map.addGestureRecognizer(tap)
 
         c.dark = dark
+        c.palette = settings.mapPalette(dark: dark)
         model.map = map
         // Reports found by the background sweep show on the heat map straight away.
         WazeHistory.shared.onChange = { [weak c, weak map] in if let c, let map { c.render(map) } }
@@ -63,8 +64,10 @@ struct VelaMapView: UIViewRepresentable {
     func updateUIView(_ container: UIView, context: Context) {
         let c = context.coordinator
         guard let map = container.subviews.first as? MLNMapView else { return }
-        if c.dark != dark {
+        let colors = settings.mapPalette(dark: dark)
+        if c.dark != dark || c.palette != colors {
             c.dark = dark
+            c.palette = colors
             c.repaint(map)
         }
         #if canImport(MapboxMaps)
@@ -114,6 +117,7 @@ struct VelaMapView: UIViewRepresentable {
         }
         let model: AppModel
         var dark = false
+        var palette: MapPalette?
         private var styleReady = false
         private var mapboxSignature: String?
         #if canImport(MapboxMaps)
@@ -131,7 +135,7 @@ struct VelaMapView: UIViewRepresentable {
             }
             let look = MapboxStandardSurface.Appearance(dark: dark, satellite: settings.satellite,
                                                        driving: model.nav?.route.mode == .drive || model.cruise != nil,
-                                                       terrain: settings.terrain)
+                                                       terrain: settings.terrain, palette: settings.mapPalette(dark: dark))
             if let standard, standard.usesToken(token) {
                 standard.update(look)
                 return
@@ -225,7 +229,11 @@ struct VelaMapView: UIViewRepresentable {
                     }
                 }
             }
-            MapStyler.apply(style, dark: dark)
+            MapStyler.apply(style, dark: dark, palette: palette)
+            if let palette, let line = style.layer(withIdentifier: "vela-route-line") as? MLNLineStyleLayer {
+                line.lineGradient = nil
+                line.lineColor = NSExpression(forConstantValue: UIColor(hex: palette[.route]))
+            }
             // The car's disc: navy at night, white by day.
             style.setImage(MapIcons.puck(dark: dark), forName: "puck")
             (style.layer(withIdentifier: "vela-rail-case") as? MLNLineStyleLayer)?.lineColor =

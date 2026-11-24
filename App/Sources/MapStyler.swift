@@ -1,5 +1,6 @@
 import MapLibre
 import UIKit
+import VelaCore
 
 /**
  * Paints OpenFreeMap Liberty in Kite's colors: a quiet night palette (near-black land,
@@ -52,8 +53,20 @@ enum MapStyler {
 
     private static func c(_ u: UIColor) -> NSExpression { NSExpression(forConstantValue: u) }
 
-    static func apply(_ style: MLNStyle, dark: Bool) {
-        let p = dark ? Self.dark : Self.light
+    static func apply(_ style: MLNStyle, dark: Bool, palette: MapPalette? = nil) {
+        var p = dark ? Self.dark : Self.light
+        if let palette {
+            p.land = UIColor(hex: palette[.land])
+            p.water = UIColor(hex: palette[.water])
+            p.park = UIColor(hex: palette[.parks])
+            p.pitch = p.park
+            p.building = UIColor(hex: palette[.buildings])
+            p.landuse = p.land
+            p.minor = UIColor(hex: palette[.streets])
+            p.service = p.minor
+            p.major = UIColor(hex: palette[.highways])
+            p.motorway = p.major
+        }
         for layer in style.layers {
             let id = layer.identifier
             // Vela's own layers keep their colors (the transit lines' ids contain "rail").

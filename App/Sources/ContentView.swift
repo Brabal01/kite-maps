@@ -115,6 +115,7 @@ struct ContentView: View {
             }
         }
         .preferredColorScheme(settings.colorScheme)
+        .tint(Vela.accent(settings.colorScheme ?? systemScheme))
         .task { await DemoScript.run(model) }
         .onChange(of: scenePhase) { phase in
             if phase == .active { model.mapStyleReady() }
@@ -218,16 +219,16 @@ struct BrowseOverlay: View {
                         VStack(spacing: 10) {
                             MapFab(icon: "square.3.layers.3d", size: 48) { model.showLayers = true }
                                 .accessibilityLabel("Map layers")
+                            if settings.parkingButton || settings.parking != nil {
+                                MapFab(icon: "parkingsign", tint: settings.parking != nil ? Vela.routeBlue : .primary, size: 48) {
+                                    if let p = settings.parking { model.select(p) } else { model.saveParking() }
+                                }
+                            }
                             if idle {
                                 MapFab(icon: "tram.fill", size: 48) {
                                     model.location.start()
                                     model.showNearbyDepartures = true
                                 }.accessibilityLabel("Nearby departures")
-                            }
-                            if settings.parkingButton || settings.parking != nil {
-                                MapFab(icon: "parkingsign", tint: settings.parking != nil ? Vela.routeBlue : .primary, size: 48) {
-                                    if let p = settings.parking { model.select(p) } else { model.saveParking() }
-                                }
                             }
                             // 3D, 2D or north up, always there. On north up with the map turned by hand,
                             // the needle shows which way north is and a tap faces north again.

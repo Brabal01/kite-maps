@@ -19,17 +19,74 @@ enum Vela {
     static let camera = Color(hex: 0xFF8A00)
     static let police = Color(hex: 0x2F7BFF)
 
-    /** The filled "Go" color: bright teal with dark text, day and night. */
-    static func accent(_ scheme: ColorScheme) -> Color { scheme == .dark ? tealLight : Color(hex: 0x14B8A6) }
-    static func onAccent(_ scheme: ColorScheme) -> Color { Color(hex: 0x04241F) }
-    /** Teal for text and icons on the page (darker by day so it reads on white). */
-    static func accentText(_ scheme: ColorScheme) -> Color { scheme == .dark ? tealLight : teal }
-    static func sheet(_ scheme: ColorScheme) -> Color { scheme == .dark ? Color(hex: 0x151F30) : .white }
-    /** Cards, buttons and tiles floating on the map. */
-    static func surface(_ scheme: ColorScheme) -> Color { scheme == .dark ? Color(hex: 0x1A2638) : .white }
-    /** Behind whole pages (Saved, Settings). */
-    static func ground(_ scheme: ColorScheme) -> Color { scheme == .dark ? Color(hex: 0x0E1726) : Color(hex: 0xF2F5F9) }
-    static func chip(_ scheme: ColorScheme) -> Color { scheme == .dark ? Color(hex: 0x243349) : Color(hex: 0xEDF1F6) }
+    static func accent(_ scheme: ColorScheme) -> Color {
+        AppSettings.shared.mapUIAccent.map { Color(hex: $0) }
+            ?? (scheme == .dark ? tealLight : Color(hex: 0x14B8A6))
+    }
+
+    static func onAccent(_ scheme: ColorScheme) -> Color {
+        guard let accent = AppSettings.shared.mapUIAccent else { return Color(hex: 0x04241F) }
+        return luminance(accent) >= 0.179 ? .black : .white
+    }
+
+    static func accentText(_ scheme: ColorScheme) -> Color {
+        guard let accent = AppSettings.shared.mapUIAccent else { return scheme == .dark ? tealLight : teal }
+        let background = panel(scheme) ?? (scheme == .dark ? 0x151F30 : 0xFFFFFF)
+        let target: UInt32 = scheme == .dark ? 0xFFFFFF : 0x000000
+        return Color(hex: contrasting(accent, on: background, toward: target))
+    }
+
+    static func sheet(_ scheme: ColorScheme) -> Color {
+        panel(scheme).map { Color(hex: $0) } ?? (scheme == .dark ? Color(hex: 0x151F30) : .white)
+    }
+
+    static func surface(_ scheme: ColorScheme) -> Color {
+        panel(scheme).map { Color(hex: mix($0, with: 0xFFFFFF, amount: scheme == .dark ? 0.025 : 0.16)) }
+            ?? (scheme == .dark ? Color(hex: 0x1A2638) : .white)
+    }
+
+    static func ground(_ scheme: ColorScheme) -> Color {
+        panel(scheme).map { Color(hex: mix($0, with: 0x000000, amount: scheme == .dark ? 0.20 : 0.04)) }
+            ?? Color(hex: scheme == .dark ? 0x0E1726 : 0xF2F5F9)
+    }
+
+    static func chip(_ scheme: ColorScheme) -> Color {
+        panel(scheme).map { Color(hex: mix($0, with: scheme == .dark ? 0xFFFFFF : 0x000000, amount: 0.09)) }
+            ?? Color(hex: scheme == .dark ? 0x243349 : 0xEDF1F6)
+    }
+
+    private static func panel(_ scheme: ColorScheme) -> UInt32? {
+        let dark = scheme == .dark
+        let stored = dark ? AppSettings.shared.mapUINightPanel : AppSettings.shared.mapUIDayPanel
+        return stored.map { contrasting($0, on: dark ? 0xFFFFFF : 0x000000, toward: dark ? 0x000000 : 0xFFFFFF) }
+    }
+
+    private static func luminance(_ rgb: UInt32) -> Double {
+        func channel(_ shift: UInt32) -> Double {
+            let component = Double((rgb >> shift) & 255) / 255
+            return component <= 0.04045 ? component / 12.92 : pow((component + 0.055) / 1.055, 2.4)
+        }
+        return 0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0)
+    }
+
+    private static func mix(_ base: UInt32, with other: UInt32, amount: Double) -> UInt32 {
+        [UInt32(16), 8, 0].reduce(0) { result, shift in
+            let a = Double((base >> shift) & 255)
+            let b = Double((other >> shift) & 255)
+            return result | (UInt32((a + (b - a) * amount).rounded()) << shift)
+        }
+    }
+
+    private static func contrasting(_ color: UInt32, on background: UInt32, toward fallback: UInt32) -> UInt32 {
+        let base = luminance(background)
+        for step in 0...10 {
+            let candidate = mix(color, with: fallback, amount: Double(step) / 10)
+            let value = luminance(candidate)
+            if (max(base, value) + 0.05) / (min(base, value) + 0.05) >= 4.5 { return candidate }
+        }
+        return fallback
+    }
+
     /** A soft amber for "worth knowing" chips, like a longer route or a road charge. */
     static func warnFill(_ scheme: ColorScheme) -> Color { scheme == .dark ? Color(hex: 0x3A2A10) : Color(hex: 0xFDEFD9) }
     static func warnText(_ scheme: ColorScheme) -> Color { scheme == .dark ? Color(hex: 0xFBBF24) : Color(hex: 0x9A4A08) }

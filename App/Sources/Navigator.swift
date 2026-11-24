@@ -136,6 +136,7 @@ final class Navigator: ObservableObject {
     private var stopped = false
     /** Roads tapped away on the plan (a point on each): reroutes and faster ways keep off them too. */
     var avoid: [LatLng] = []
+    private let routeEngine: RouteEngine
     private var avoidHighways: Bool
     private var avoidTolls: Bool
     private var routeCameras: [(camera: RoadCamera, along: Double)] = []
@@ -178,6 +179,7 @@ final class Navigator: ObservableObject {
         self.stops = stops
         tracker = RouteTracker(route: route)
         voiceMode = !settings.voice ? .off : settings.voiceAlertsOnly ? .alerts : .all
+        routeEngine = settings.engine(for: route.mode)
         avoidHighways = settings.avoidHighways
         avoidTolls = settings.avoidTolls
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .voicePrompt, options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers])
@@ -954,7 +956,7 @@ final class Navigator: ObservableObject {
             let app = AppSettings.shared
             let r = await Directions.routes(from: from, to: to, mode: .drive, avoidHighways: hw, avoidTolls: tolls,
                                             useGoogle: !app.noGoogle, via: via, heading: course,
-                                            engine: mapbox ? .mapbox : app.driveEngine, mapboxToken: app.activeMapboxToken)
+                                            engine: mapbox ? .mapbox : self.routeEngine, mapboxToken: app.activeMapboxToken)
             self.trafficLoading = false
             // Arrived (or ended) while asking: no new route, and no "Found a faster route" in the car park.
             guard !self.stopped, !self.arrived,
@@ -1111,11 +1113,11 @@ final class Navigator: ObservableObject {
         Task {
             var r = await Directions.routes(from: from, to: to, mode: mode, avoidHighways: hw, avoidTolls: tolls,
                                             useGoogle: !AppSettings.shared.noGoogle, via: self.stops.map(\.location),
-                                            heading: course, engine: AppSettings.shared.engine(for: mode),
+                                            heading: course, engine: routeEngine,
                                             mapboxToken: AppSettings.shared.activeMapboxToken)
             // The new way goes back along a road tapped away on the plan: the way round it instead,
             // when there is one (otherwise the usual route, rather than none at all).
-            if !avoid.isEmpty, let first = r.routes.first, Directions.touches(first.polyline, avoid), req == self.rerouteRequest,
+            if routeEngine == .automatic, !avoid.isEmpty, let first = r.routes.first, Directions.touches(first.polyline, avoid), req == self.rerouteRequest,
                let round = await Directions.avoiding(from: from, to: to, via: self.stops.map(\.location), avoid: avoid) {
                 r.routes = [round]
             }

@@ -16,13 +16,20 @@ final class MapboxStandardSurface: MapboxMaps.MapView {
         let satellite: Bool
         let driving: Bool
         let terrain: Bool
+        let palette: MapPalette
 
         var style: MapStyle {
             let light: StandardLightPreset = dark ? .night : .day
-            if satellite { return .standardSatellite(lightPreset: light, showTransitLabels: !driving) }
+            func color(_ field: MapPaletteField) -> StyleColor { StyleColor(UIColor(hex: palette[field])) }
+            if satellite {
+                return .standardSatellite(lightPreset: light, showTransitLabels: !driving,
+                                          colorMotorways: color(.highways), colorRoads: color(.streets))
+            }
             return .standard(lightPreset: light, showPointOfInterestLabels: !driving,
-                             showTransitLabels: !driving, showPedestrianRoads: true,
-                             show3dBuildings: true, show3dLandmarks: true, show3dTrees: true)
+                             showTransitLabels: !driving, showPedestrianRoads: true, colorBuildings: color(.buildings),
+                             colorGreenspace: color(.parks), colorLand: color(.land), colorMotorways: color(.highways),
+                             colorRoads: color(.streets), colorWater: color(.water), show3dBuildings: true,
+                             show3dLandmarks: true, show3dTrees: true)
         }
     }
 
@@ -116,10 +123,13 @@ final class MapboxStandardSurface: MapboxMaps.MapView {
                 isHidden = true
             }
             let styleChanged = self.appearance.dark != appearance.dark || self.appearance.satellite != appearance.satellite
-                || self.appearance.driving != appearance.driving
+                || self.appearance.driving != appearance.driving || self.appearance.palette != appearance.palette
             self.appearance = appearance
             if styleChanged { mapboxMap.mapStyle = appearance.style }
-            if overlaysReady { updateTerrain() }
+            if overlaysReady {
+                updateTerrain()
+                try? mapboxMap.setLayerProperty(for: "vela-route", property: "line-color", value: routeColor)
+            }
         }
         syncCamera()
         syncOverlays()
@@ -177,7 +187,7 @@ final class MapboxStandardSurface: MapboxMaps.MapView {
             guard shape !== lastShapes[id] else { continue }
             if let shape {
                 do {
-                    let data = shape.geoJSONData(using: String.Encoding.utf8.rawValue)
+                    let data = shape.geoJSONData(usingEncoding: String.Encoding.utf8.rawValue)
                     let geoJSON = try JSONSerialization.jsonObject(with: data)
                     try mapboxMap.setSourceProperty(for: id, property: "data", value: geoJSON)
                     lastShapes[id] = shape
@@ -262,8 +272,10 @@ final class MapboxStandardSurface: MapboxMaps.MapView {
         }
     }
 
+    private var routeColor: String { String(format: "#%06X", appearance.palette[.route]) }
+
     private func addLayers() throws {
-        let map = mapboxMap
+        guard let map = mapboxMap else { return }
         func line(_ id: String, source: String? = nil, color: Any, width: Int, filter: [Any]? = nil) throws {
             let paint: [String: Any] = ["line-color": color, "line-width": width]
             var layer: [String: Any] = ["id": id, "source": source ?? id, "type": "line", "slot": "middle",
@@ -279,7 +291,7 @@ final class MapboxStandardSurface: MapboxMaps.MapView {
         try line("vela-route-done", color: "#718096", width: 8)
         try line("vela-route-alt", color: "#80AEE8", width: 7)
         try line("kite-route-edge", source: "vela-route", color: "#0F766E", width: 14)
-        try line("vela-route", color: "#2DD4BF", width: 10)
+        try line("vela-route", color: routeColor, width: 10)
         try line("vela-route-traffic", color: ["match", ["get", "level"], 1, "#F59E0B", 2, "#EF4444", 3, "#B91C1C", "#2563EB"], width: 10)
         try line("vela-transit", color: ["to-color", ["get", "color"]], width: 7, filter: ["==", ["get", "walk"], 0])
         try line("kite-transit-walk", source: "vela-transit", color: "#777777", width: 5, filter: ["==", ["get", "walk"], 1])

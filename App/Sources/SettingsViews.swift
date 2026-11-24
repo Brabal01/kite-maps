@@ -7,62 +7,74 @@ struct LayersSheet: View {
     var liveCount: Int? = nil
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var scheme
+    @State private var showColors = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack {
-                Text("Layers").font(.system(size: 26, weight: .heavy))
-                Spacer()
-                CircleIconButton(icon: "xmark") { dismiss() }
-            }
-            Text("Map type").font(.subheadline.weight(.semibold)).foregroundColor(.secondary)
-            HStack(spacing: 14) {
-                tile("Default", icon: "map", on: !settings.satellite) { settings.satellite = false }
-                tile("Satellite", icon: "globe.americas.fill", on: settings.satellite) { settings.satellite = true }
-            }
-            Picker("Map appearance", selection: $settings.mapLighting) {
-                ForEach(MapLighting.allCases) { Text($0.title).tag($0) }
-            }
-            Picker("Interface appearance", selection: $settings.theme) {
-                ForEach(ThemeMode.allCases) { Text($0.label).tag($0) }
-            }
-            Text("Map details").font(.subheadline.weight(.semibold)).foregroundColor(.secondary)
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), alignment: .leading, spacing: 14) {
-                tile("Traffic", icon: "car.2.fill", on: settings.traffic) { settings.traffic.toggle() }
-                tile("Transit", icon: "tram.fill", on: settings.transitLines) { settings.transitLines.toggle() }
-                tile("Terrain", icon: "mountain.2.fill", on: settings.terrain) { settings.terrain.toggle() }
-                tile("Hiking", icon: "figure.hiking", on: settings.hikingTrails) { settings.hikingTrails.toggle() }
-                tile("Cycling", icon: "bicycle", on: settings.cyclingTrails) { settings.cyclingTrails.toggle() }
-                tile("Speed cameras", badge: .speed, on: settings.speedCameras) { settings.speedCameras.toggle() }
-                tile("Plate cameras", badge: .plate, on: settings.plateCameras) { settings.plateCameras.toggle() }
-                tile("Surveillance", icon: "video.fill", on: settings.surveillanceCameras) { settings.surveillanceCameras.toggle() }
-                tile("Road alerts", waze: Waze.shares.contains(.police) ? .police : .closure, on: settings.wazeOn && settings.wazeOnMap) {
-                    if settings.waze && settings.wazeOnMap { settings.wazeOnMap = false } else { settings.waze = true; settings.wazeOnMap = true }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack {
+                    Text("Layers").font(.system(size: 26, weight: .heavy))
+                    Spacer()
+                    CircleIconButton(icon: "xmark") { dismiss() }
                 }
-                tile("Live cameras", icon: "web.camera.fill", on: settings.liveCams && (settings.liveRoadCams || settings.showsWebcams)) {
-                    // On turns road cameras and webcams both back on, even if one was switched off in Settings.
-                    if settings.liveCams && (settings.liveRoadCams || settings.showsWebcams) { settings.liveCams = false }
-                    else { settings.liveCams = true; settings.liveRoadCams = true; settings.liveWebcams = true }
+                Text("Map type").font(.subheadline.weight(.semibold)).foregroundColor(.secondary)
+                HStack(spacing: 14) {
+                    tile("Default", icon: "map", on: !settings.satellite) { settings.satellite = false }
+                    tile("Satellite", icon: "globe.americas.fill", on: settings.satellite) { settings.satellite = true }
                 }
-                if Waze.shares.contains(.police) {
-                    tile("Police heat map", icon: "flame.fill", on: settings.wazeOn && settings.wazeHeatmap) {
-                        if settings.waze && settings.wazeHeatmap { settings.wazeHeatmap = false } else { settings.waze = true; settings.wazeHeatmap = true }
+                Picker("Map appearance", selection: $settings.mapLighting) {
+                    ForEach(MapLighting.allCases) { Text($0.title).tag($0) }
+                }
+                Picker("Interface appearance", selection: $settings.theme) {
+                    ForEach(ThemeMode.allCases) { Text($0.label).tag($0) }
+                }
+                Button("Map and app colors") { showColors = true }
+                Text("Map details").font(.subheadline.weight(.semibold)).foregroundColor(.secondary)
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), alignment: .leading, spacing: 14) {
+                    tile("Traffic", icon: "car.2.fill", on: settings.traffic) { settings.traffic.toggle() }
+                    tile("Transit", icon: "tram.fill", on: settings.transitLines) { settings.transitLines.toggle() }
+                    tile("Terrain", icon: "mountain.2.fill", on: settings.terrain) { settings.terrain.toggle() }
+                    tile("Hiking", icon: "figure.hiking", on: settings.hikingTrails) { settings.hikingTrails.toggle() }
+                    tile("Cycling", icon: "bicycle", on: settings.cyclingTrails) { settings.cyclingTrails.toggle() }
+                    tile("Speed cameras", badge: .speed, on: settings.speedCameras) { settings.speedCameras.toggle() }
+                    tile("Plate cameras", badge: .plate, on: settings.plateCameras) { settings.plateCameras.toggle() }
+                    tile("Surveillance", icon: "video.fill", on: settings.surveillanceCameras) { settings.surveillanceCameras.toggle() }
+                    tile("Road alerts", waze: Waze.shares.contains(.police) ? .police : .closure, on: settings.wazeOn && settings.wazeOnMap) {
+                        if settings.waze && settings.wazeOnMap { settings.wazeOnMap = false } else { settings.waze = true; settings.wazeOnMap = true }
+                    }
+                    tile("Live cameras", icon: "web.camera.fill", on: settings.liveCams && (settings.liveRoadCams || settings.showsWebcams)) {
+                        // On turns road cameras and webcams both back on, even if one was switched off in Settings.
+                        if settings.liveCams && (settings.liveRoadCams || settings.showsWebcams) { settings.liveCams = false }
+                        else { settings.liveCams = true; settings.liveRoadCams = true; settings.liveWebcams = true }
+                    }
+                    if Waze.shares.contains(.police) {
+                        tile("Police heat map", icon: "flame.fill", on: settings.wazeOn && settings.wazeHeatmap) {
+                            if settings.waze && settings.wazeHeatmap { settings.wazeHeatmap = false } else { settings.waze = true; settings.wazeHeatmap = true }
+                        }
                     }
                 }
-            }
-            if let n = liveCount, settings.wazeOn, settings.wazeOnMap || settings.wazeHeatmap {
-                HStack(spacing: 8) {
-                    Circle().fill(Color(hex: 0x22C55E)).frame(width: 10, height: 10)
-                    Text("Live from Waze · \(n) report\(n == 1 ? "" : "s") on the map").font(.subheadline.weight(.semibold))
-                        .foregroundColor(.secondary)
+                if let n = liveCount, settings.wazeOn, settings.wazeOnMap || settings.wazeHeatmap {
+                    HStack(spacing: 8) {
+                        Circle().fill(Color(hex: 0x22C55E)).frame(width: 10, height: 10)
+                        Text("Live from Waze · \(n) report\(n == 1 ? "" : "s") on the map").font(.subheadline.weight(.semibold))
+                            .foregroundColor(.secondary)
+                    }
+                    .accessibilityElement(children: .combine)
                 }
-                .accessibilityElement(children: .combine)
+                Spacer()
             }
-            Spacer()
+            .padding(20)
         }
-        .padding(20)
         .background(Vela.sheet(scheme).ignoresSafeArea())
-        .presentationDetents([.height(590)])
+        .presentationDetents([.height(590), .large])
+        .sheet(isPresented: $showColors) {
+            NavigationStack {
+                MapPaletteView(settings: settings)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) { Button("Done") { showColors = false } }
+                    }
+            }
+        }
     }
 
     private func tile(_ title: String, icon: String = "", badge: RoadCamera.Kind? = nil, waze: WazeAlert.Kind? = nil,
@@ -253,20 +265,6 @@ struct SettingsView: View {
 
     private var camerasPage: some View {
         Form {
-            Section("Mapbox") {
-                SecureField("Public Mapbox token", text: $settings.mapboxPublicToken)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled()
-                #if canImport(MapboxMaps)
-                Toggle("Mapbox Standard", isOn: $settings.mapboxBasemap)
-                    .disabled(settings.activeMapboxToken == nil)
-                #else
-                Toggle("Mapbox basemap", isOn: $settings.mapboxBasemap)
-                    .disabled(settings.activeMapboxToken == nil)
-                #endif
-                if !settings.mapboxPublicToken.isEmpty && settings.activeMapboxToken == nil {
-                    Text("Enter a public token beginning with pk.").font(.caption).foregroundStyle(.secondary)
-                }
-            }
             Section("Downloads") {
                 NavigationLink { OfflineMapsView() } label: { Label("Offline maps", systemImage: "arrow.down.circle") }
             }
@@ -321,6 +319,20 @@ struct SettingsView: View {
 
     private var mapPage: some View {
         Form {
+            Section("Mapbox") {
+                SecureField("Public Mapbox token", text: $settings.mapboxPublicToken)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                #if canImport(MapboxMaps)
+                Toggle("Mapbox Standard", isOn: $settings.mapboxBasemap)
+                    .disabled(settings.activeMapboxToken == nil)
+                #else
+                Toggle("Mapbox basemap", isOn: $settings.mapboxBasemap)
+                    .disabled(settings.activeMapboxToken == nil)
+                #endif
+                if !settings.mapboxPublicToken.isEmpty && settings.activeMapboxToken == nil {
+                    Text("Enter a public token beginning with pk.").font(.caption).foregroundStyle(.secondary)
+                }
+            }
             Section {
                 Picker(selection: $settings.theme) {
                     ForEach(ThemeMode.allCases) { Text($0.label).tag($0) }
@@ -328,6 +340,9 @@ struct SettingsView: View {
                 Picker(selection: $settings.units) {
                     ForEach(UnitsMode.allCases) { Text($0.label).tag($0) }
                 } label: { SettingLabel("Distance units", icon: "ruler.fill", color: 0x0891B2) }
+                NavigationLink { MapPaletteView(settings: settings) } label: {
+                    SettingLabel("Map and app colors", icon: "paintpalette.fill", color: 0x0F766E)
+                }
                 Toggle(isOn: $settings.parkingButton) { SettingLabel("Parking button on the map", icon: "parkingsign", color: 0x2563EB) }
             }
             Section {
