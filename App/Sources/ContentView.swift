@@ -58,6 +58,15 @@ struct ContentView: View {
                 model.mapTick += 1
             }
         }
+        .overlay(alignment: .bottomLeading) {
+            if settings.mapboxEnabled && settings.mapboxPublicToken.hasPrefix("pk.") && !settings.satellite {
+                Link("© Mapbox", destination: URL(string: "https://www.mapbox.com/about/maps/")!)
+                    .font(.caption2.weight(.semibold))
+                    .padding(6)
+                    .background(.regularMaterial, in: Capsule())
+                    .padding(.leading, 34)
+            }
+        }
         .overlay(alignment: .top) {
             if let cam = model.liveCam, model.nav == nil, model.tab == .map {
                 LiveCamCard(model: model, cam: cam)

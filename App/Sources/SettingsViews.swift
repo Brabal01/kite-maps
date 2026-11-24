@@ -252,6 +252,14 @@ struct SettingsView: View {
                 NavigationLink("Offline maps") { OfflineRegionsView() }
                 Toggle(isOn: $settings.parkingButton) { SettingLabel("Parking button on the map", icon: "parkingsign", color: 0x2563EB) }
             }
+            Section("Mapbox") {
+                Toggle("Mapbox background", isOn: $settings.mapboxEnabled)
+                SecureField("Mapbox public token", text: $settings.mapboxPublicToken)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                if settings.mapboxEnabled && !settings.mapboxPublicToken.hasPrefix("pk.") {
+                    Text("Enter a public Mapbox token to activate the background.").foregroundStyle(.secondary)
+                }
+            }
             Section {
                 VStack(alignment: .leading, spacing: 10) {
                     SettingLabel("Map zoom while driving", icon: "plus.magnifyingglass", color: 0x0F766E)

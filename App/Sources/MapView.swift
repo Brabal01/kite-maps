@@ -106,6 +106,7 @@ struct VelaMapView: UIViewRepresentable {
         private var pinDroppedAt = Date.distantPast
         private var originalLabels: [String: (NSExpression?, NSExpression?, NSExpression?)] = [:]
         private var lastResultsKey = ""
+        private var mapboxStyleKey: String?
         private var markerTheme: MarkerTheme?
         private var wazeMapScale: Double?
         private var lastRouteKey = ""
@@ -158,6 +159,7 @@ struct VelaMapView: UIViewRepresentable {
             MapIcons.register(in: style, theme: theme)
             markerTheme = theme
             wazeMapScale = nil
+            mapboxStyleKey = nil
             addVelaLayers(style)
             styleReady = true
             heatTiles.styleReloaded()
@@ -552,12 +554,53 @@ struct VelaMapView: UIViewRepresentable {
             return l
         }
 
+        private func updateMapbox(_ style: MLNStyle, settings: AppSettings) {
+            let token = settings.mapboxPublicToken.trimmingCharacters(in: .whitespacesAndNewlines)
+            let enabled = settings.mapboxEnabled && !settings.satellite && token.hasPrefix("pk.") &&
+                token.unicodeScalars.allSatisfy { "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-".unicodeScalars.contains($0) }
+            let theme = dark ? "navigation-night-v1" : "streets-v12"
+            let key = enabled ? theme + token : ""
+            guard key != mapboxStyleKey else { return }
+            for id in ["kite-mapbox-side-streets", "kite-mapbox"] {
+                if let layer = style.layer(withIdentifier: id) { style.removeLayer(layer) }
+            }
+            if let source = style.source(withIdentifier: "kite-mapbox") { style.removeSource(source) }
+            mapboxStyleKey = key
+            guard enabled else { return }
+
+            let template = "https://api.mapbox.com/styles/v1/mapbox/\(theme)/tiles/256/{z}/{x}/{y}@2x?access_token=\(token)"
+            let source = MLNRasterTileSource(identifier: "kite-mapbox", tileURLTemplates: [template],
+                                             options: [.tileSize: 256, .maximumZoomLevel: 22,
+                                                       .attributionHTMLString: "<a href='https://www.mapbox.com/about/maps/'>© Mapbox</a> · <a href='https://www.openstreetmap.org/copyright'>© OpenStreetMap</a> · <a href='https://apps.mapbox.com/feedback/'>Improve this map</a>"])
+            style.addSource(source)
+            let raster = MLNRasterStyleLayer(identifier: "kite-mapbox", source: source)
+            if let route = style.layer(withIdentifier: "vela-route-alt-edge") {
+                style.insertLayer(raster, below: route)
+            } else {
+                style.addLayer(raster)
+            }
+
+            if let local = style.layer(withIdentifier: "road_minor") as? MLNLineStyleLayer,
+               let id = local.sourceIdentifier, let transportation = style.source(withIdentifier: id) {
+                let roads = MLNLineStyleLayer(identifier: "kite-mapbox-side-streets", source: transportation)
+                roads.sourceLayerIdentifier = local.sourceLayerIdentifier
+                roads.predicate = local.predicate
+                roads.minimumZoomLevel = 13
+                roads.maximumZoomLevel = 16
+                roads.lineColor = NSExpression(forConstantValue: UIColor(hex: dark ? 0x69778D : 0xB8ACA0))
+                roads.lineWidth = NSExpression(mglJSONObject: ["interpolate", ["linear"], ["zoom"], 13, 0.6, 16, 1.6])
+                roads.lineOpacity = NSExpression(mglJSONObject: ["interpolate", ["linear"], ["zoom"], 13, 0.65, 15, 0.55, 16, 0])
+                style.insertLayer(roads, above: raster)
+            }
+        }
+
         // MARK: Render
 
         func render(_ map: MLNMapView) {
             guard styleReady, let style = map.style else { return }
             let s = model.settings
             let navigating = model.nav != nil
+            updateMapbox(style, settings: s)
             if markerTheme != s.markerTheme {
                 MapIcons.registerMarkers(in: style, theme: s.markerTheme)
                 markerTheme = s.markerTheme

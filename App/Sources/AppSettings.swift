@@ -71,6 +71,12 @@ final class AppSettings: ObservableObject {
     /** How close the driving map sits: Closer, Normal (as Kite always was) or Wider. */
     @Published var mapZoom: MapZoom { didSet { d.set(mapZoom.rawValue, forKey: "mapZoom") } }
     /** The driving map's 3D, 2D or north-up choice from the map button, kept for the next drive. */
+    @Published var mapboxEnabled = UserDefaults.standard.bool(forKey: "mapboxEnabled") {
+        didSet { d.set(mapboxEnabled, forKey: "mapboxEnabled") }
+    }
+    @Published var mapboxPublicToken = UserDefaults.standard.string(forKey: "mapboxPublicToken") ?? "" {
+        didSet { d.set(mapboxPublicToken, forKey: "mapboxPublicToken") }
+    }
     @Published var markerTheme = MarkerTheme(rawValue: UserDefaults.standard.string(forKey: "markerTheme") ?? "") ?? .classic {
         didSet { d.set(markerTheme.rawValue, forKey: "markerTheme") }
     }
