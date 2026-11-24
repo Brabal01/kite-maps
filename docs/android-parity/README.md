@@ -43,6 +43,15 @@ Referenční Android je `097c9c62943ba00ac62f568a7a7258a5fbc499ab`. Práce na iO
 - [Snímky emulátoru pro přesný Android commit](https://github.com/Gordicek/kite-maps/tree/e8b63828a4187a478c9974408ca116290041b7d0) ukazují Layers, mapu, navigaci i MHD v Readingu. Android je pořídil v [referenčním běhu CI](https://github.com/Gordicek/kite-maps/actions/runs/45490072268). iOS smoke test používá souřadnice v Olomouci, takže snímky ukazují rozložení a stav obrazovky při jiné scéně.
 - Na iOS Simulatoru otevři `xcrun simctl openurl booted 'kite://place?lat=49.6&lng=17.25&name=Olomouc'`. Potom opakuj s akcí `directions`, chybějícím parametrem a při aktivní jízdě. Platný odkaz zobrazí místo nebo plán podle akce a aktivní cesta zůstane v popředí.
 
+## Ověření poskytovatelů
+
+| Dotaz | Ověřený výsledek |
+| --- | --- |
+| `swift run --package-path VelaCore vela-probe OBI 49.595 17.251` a stejné volání pro `Albert`, `Kaufland` a `papírnictví` | Google vrátil místní názvy, adresy, hodnocení, otevírací dobu a hlavní fotografie. U Kauflandu byla první položkou stejnojmenná zastávka a následovaly prodejny. Ověření v CLI pokrývá klienta a parser. |
+| Transitous v6, odjezd 25. 11. 2026 ve 12:00 SEČ/Malta | Olomouc hl. n. (`49.592876,17.278064`) → Slavonín (`49.568900,17.235611`) vrátil kombinace tramvaje a autobusu. Praha Florenc (`50.090945,14.439128`) → Strašnická (`50.072951,14.491294`) vrátila spojení metrem s přestupem. |
+| Transitous v6, stejný čas na Maltě | Valletta (`35.8981,14.5126`) → letiště (`35.8559,14.4824`) a Valletta (`35.8969,14.5114`) → Sliema (`35.9106,14.5019`) vrátily HTTP 200 s prázdnými itineráři. Jde o výsledky dvou konkrétních dotazů. [Transport Malta](https://www.transport.gov.mt/sustainable-mobility/transport-governance-and-policy-5761) odkazuje na národní přístupový bod. Použitelný feed pro tyto testy se nepodařilo ověřit. |
+| České ceny paliv | [TomTom Fuel Prices API](https://docs.tomtom.com/fuel-prices-api/documentation/product-information/market-coverage) uvádí pokrytí ČR. Přístupový klíč a podmínky použití pro tento fork nebyly k dispozici. Cena na konkrétní stanici z tohoto zdroje zůstává neověřená. |
+
 ## Nativní konfigurace Mapbox
 
 `xcodegen generate --spec project-mapbox.yml` přidá Maps SDK for iOS 11.26.0. Po sestavení zapni Mapbox Standard a použij vlastní veřejný token v Settings → Map & display → Mapbox. Konfigurace zůstává u MapLibre při vypnuté síti, vypnutém Mapboxu, offline mapě, chybě načtení Standardu a během používání některých překryvů MapLibre. V tuto chvíli jde o interiér, měření, turistické a cyklo vrstvy a profil trasy. Návrat na Standard používá tutéž kameru a aktivní navigaci.
