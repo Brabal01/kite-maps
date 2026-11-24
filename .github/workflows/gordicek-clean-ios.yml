@@ -148,6 +148,7 @@ jobs:
           zP49vpwvPo2ms/HNNUC5h1Sv3s4H04+j+ehicTH6NB6OFpeDq/HkP7gY7a5WbTCbjebDwXwwufm4GN5c3Y4no+licHs7Ht5cL64H
           VyNC0jGoUOkkrwbTP0bz8fVHrfcCepkr5VDlbjqF+S4ACP8aDfXJQK3/AyirDn1bewAA
           PATCH
+          git rm -r .github/workflows
           git diff --cached --check
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
