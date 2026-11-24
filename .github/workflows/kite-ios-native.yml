@@ -84,9 +84,12 @@ jobs:
           xcrun simctl launch "$device" app.vela.ios -demo browse
           sleep 12
           xcrun simctl io "$device" screenshot screenshots/olomouc-first-fix.png
+          xcrun simctl openurl "$device" 'kite://place?lat=49.5881&lng=17.2582&name=Santovka'
+          sleep 5
+          xcrun simctl io "$device" screenshot screenshots/olomouc-deeplink.png
           xcrun simctl location "$device" set 49.595,17.259
           xcrun simctl launch --terminate-running-process "$device" app.vela.ios -demo go -demoTo 49.613,17.235
-          sleep 25
+          sleep 46
           xcrun simctl io "$device" screenshot screenshots/olomouc-go.png
       - name: Upload simulator screenshots
         if: github.ref_name == 'ios/android-parity'
