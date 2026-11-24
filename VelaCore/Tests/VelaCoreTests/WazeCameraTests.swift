@@ -31,7 +31,11 @@ final class WazeCameraTests: XCTestCase {
             ends += u32(body.count)
         }
         let plain = u32(tables.count) + u32(bits) + ends + body
-        let deflated = [UInt8](try! (Data(plain) as NSData).compressed(using: .zlib) as Data)
+        // A single stored DEFLATE block keeps the fixture deterministic on Apple and Linux.
+        let size = UInt16(plain.count)
+        let complement = ~size
+        let deflated: [UInt8] = [1, UInt8(truncatingIfNeeded: size), UInt8(size >> 8),
+                                 UInt8(truncatingIfNeeded: complement), UInt8(complement >> 8)] + plain
         let packed: [UInt8] = [0x78, 0x9C] + deflated + [0, 0, 0, 0]
         let lead: [UInt8] = bytes("2e2e2e2e000000011329e29e00000000000010b2")
         return Data(lead + Array("WZDF".utf8) + bytes("0100000000000300") + u32(packed.count) + u32(plain.count) + packed)
