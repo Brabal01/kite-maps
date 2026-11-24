@@ -1,0 +1,50 @@
+name: Build Kite Driving for iPhone
+
+on:
+  push:
+    branches: [ios/kite-driving-native]
+    paths: [App/**, Shared/**, Widget/**, VelaCore/**, project.yml, .github/workflows/kite-ios-native.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kite-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ipa:
+    runs-on: xcode-27
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test Swift routing core
+        run: swift test --package-path VelaCore
+      - name: Generate the Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+      - name: Compile the device app
+        run: |
+          set -o pipefail
+          xcodebuild -project Kite.xcodeproj -scheme Kite -configuration Release -sdk iphoneos \
+            -destination 'generic/platform=iOS' -derivedDataPath build CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build | tee xcodebuild.log
+      - name: Package for sideloading
+        run: |
+          set -e
+          app=build/Build/Products/Release-iphoneos/Kite.app
+          for item in "$app"/Frameworks/*.framework "$app"/PlugIns/*.appex; do
+            test ! -d "$item" || codesign --force --sign - --timestamp=none "$item"
+          done
+          codesign --force --sign - --timestamp=none "$app"
+          codesign --verify --deep --strict "$app"
+          mkdir Payload
+          ditto "$app" Payload/Kite.app
+          zip -qr -X Kite-Driving.ipa Payload
+          unzip -tq Kite-Driving.ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Kite-Driving-iPhone
+          path: Kite-Driving.ipa
