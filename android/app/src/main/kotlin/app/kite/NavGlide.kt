@@ -36,6 +36,11 @@ class NavGlide : Choreographer.FrameCallback {
     val followingCamera: CameraPosition?
         get() = lastCamera.takeIf { nav?.following == true && !mapTouched }
 
+    fun resumeFollowing() {
+        mapTouched = false
+        if (nav != null) start()
+    }
+
     fun restoreFollowingCamera() {
         val camera = followingCamera ?: return
         outputCamera(camera, synchronize = true)
@@ -102,7 +107,6 @@ class NavGlide : Choreographer.FrameCallback {
     private var targetPitch = 50.0
     /** 3D, 2D or north up, from the map button. */
     var look = MapLook.TILTED
-    var deviceHeading: Double? = null
     /** 0 facing the way you go, 1 north up; eased so a tap turns the map rather than jumping. */
     private var northBlend = 0.0
 
@@ -203,7 +207,8 @@ class NavGlide : Choreographer.FrameCallback {
                 abs(northBlend - if (look == MapLook.NORTH) 1.0 else 0.0) < 0.005 && abs(shownAcross - targetAcross) < 1
             val choreographer = Choreographer.getInstance()
             if (mapTouched || stationary || nav?.following == false) choreographer.postFrameCallbackDelayed(this, 48L)
-            else choreographer.postFrameCallback(this)
+            else if (cameraEntry != null) choreographer.postFrameCallback(this)
+            else choreographer.postFrameCallbackDelayed(this, 24L)
         }
     }
 
@@ -231,7 +236,18 @@ class NavGlide : Choreographer.FrameCallback {
             coordNow = if (from.distanceTo(want) > 200) want
             else LatLng(from.lat + (want.lat - from.lat) * k, from.lng + (want.lng - from.lng) * k)
         }
-        shownCoord = coordNow
+        // A brief loss of road matching must not teleport the visible puck onto a side road.
+        val former = shownCoord
+        val shown = if (former != null && dt > 0) {
+            val gap = former.distanceTo(coordNow)
+            val limit = max(10.0, fixSpeed * 1.65) * dt
+            if (gap > limit) {
+                val t = limit / gap
+                LatLng(former.lat + (coordNow.lat - former.lat) * t,
+                    ((former.lng + shortestTurn(former.lng, coordNow.lng) * t + 540) % 360) - 180)
+            } else coordNow
+        } else coordNow
+        shownCoord = shown
         val markerTarget = markerTarget(shownAlong?.let { roadBearing(it, behind = 1.0, ahead = 5.0) } ?: bearingTarget)
         markerBearing = (markerBearing + shortestTurn(markerBearing, markerTarget) *
             (if (dt == 0.0) 1.0 else 1 - exp(-dt / 0.16)) + 360) % 360
@@ -255,8 +271,8 @@ class NavGlide : Choreographer.FrameCallback {
             val turned = abs(shortestTurn(puckPushedBearing, markerBearing))
             val markerStyle = if (n.route.mode == TravelMode.DRIVE) AppSettings.driveMarker else DriveMarker.ARROW
             if (last == null || now - puckPushedAt > 1_000_000_000L ||
-                last.distanceTo(coordNow) > 25 || turned > 20 || puckPushedMarker != markerStyle) {
-                val marker = Feature.fromGeometry(Point.fromLngLat(coordNow.lng, coordNow.lat))
+                last.distanceTo(shown) > 25 || turned > 20 || puckPushedMarker != markerStyle) {
+                val marker = Feature.fromGeometry(Point.fromLngLat(shown.lng, shown.lat))
                     .apply {
                         addNumberProperty("bearing", markerBearing)
                         addStringProperty("icon", markerStyle.sprite)
@@ -264,7 +280,7 @@ class NavGlide : Choreographer.FrameCallback {
                 (map?.style?.getSource(PUCK) as? GeoJsonSource)?.setGeoJson(marker)
                 onMapPuck?.invoke(marker)
                 puckPushedMarker = markerStyle
-                puckPushed = coordNow; puckPushedAt = now; puckPushedBearing = markerBearing; puckOnMap = true
+                puckPushed = shown; puckPushedAt = now; puckPushedBearing = markerBearing; puckOnMap = true
             }
         }
         val northTarget = if (look == MapLook.NORTH) 1.0 else 0.0
@@ -274,13 +290,12 @@ class NavGlide : Choreographer.FrameCallback {
             val d = KiteApp.app.resources.displayMetrics.density.toDouble()
             // North up: the map turns to face north and the car moves up to the middle, as the road
             // ahead can be any way round. Otherwise it faces the way you go with the car low down.
-            val forward = deviceHeading?.takeIf { fixSpeed < 1.4 || n.route.mode == TravelMode.WALK } ?: shownBearing
-            val heading = (forward + shortestTurn(forward, 0.0) * northBlend + 360) % 360
+            val heading = (shownBearing + shortestTurn(shownBearing, 0.0) * northBlend + 360) % 360
             carNorth = northBlend.toFloat()
             carSquash = (1 - 0.36 * (shownPitch / 50.0).coerceIn(0.0, 1.0)).toFloat()
             // A pitched camera sees farther than the same zoom flat: zoom in a little to match the iPhone's distance.
             val zoom = MapCam.zoomFor(shownAcross, coordNow.lat, widthDp) + 0.35
-            val camera = CameraPosition.Builder().target(coordNow.ml()).zoom(zoom).tilt(shownPitch).bearing(heading)
+            val camera = CameraPosition.Builder().target(shown.ml()).zoom(zoom).tilt(shownPitch).bearing(heading)
                 .padding(0.0, topInset(heightDp, compactViewport) * (if (compactViewport) 1.0 else 1 - northBlend) * d,
                     0.0, bottomInset(heightDp, compactViewport) * d).build()
             val visible = enter(camera)

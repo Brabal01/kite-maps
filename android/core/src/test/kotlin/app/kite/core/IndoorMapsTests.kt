@@ -18,4 +18,17 @@ class IndoorMapsTests {
         assertEquals(listOf("Lift", null, "Toilets"), plan.features.map { it.name })
         assertEquals(2, plan.features[1].geometry.size)
     }
+
+    @Test fun resolvesNodeReferencesFromTheSmallOsmMapEndpoint() {
+        val plan = IndoorMaps.parsePlan("""
+            {"elements":[
+              {"type":"node","id":10,"lat":52.5,"lon":13.37},
+              {"type":"node","id":11,"lat":52.501,"lon":13.37},
+              {"type":"way","nodes":[10,11],"tags":{"level":"-1","indoor":"corridor"}},
+              {"type":"way","nodes":[10,11],"tags":{"level":"99","highway":"residential"}}
+            ]}
+        """.trimIndent().toByteArray())
+        assertEquals(listOf("-1"), plan.floors)
+        assertEquals(listOf(LatLng(52.5, 13.37), LatLng(52.501, 13.37)), plan.features.single().geometry)
+    }
 }

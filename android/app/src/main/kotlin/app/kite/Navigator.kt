@@ -350,13 +350,16 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
             return route.maneuvers[i]
         }
 
+    var nearbyRoadName by mutableStateOf<String?>(null)
+
     /** The road being driven now, for the name under the arrow. */
     val currentRoad: String?
         get() {
-            val along = progress?.alongMeters ?: return null
-            val i = route.maneuvers.indexOfLast { it.alongMeters <= along + 8 }
-            if (i < 0) return null
-            return route.maneuvers[i].road?.trim()?.ifEmpty { null }
+            val along = progress?.alongMeters ?: 0.0
+            return nearbyRoadName ?: route.maneuvers.asReversed().firstNotNullOfOrNull { step ->
+                if (step.alongMeters !in (along - 650.0)..(along + 3.0) || step.type == ManeuverType.ARRIVE) null
+                else step.road?.trim()?.takeIf(String::isNotEmpty)
+            }
         }
 
     /**
@@ -963,24 +966,50 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
         val mapboxToken = AppSettings.activeMapboxToken
         val useGoogle = !AppSettings.noGoogle
         val engine = AppSettings.driveEngine
-        if (!AppSettings.traffic || engine == RouteEngine.OPENSTREETMAP || route.mode != TravelMode.DRIVE || (!useGoogle && mapboxToken == null) || rerouting || trafficLoading || fasterOffer != null ||
-            p.remainingMeters <= 250 || p.offRoute || since(trafficAt) <= 110) return
+        if (!AppSettings.traffic || route.mode != TravelMode.DRIVE || (!useGoogle && mapboxToken == null) ||
+            rerouting || trafficLoading || fasterOffer != null || p.remainingMeters <= 250 || p.offRoute || since(trafficAt) <= 110) return
         trafficLoading = true
         trafficAt = now()
         val from = loc.coord
-        val course = heading(loc); val id = route.id; val planned = p.remainingSeconds / trafficScale
-        val to = destination.location; val via = stops.map { it.location }
-        val existingRoute = route
-        val previousTraffic = currentTraffic ?: route.trafficSpans
+        val course = heading(loc)
+        val currentRoute = route
+        val id = currentRoute.id
+        val planned = p.remainingSeconds / trafficScale
+        val to = destination.location
+        val via = stops.map { it.location }
+        val previousTraffic = currentTraffic ?: currentRoute.trafficSpans
         scope.launch {
-            val r = runCatching {
-                Directions.routes(from, to, TravelMode.DRIVE, avoidHighways, avoidTolls, useGoogle, via, course, mapboxToken = mapboxToken, engine = engine)
-            }.getOrNull()
-            trafficLoading = false
-            val fresh = r?.routes?.firstOrNull() ?: return@launch
+            val annotationOnly = engine == RouteEngine.OPENSTREETMAP || currentRoute.source == "osm"
+            val fresh = try {
+                if (annotationOnly && mapboxToken != null) withContext(Dispatchers.Default) {
+                    val line = currentRoute.polyline
+                    val cum = Geo.cumulative(line)
+                    val end = min(cum.last(), p.alongMeters + 10_000)
+                    if (end - p.alongMeters < 250) return@withContext null
+                    val anchors = generateSequence(p.alongMeters + 900) { it + 900 }
+                        .takeWhile { it < end - 80 }.map { Geo.point(line, it, cum) }.toList()
+                    MapboxDirections.routes(Geo.point(line, p.alongMeters, cum), Geo.point(line, end, cum), anchors,
+                        null, false, false, false, mapboxToken).firstOrNull()
+                } else {
+                    val provider = if (annotationOnly) RouteEngine.GOOGLE else engine
+                    Directions.routes(from, to, TravelMode.DRIVE, avoidHighways, avoidTolls, useGoogle, via, course,
+                        mapboxToken = mapboxToken, engine = provider).routes.firstOrNull()
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            } finally { trafficLoading = false } ?: return@launch
             val nowP = progress ?: return@launch
-            // Arrived (or ended) while asking: no new route, and no "Found a faster route" in the car park.
             if (stopped || arrived || route.id != id || rerouting || planned <= 0 || fresh.trafficSeconds == null) return@launch
+            if (annotationOnly) {
+                val updated = withContext(Dispatchers.Default) {
+                    if (fresh.trafficSpans.isEmpty() && fresh.source == "google") null
+                    else MapboxDirections.refreshTraffic(currentRoute.polyline, previousTraffic, fresh, p.alongMeters)
+                }
+                if (updated != null && route.id == id && !stopped && !rerouting) currentTraffic = updated
+                return@launch
+            }
             val current = nowP.remainingSeconds
             val saving = current - fresh.durationSeconds
             val sameWay = abs(fresh.distanceMeters - nowP.remainingMeters) < max(300.0, nowP.remainingMeters * 0.03)
@@ -994,7 +1023,7 @@ class Navigator(route0: Route, destination0: Place, stops0: List<Place>, private
                     val updated = withContext(Dispatchers.Default) {
                         if (fresh.trafficSpans.isEmpty() && fresh.source == "google" &&
                             fresh.durationSeconds > fresh.typicalSeconds * 1.12) null
-                        else MapboxDirections.refreshTraffic(existingRoute.polyline, previousTraffic, fresh, p.alongMeters)
+                        else MapboxDirections.refreshTraffic(currentRoute.polyline, previousTraffic, fresh, p.alongMeters)
                     }
                     if (updated != null && route.id == id && !stopped && !rerouting) currentTraffic = updated
                 }

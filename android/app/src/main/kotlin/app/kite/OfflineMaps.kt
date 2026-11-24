@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import app.kite.core.Box
 import app.kite.core.LatLng
 import app.kite.core.OutdoorData
 import org.maplibre.android.geometry.LatLngBounds
@@ -16,7 +17,7 @@ import org.maplibre.android.offline.OfflineTilePyramidRegionDefinition
 /** MapLibre uses its ordinary tile database for these retained, explicitly downloaded areas. */
 internal object OfflineMaps {
     data class Area(
-        val id: Long, val name: String, val bounds: LatLngBounds,
+        val id: Long, val name: String, val bounds: LatLngBounds, val maxZoom: Double,
         val active: Boolean = false, val complete: Boolean = false,
         val bytes: Long = 0, val progress: Float? = null,
     )
@@ -46,7 +47,7 @@ internal object OfflineMaps {
         val id = region.id
         val name = region.metadata.toString(Charsets.UTF_8).trim().ifBlank { "Offline area" }
         regions[id] = region
-        areas[id] = Area(id, name, bounds)
+        areas[id] = Area(id, name, bounds, def.maxZoom)
         region.setObserver(object : OfflineRegion.OfflineRegionObserver {
             override fun onStatusChanged(status: OfflineRegionStatus) { update(region, status) }
             override fun onError(error: OfflineRegionError) { message = error.message }
@@ -68,17 +69,22 @@ internal object OfflineMaps {
     }
 
     fun download(name: String, center: LatLng, radiusKm: Float) {
+        download(name, OutdoorData.bounds(center, radiusKm.coerceIn(2f, 15f) * 1000.0), 15)
+    }
+
+    fun download(region: OfflineRegions.Region) = download(region.name, region.box, region.maxZoom)
+
+    private fun download(name: String, box: Box, zoom: Int) {
         if (creating || areas.values.any { it.active }) return
-        val box = OutdoorData.bounds(center, radiusKm.coerceIn(2f, 15f) * 1000.0)
         // The SDK expects an ordinary non-wrapping geographic rectangle.
-        if (box.w >= box.e || box.s >= box.n || center.lat !in -83.0..83.0) {
+        if (box.w >= box.e || box.s >= box.n || box.s !in -85.0..85.0 || box.n !in -85.0..85.0) {
             message = "Choose a map area away from the poles."
             return
         }
         creating = true
         message = null
         val bounds = LatLngBounds.from(box.n, box.e, box.s, box.w)
-        val definition = OfflineTilePyramidRegionDefinition(KiteMap.STYLE_URL, bounds, 9.0, 15.0,
+        val definition = OfflineTilePyramidRegionDefinition(KiteMap.STYLE_URL, bounds, minOf(9, zoom - 2).toDouble(), zoom.toDouble(),
             KiteApp.app.resources.displayMetrics.density, false)
         manager.createOfflineRegion(definition, name.trim().ifBlank { "Offline area" }.take(70).toByteArray(),
             object : OfflineManager.CreateOfflineRegionCallback {

@@ -603,6 +603,14 @@ private fun MapSettings() {
         PickRow("Road ahead position", Icons.Filled.SwapVert, 0x0F766E,
             s.roadStripPosition, RoadStripPosition.entries.toList(), { it.label }) { s.roadStripPosition = it }
     }
+    SettingsGroup(header = "Map and route icons") {
+        PickRow("Icon design", Icons.Filled.Palette, 0x7C3AED, s.markerTheme, MarkerTheme.entries, { it.label }) { s.markerTheme = it }
+        RowDivider()
+        PickRow("Road ahead design", Icons.Filled.Traffic, 0xAD362C, s.roadStripStyle, RoadStripStyle.entries, { it.label }) { s.roadStripStyle = it }
+        RowDivider()
+        PinSizeRow("Waze icons on the map", s.wazeMapPercent) { s.wazeMapPercent = it }
+        PinSizeRow("Waze icons on the route strip", s.wazeStripPercent) { s.wazeStripPercent = it }
+    }
     SettingsGroup(header = "Navigation overlays") {
         ToggleRow("Picture-in-picture", Icons.Filled.PictureInPictureAlt, 0x2563EB, s.navigationPictureInPicture) {
             s.navigationPictureInPicture = it
@@ -616,19 +624,23 @@ private fun MapSettings() {
         MapSettingLink("Road ahead and map alerts", Icons.Filled.Traffic, 0xAD362C) { editRoadAhead = true }
     }
     if (editNavigationPlaces) TripSheet("Places while navigating", "Done", { editNavigationPlaces = false }) {
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            SettingsGroup(footer = "Tap a place for its details. Touch and hold a place to add it as the next stop.") {
-                ToggleRow("Show places while navigating", Icons.Filled.Place, 0x0F766E, s.navigationPlaces) { s.navigationPlaces = it }
-                RowDivider()
-                val choice = if (s.noGoogle) NavigationPlaceSource.OPENSTREETMAP else s.navigationPlaceSource
-                val providers = NavigationPlaceSource.entries.filter { !s.noGoogle || it == NavigationPlaceSource.OPENSTREETMAP }
-                PickRow("Icon source", Icons.Outlined.Map, 0x1D4ED8, choice, providers, { it.label }) { s.navigationPlaceSource = it }
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            item {
+                SettingsGroup(footer = "Tap a place for its details. Touch and hold a place to add it as the next stop.") {
+                    ToggleRow("Show places while navigating", Icons.Filled.Place, 0x0F766E, s.navigationPlaces) { s.navigationPlaces = it }
+                    RowDivider()
+                    val choice = if (s.noGoogle) NavigationPlaceSource.OPENSTREETMAP else s.navigationPlaceSource
+                    val providers = NavigationPlaceSource.entries.filter { !s.noGoogle || it == NavigationPlaceSource.OPENSTREETMAP }
+                    PickRow("Icon source", Icons.Outlined.Map, 0x1D4ED8, choice, providers, { it.label }) { s.navigationPlaceSource = it }
+                }
             }
-            if (s.navigationPlaces) SettingsGroup(header = "What to show") {
-                for (group in OpenPlaceGroup.entries) {
-                    ToggleRow(group.label, Icons.Filled.Place, 0x0F766E, group in s.navigationPlaceGroups) { show ->
-                        s.navigationPlaceGroups = if (show) s.navigationPlaceGroups + group else s.navigationPlaceGroups - group
+            if (s.navigationPlaces) {
+                items(OpenPlaceGroup.entries, key = { it.name }) { group ->
+                    SettingsGroup {
+                        ToggleRow(group.label, Icons.Filled.Place, 0x0F766E, group in s.navigationPlaceGroups) { show ->
+                            s.navigationPlaceGroups = if (show) s.navigationPlaceGroups + group else s.navigationPlaceGroups - group
+                        }
                     }
                 }
             }
@@ -901,6 +913,15 @@ private fun PlacesSettings(model: AppModel) {
             SettingLabel("Work", Icons.Filled.Work, 0x9333EA, Modifier.weight(1f))
             Text(s.work?.name ?: "Set", color = secondaryText, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 180.dp))
         }
+    }
+    SettingsGroup(header = "Shortcuts") {
+        for (place in s.placeShortcuts) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                SettingLabel(place.name, Icons.Filled.Place, 0x2563EB, Modifier.weight(1f))
+                TextButton({ model.shortcutDraft = place }) { Text("Edit") }
+            }
+        }
+        MapSettingLink("Add shortcut", Icons.Filled.Add, 0x16A34A) { model.picking = PickKind.SHORTCUT }
     }
 }
 

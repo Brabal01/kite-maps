@@ -1,6 +1,9 @@
 package app.kite.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.ui.res.painterResource
+import app.kite.RoadStripStyle
 import androidx.compose.foundation.border
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -91,11 +94,18 @@ fun RoadAheadStrip(nav: Navigator, modifier: Modifier = Modifier, showLabels: Bo
     }
 
     val vertical = verticalHeight != null
+    val style = AppSettings.roadStripStyle
+    val iconScale = AppSettings.wazeStripPercent.coerceIn(60, 160) / 100f
+    val railWidth = when (style) {
+        RoadStripStyle.MINIMAL -> 3.dp
+        RoadStripStyle.CLASSIC -> 6.dp
+        RoadStripStyle.CONTRAST -> 8.dp
+    }
     val railColor = if (dark) Color(0xFF667994) else Color(0xFF90A6BC)
     val railEdge = if (dark) Color(0xFF1E2B41) else Color(0xFFDCE6EF)
     val origin = LocalMapChrome.current?.accent ?: if (dark) Color(0xFF82E6D8) else Color(0xFF0B8074)
     val shape = RoundedCornerShape(if (vertical) 27.dp else 19.dp)
-    val stripSize = if (vertical) Modifier.width(51.dp).height(requireNotNull(verticalHeight))
+    val stripSize = if (vertical) Modifier.width(maxOf(51.dp, 23.dp * iconScale + 20.dp)).height(requireNotNull(verticalHeight))
         else Modifier.fillMaxWidth()
     Column(modifier.then(stripSize).glass(shape, solid = true).padding(if (vertical) 5.dp else 8.dp)) {
         if (showLabels && !vertical) Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp),
@@ -112,9 +122,9 @@ fun RoadAheadStrip(nav: Navigator, modifier: Modifier = Modifier, showLabels: Bo
                 "$it · ${Fmt.distance(incident.startMeters - start)}" else it } ?: Fmt.distance(range),
                 color = secondaryText, fontSize = KType.caption)
         }
-        val badge = 32.dp
+        val badge = maxOf(32.dp, 23.dp * iconScale + 7.dp)
         BoxWithConstraints(if (vertical) Modifier.fillMaxSize()
-            else Modifier.fillMaxWidth().height(if (markers.isEmpty()) 14.dp else 38.dp)) {
+            else Modifier.fillMaxWidth().height(if (markers.isEmpty()) 14.dp else badge + 6.dp)) {
             val length = (if (vertical) maxHeight else maxWidth) - badge
             Canvas(Modifier.fillMaxSize()) {
                 val inset = (badge / 2).toPx()
@@ -123,8 +133,10 @@ fun RoadAheadStrip(nav: Navigator, modifier: Modifier = Modifier, showLabels: Bo
                     return if (vertical) Offset(size.width / 2, size.height - inset - f * (size.height - 2 * inset))
                     else Offset(inset + f * (size.width - 2 * inset), size.height / 2)
                 }
-                drawLine(railEdge, point(0.0), point(range), strokeWidth = 12.dp.toPx(), cap = StrokeCap.Round)
-                drawLine(railColor, point(0.0), point(range), strokeWidth = 6.dp.toPx(), cap = StrokeCap.Round)
+                if (style != RoadStripStyle.MINIMAL)
+                    drawLine(railEdge, point(0.0), point(range), strokeWidth = (railWidth + 6.dp).toPx(), cap = StrokeCap.Round)
+                val rail = if (style == RoadStripStyle.CONTRAST) origin.copy(alpha = 0.72f) else railColor
+                drawLine(rail, point(0.0), point(range), strokeWidth = railWidth.toPx(), cap = StrokeCap.Round)
                 for (span in traffic) {
                     val color = when (span.level) {
                         1 -> Color(0xFFF59E0B)
@@ -132,9 +144,9 @@ fun RoadAheadStrip(nav: Navigator, modifier: Modifier = Modifier, showLabels: Bo
                         else -> Color(0xFFC01E40)
                     }
                     drawLine(color, point(span.startMeters - start), point(span.startMeters + span.lengthMeters - start),
-                        strokeWidth = 6.dp.toPx(), cap = StrokeCap.Round)
+                        strokeWidth = railWidth.toPx(), cap = StrokeCap.Round)
                 }
-                drawCircle(origin, radius = 5.dp.toPx(), center = point(0.0))
+                drawCircle(origin, radius = (if (style == RoadStripStyle.MINIMAL) 3.dp else 5.dp).toPx(), center = point(0.0))
             }
             val spacing = range * ((badge + 3.dp) / length.coerceAtLeast(1.dp))
             var last = -spacing
@@ -145,12 +157,20 @@ fun RoadAheadStrip(nav: Navigator, modifier: Modifier = Modifier, showLabels: Bo
                 val action = marker.alert?.let { alert -> Modifier.clickable { onAlert(alert) } } ?: Modifier
                 val position = if (vertical) Modifier.align(Alignment.TopCenter).offset(y = length - offset)
                     else Modifier.align(Alignment.CenterStart).offset(x = offset)
+                val asset = AppSettings.markerTheme.resource
+                val size = 23.dp * if (marker.alert != null) iconScale else 1f
+                val ring = when (style) {
+                    RoadStripStyle.MINIMAL -> 0.dp
+                    RoadStripStyle.CLASSIC -> 1.5.dp
+                    RoadStripStyle.CONTRAST -> 2.5.dp
+                }
+                val iconInk = if (asset != null || marker.color.luminance() < 0.20f && dark) Color.White else marker.color
                 Box(position.size(badge).background(interfaceSurface, CircleShape)
-                    .border(1.5.dp, marker.color.copy(alpha = 0.72f), CircleShape)
+                    .border(ring, marker.color.copy(alpha = 0.72f), CircleShape)
                     .then(action), contentAlignment = Alignment.Center) {
+                    if (asset != null) Image(painterResource(asset), null, Modifier.size(size + 6.dp))
                     Icon(marker.icon, "${marker.name}, ${Fmt.distance(marker.distance)} ahead",
-                        tint = if (marker.color.luminance() < 0.20f && dark) Color.White else marker.color,
-                        modifier = Modifier.size(23.dp))
+                        tint = iconInk, modifier = Modifier.size(if (asset == null) size else size * 0.78f))
                 }
             }
         }

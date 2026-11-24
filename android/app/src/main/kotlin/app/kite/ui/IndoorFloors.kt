@@ -15,6 +15,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -26,11 +27,17 @@ import app.kite.core.Place
 @Composable
 fun IndoorPlaceActions(model: AppModel, place: Place, station: Boolean) {
     var access by remember(place.id) { mutableStateOf(false) }
+    val context = LocalContext.current
+    val isSantovka = place.name.contains("Šantovka", ignoreCase = true) &&
+        place.location.distanceTo(LatLng(49.5861, 17.2587)) < 1000
     Column {
         IconRow(Icons.Filled.Apartment, "Indoor floors", trailing = if (model.loadingIndoor) "Loading…" else "View map") {
             model.openIndoor(place)
         }
         if (station) IconRow(Icons.Filled.ExitToApp, "Station entrances and exits", trailing = "View") { access = true }
+        if (isSantovka) IconRow(Icons.Filled.Map, "Official Galerie Šantovka floor map", trailing = "Open") {
+            context.open("https://www.galeriesantovka.cz/obchody/mapa-centra/")
+        }
     }
     if (access) StationAccessDialog(place.location, { access = false }) {
         access = false

@@ -190,14 +190,13 @@ class AppModel {
     val mapNavigator: Navigator? get() = nav ?: transitGuidance?.walking
     val isGuiding: Boolean get() = nav != null || transitGuidance != null
     private var transitWalkJob: Job? = null
-    private var transitOverviewJob: Job? = null
     private var transitBoardJob: Job? = null
     private var transitClockJob: Job? = null
     private var transitDeparturesJob: Job? = null
     private var transitCameraAt = 0L
     var showLayers by mutableStateOf(false)
     var offlineMapShown by mutableStateOf(false)
-    var offlineFocus by mutableStateOf<LatLng?>(null)
+    var offlineFocus by mutableStateOf<Pair<LatLng, Double>?>(null)
     var tab by mutableStateOf(AppTab.MAP)
     /** Live Waze reports in view, for the "Live from Waze" chip; null until Waze answers. */
     var wazeLiveCount by mutableStateOf<Int?>(null)
@@ -1328,7 +1327,8 @@ class AppModel {
             return
         }
         val route = plan.route ?: run { mapTick++; return }
-        frame(route.polyline, bottomFraction = 0.42f, top = 170)
+        frame(plan.current.ifEmpty { listOf(route) }.flatMap { it.polyline },
+            bottomFraction = 0.44f, top = 150, flat = true)
     }
 
     /** Police risk within about a kilometre of you, from remembered and live Waze police reports. */
@@ -1495,9 +1495,7 @@ class AppModel {
     }
 
     fun stopTransitOverview() {
-        if (transitOverviewJob?.isActive == true) map?.cancelTransitions()
-        transitOverviewJob?.cancel()
-        transitOverviewJob = null
+        if (transitGuidance?.overviewing == true) map?.cancelTransitions()
         transitGuidance?.overviewing = false
     }
 
@@ -1509,23 +1507,7 @@ class AppModel {
         journey.overviewing = true
         journey.following = false
         journey.walking?.following = false
-        val waypoints = journey.trip.legs.flatMap { leg ->
-            listOfNotNull(leg.path.firstOrNull() ?: leg.calls.firstOrNull()?.at,
-                leg.path.lastOrNull() ?: leg.calls.lastOrNull()?.at)
-        }.distinct()
-        val stride = (waypoints.size / 12).coerceAtLeast(1)
-        transitOverviewJob = scope.launch {
-            frame(path, bottomFraction = 0.19f, top = 135)
-            delay(700)
-            for ((index, point) in waypoints.withIndex()) {
-                if (index % stride != 0 && index != waypoints.lastIndex) continue
-                val m = map ?: break
-                MapCam.animate(m, CameraPosition.Builder().target(point.ml()).zoom(15.0)
-                    .tilt(0.0).bearing(0.0).padding(0.0, 0.0, 0.0, 0.0).build(), ms = 440)
-                delay(700)
-            }
-            frame(path, bottomFraction = 0.19f, top = 135)
-        }
+        frame(path, bottomFraction = 0.20f, top = 132, flat = true)
     }
 
     fun followTransit() {
@@ -1814,7 +1796,22 @@ class AppModel {
         val m = n.nextManeuver
         val turn = if (m == null || m.type == ManeuverType.ARRIVE) "Continue to ${n.destination.name}"
             else "${Fmt.distance(p.distanceToNext)} · ${SpokenText.forScreen(m.instruction)}"
-        DriveService.show(KiteApp.app, turn, "Arrive ${Fmt.arrival(p.remainingSeconds)} · ${Fmt.distance(p.remainingMeters)} to go")
+        val arrow = when (m?.type) {
+            ManeuverType.TURN_LEFT, ManeuverType.SLIGHT_LEFT, ManeuverType.SHARP_LEFT -> "↰"
+            ManeuverType.TURN_RIGHT, ManeuverType.SLIGHT_RIGHT, ManeuverType.SHARP_RIGHT -> "↱"
+            ManeuverType.ROUNDABOUT -> "⟳"
+            ManeuverType.UTURN -> "↶"
+            else -> "↑"
+        }
+        val distance = if (m == null || m.type == ManeuverType.ARRIVE) p.remainingMeters else p.distanceToNext
+        val chip = "$arrow ${Fmt.distance(distance)}"
+        val percent = (100 * p.alongMeters / (p.alongMeters + p.remainingMeters).coerceAtLeast(1.0)).toInt()
+        val arrival = "Arrive ${Fmt.arrival(p.remainingSeconds)} · ${Fmt.distance(p.remainingMeters)} to go"
+        val estimate = if (n.speedMps >= 2.0 && distance > 30 && m != null && m.type != ManeuverType.ARRIVE) {
+            val seconds = (distance / n.speedMps).toInt()
+            if (seconds < 60) "About ${(seconds / 5 * 5).coerceAtLeast(5)} sec to turn" else "About ${Fmt.duration(seconds.toDouble())} to turn"
+        } else null
+        DriveService.show(KiteApp.app, turn, listOfNotNull(estimate, arrival).joinToString(" · "), chip, percent)
     }
 
     private fun tripCheck(n: Navigator) {
@@ -1846,14 +1843,16 @@ class AppModel {
         settings.browseMapLook = browseLook
         val n = mapNavigator ?: return
         n.following = true
-        location.last?.let { followCamera(n, it) }
+        glide.resumeFollowing()
+        (navigationFix ?: location.last)?.let { followCamera(n, it) }
     }
 
     fun toggleDriveCompass() {
         settings.driveNorthUp = !settings.driveNorthUp
         val n = mapNavigator ?: return
         n.following = true
-        location.last?.let { followCamera(n, it) }
+        glide.resumeFollowing()
+        (navigationFix ?: location.last)?.let { followCamera(n, it) }
     }
 
     fun cycleBrowseLook(ctx: android.content.Context) {
@@ -1869,7 +1868,6 @@ class AppModel {
 
     fun headingChanged(heading: Double) {
         phoneHeading = heading
-        glide.deviceHeading = heading
         if (!settings.browseNorthUp && browseFollowing && !isGuiding) location.last?.let { followBrowse(it, entering = false) }
     }
 
@@ -2034,13 +2032,13 @@ class AppModel {
         frame(points, bottomFraction = if (profileRoute == null) 0.30f else 0.52f, top = 58)
     }
 
-    fun frame(points: List<LatLng>, bottomFraction: Float = 0.45f, top: Int = 130) {
+    fun frame(points: List<LatLng>, bottomFraction: Float = 0.45f, top: Int = 130, flat: Boolean = false) {
         if (mapNavigator?.following == true) return
         val m = map ?: return
         val first = points.firstOrNull() ?: return
         // Showing a place or a route: stop following, or the next fix would pull the map away.
         browseFollowing = false
-        val pitch = if (isGuiding) 0.0 else browsePitch
+        val pitch = if (isGuiding || flat) 0.0 else browsePitch
         if (points.all { it == first }) {
             MapCam.animate(m, CameraPosition.Builder().target(first.ml()).zoom(MapCam.zoomFor(1200.0, first.lat, mapWidthDp))
                 .tilt(pitch).bearing(0.0).build(), ms = 300, native = nativeCamera)

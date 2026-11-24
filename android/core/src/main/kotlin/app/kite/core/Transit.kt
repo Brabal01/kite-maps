@@ -138,11 +138,45 @@ object Transitous {
         val data = response?.takeIf { it.ok }?.body
         val status = data?.let { withContext(Dispatchers.Default) { parseLive(it, leg, System.currentTimeMillis()) } }
         val vehicle = gps.await()
-        if (vehicle == null) return@coroutineScope status
         if (status?.cancelled == true) return@coroutineScope status
-        (status ?: TransitLive(null, null, false, leg.notices)).copy(
+        if (vehicle != null) return@coroutineScope (status ?: TransitLive(null, null, false, leg.notices)).copy(
             position = vehicle.at, gps = true, occupancy = vehicle.occupancy
         )
+        if (status?.position != null) return@coroutineScope status
+
+        // The map endpoint returns timed segments; the dot is interpolated, not reported by the vehicle.
+        val now = System.currentTimeMillis()
+        val progress = estimateMapSegment(leg, now) ?: return@coroutineScope status
+        (status ?: TransitLive(null, null, false, leg.notices)).copy(position = progress)
+    }
+
+    private suspend fun estimateMapSegment(leg: TransitLeg, now: Long): LatLng? = withContext(Dispatchers.Default) {
+        val start = leg.depart ?: return@withContext null
+        val end = leg.arrive ?: return@withContext null
+        if (leg.path.size < 2 || now !in (start - 30_000)..(end + 8 * 60_000)) return@withContext null
+        val fraction = ((now - start).toDouble() / (end - start).coerceAtLeast(1)).coerceIn(0.0, 1.0)
+        val center = Geo.point(leg.path, Geo.length(leg.path) * fraction)
+        val b = OutdoorData.bounds(center, 2500.0)
+        if (b.w >= b.e) return@withContext null
+        val earlier = java.time.Instant.ofEpochMilli(now - 45_000).toString()
+        val later = java.time.Instant.ofEpochMilli(now + 45_000).toString()
+        val response = Http.getOrNull("$base/api/v6/map/trips?min=${b.s.plain()},${b.w.plain()}&max=${b.n.plain()},${b.e.plain()}" +
+            "&zoom=14&precision=5&startTime=${urlEnc(earlier)}&endTime=${urlEnc(later)}", headers, client)
+        response?.takeIf { it.ok }?.let { parseMapSegment(it.body, leg.tripId, now) }
+    }
+
+    internal fun parseMapSegment(data: ByteArray, tripId: String?, now: Long): LatLng? {
+        if (tripId == null) return null
+        return Json.parse(data).asMaps().orEmpty().firstNotNullOfOrNull { segment ->
+            if (segment["realTime"] != true ||
+                segment["trips"].asMaps()?.none { it["tripId"] == tripId } != false) return@firstNotNullOfOrNull null
+            val start = date(segment["departure"]) ?: return@firstNotNullOfOrNull null
+            val end = date(segment["arrival"]) ?: return@firstNotNullOfOrNull null
+            if (end <= start || now !in start..end) return@firstNotNullOfOrNull null
+            val line = (segment["polyline"] as? String)?.let { Geo.decodePolyline(it, 1e5) }.orEmpty()
+            if (line.size < 2) return@firstNotNullOfOrNull null
+            Geo.point(line, Geo.length(line) * (now - start).toDouble() / (end - start))
+        }
     }
 
     internal fun parseLive(data: ByteArray, selected: TransitLeg, now: Long): TransitLive? {

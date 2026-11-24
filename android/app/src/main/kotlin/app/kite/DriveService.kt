@@ -53,11 +53,13 @@ class DriveService : Service() {
         private var title = "Driving with Kite"
         private var text = "Tap to go back to the map"
         private var shownAt = 0L
+        private var critical: String? = null
+        private var tripPercent = 0
 
         private fun build(c: Context, title: String, text: String): Notification {
             val open = PendingIntent.getActivity(c, 0, Intent(c, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-            return NotificationCompat.Builder(c, CHANNEL)
+            val standard = NotificationCompat.Builder(c, CHANNEL)
                 .setSmallIcon(R.drawable.ic_shortcut_car)
                 .setContentTitle(title)
                 .setContentText(text)
@@ -68,17 +70,26 @@ class DriveService : Service() {
                 .setCategory(NotificationCompat.CATEGORY_NAVIGATION)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .build()
+            val summary = critical ?: return standard
+            if (Build.VERSION.SDK_INT < 36) return standard
+            return Notification.Builder.recoverBuilder(c, standard)
+                .setRequestPromotedOngoing(true)
+                .setShortCriticalText(summary)
+                .setStyle(Notification.ProgressStyle().setProgress(tripPercent))
+                .build()
         }
 
         /**
          * The next turn and the arrival time on the notification, so they're on the lock screen and
          * over another app. Quiet: it never sounds or buzzes, and changes at most every two seconds.
          */
-        fun show(c: Context, title: String, text: String) {
-            if (!running || (title == this.title && text == this.text)) return
+        fun show(c: Context, title: String, text: String, chip: String? = null, progress: Int = 0) {
+            if (!running || (title == this.title && text == this.text && chip == critical && progress == tripPercent)) return
             val now = android.os.SystemClock.elapsedRealtime()
             if (title.substringAfter(" · ") == this.title.substringAfter(" · ") && now - shownAt < 2_000) return
             this.title = title; this.text = text; shownAt = now
+            critical = chip
+            tripPercent = progress.coerceIn(0, 100)
             runCatching { c.getSystemService(NotificationManager::class.java).notify(1, build(c, title, text)) }
         }
 
@@ -87,6 +98,9 @@ class DriveService : Service() {
             if (ContextCompat.checkSelfPermission(c, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
                 ContextCompat.checkSelfPermission(c, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) return
             title = initialTitle; text = "Tap to go back to the map"
+            critical = null
+            tripPercent = 0
+            shownAt = 0L
             running = runCatching { c.startForegroundService(Intent(c, DriveService::class.java)) }.isSuccess
         }
 

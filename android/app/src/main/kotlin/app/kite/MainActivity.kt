@@ -188,10 +188,10 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
     val mapboxToken = s.activeMapboxToken.takeUnless { offlineBasemap }
     val satellite = s.satellite && !offlineBasemap
     LaunchedEffect(model.offlineFocus) {
-        val at = model.offlineFocus ?: return@LaunchedEffect
+        val (at, zoom) = model.offlineFocus ?: return@LaunchedEffect
         delay(120)
         model.map?.let { map ->
-            MapCam.animate(map, org.maplibre.android.camera.CameraPosition.Builder().target(at.ml()).zoom(13.0).build(), ms = 220)
+            MapCam.animate(map, org.maplibre.android.camera.CameraPosition.Builder().target(at.ml()).zoom(zoom).build(), ms = 220)
         }
         model.offlineFocus = null
     }
@@ -213,13 +213,14 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
     val usableStandardToken = standardToken.takeUnless { scenery.failed }
     val standardReady = usableStandardToken != null && scenery.ready
     val showingMapbox = standardReady || kiteMap.showingMapbox
-    val look = MapboxScenery.Look(mapDark, satellite, s.terrain3D, s.terrain, s.buildingShadows, s.streetLamps, s.traffic,
+    val look = MapboxScenery.Look(mapDark, satellite, s.terrain3D, s.terrain, s.buildingShadows && !driving, s.streetLamps, s.traffic && !driving,
         if (mapDark) s.nightMapPalette else s.dayMapPalette, driving)
     LaunchedEffect(look) { scenery.setLook(look) }
     LaunchedEffect(mapDark, driving, satellite, mapboxToken, standardReady) {
         kiteMap.applyBasemap(mapDark, driving, satellite && !standardReady, mapboxToken.takeUnless { standardReady })
     }
-    LaunchedEffect(s.googleIconPercent, s.osmIconPercent, s.resultIconPercent) {
+    LaunchedEffect(s.markerTheme) { kiteMap.refreshMarkerTheme(); scenery.refreshMarkerTheme() }
+    LaunchedEffect(s.googleIconPercent, s.osmIconPercent, s.resultIconPercent, s.wazeMapPercent) {
         kiteMap.refreshPinSizes()
         scenery.refreshPinSizes()
     }
@@ -312,7 +313,7 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
     val activeProfileRoute = model.mapNavigator?.route
     LaunchedEffect(activeProfileRoute?.id, s.preloadRouteProfile) {
         if (s.preloadRouteProfile && activeProfileRoute != null) {
-            delay(950)
+            delay(6500)
             model.routeProfiles.load(activeProfileRoute)
         }
     }

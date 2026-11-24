@@ -252,7 +252,5 @@ internal fun TransitStatus(
             notice.url?.let { url -> TextButton({ context.open(url) }) { Text("Operator notice") } }
         }
     }
-    if (leg.tripId?.contains("_cz-DPMO_") == true && (live?.notices ?: leg.notices).isEmpty()) {
-        TextButton({ context.open("https://www.dpmo.cz/informace-pro-cestujici/aktuality/") }) { Text("DPMO service changes") }
-    }
+
 }

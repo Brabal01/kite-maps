@@ -76,7 +76,22 @@ object MapIcons {
         "more" to (Icons.Filled.Place to 0x476267),
     )
 
+    private val plates = mutableMapOf<MarkerTheme, Bitmap>()
+    private fun drawThemePlate(canvas: Canvas, icon: ImageVector, tint: Int, size: Float): Boolean {
+        val theme = AppSettings.markerTheme
+        val resource = theme.resource ?: return false
+        val plate = plates.getOrPut(theme) { BitmapFactory.decodeResource(KiteApp.app.resources, resource) }
+        val pad = size * 0.045f
+        val center = size / 2f
+        canvas.drawBitmap(plate, null, RectF(pad, pad, size - pad, size - pad), Paint(Paint.FILTER_BITMAP_FLAG))
+        canvas.drawCircle(center, center, size * 0.32f, paint(tint).apply { alpha = 105 })
+        val glyph = size * 0.225f
+        drawIcon(canvas, icon, RectF(center - glyph, center - glyph, center + glyph, center + glyph), Color.WHITE)
+        return true
+    }
+
     private fun placeBadge(icon: ImageVector, tint: Int, search: Boolean) = image(44f, 44f) { cv ->
+        if (drawThemePlate(cv, icon, tint, 44f)) return@image
         val shape = if (search) RectF(3f, 3f, 41f, 41f) else RectF(4f, 4f, 40f, 40f)
         val corner = if (search) 19f else 10f
         cv.drawRoundRect(RectF(shape.left, shape.top + 1.6f, shape.right, shape.bottom + 1.6f), corner, corner, paint(c(0x0B1828, 0.38f)))
@@ -127,8 +142,12 @@ object MapIcons {
 
     fun register(style: Style, dark: Boolean) = registerImages(dark) { id, bitmap -> style.addImage(id, bitmap) }
 
-    private val overlayImages: Map<String, Bitmap> by lazy {
-        buildMap {
+    private var atlasTheme: MarkerTheme? = null
+    private var atlas: Map<String, Bitmap> = emptyMap()
+    private fun overlayImages(): Map<String, Bitmap> {
+        val theme = AppSettings.markerTheme
+        if (theme == atlasTheme) return atlas
+        val images = buildMap {
             fun add(id: String, bitmap: Bitmap) { put(id, bitmap) }
             for (k in kinds) {
                 add(k.name, dot(k.icon, k.color))
@@ -145,6 +164,7 @@ object MapIcons {
             add("pin-origin", originDot())
             add("bubble-sel", bubble(c(0x0F766E), Color.WHITE))
             add("bubble-alt", bubble(Color.WHITE, c(0xBDC1C6)))
+            add("street-pill", bubble(c(0xF5FCFD), c(0xA3C6CA)))
             add("road-pill", bubble(c(0x2DD4BF), c(0x0F766E)))
             add("cam-speed", speedCamera())
             add("cam-plate", plateCamera())
@@ -169,10 +189,13 @@ object MapIcons {
             add("mine-parking", dot(Icons.Filled.LocalParking, c(0x1967D2)))
             add("mine-saved", dot(Icons.Filled.Bookmark, c(0x0F9D58)))
         }
+        atlasTheme = theme
+        atlas = images
+        return images
     }
 
     fun registerImages(dark: Boolean, add: (String, Bitmap) -> Unit) {
-        overlayImages.forEach { (id, asset) -> add(id, asset) }
+        overlayImages().forEach { (id, asset) -> add(id, asset) }
         for (marker in DriveMarker.entries) add(marker.sprite, drivePuck(marker, dark))
     }
 
@@ -229,7 +252,9 @@ object MapIcons {
         WazeAlert.Kind.CLOSURE -> 0xB71C1C
     }
 
-    fun waze(k: WazeAlert.Kind) = badge(c(wazeColor(k))) { cv, _ -> drawIcon(cv, wazeIcon(k), RectF(12f, 12f, 34f, 34f), Color.WHITE) }
+    fun waze(k: WazeAlert.Kind) = if (AppSettings.markerTheme == MarkerTheme.CLASSIC)
+        badge(c(wazeColor(k))) { cv, _ -> drawIcon(cv, wazeIcon(k), RectF(12f, 12f, 34f, 34f), Color.WHITE) }
+        else image(34.5f, 34.5f) { drawThemePlate(it, wazeIcon(k), c(wazeColor(k)), 34.5f) }
 
     /** A 46-unit badge drawn at 34.5 dp: white rim, colored field, then the glyph. */
     private fun badge(color: Int, glyph: (Canvas, Int) -> Unit) = image(34.5f, 34.5f) { cv ->
@@ -240,6 +265,7 @@ object MapIcons {
     }
 
     private fun dot(icon: ImageVector, color: Int) = image(28f, 28f) { cv ->
+        if (drawThemePlate(cv, icon, color, 28f)) return@image
         val r = RectF(1.5f, 1.5f, 26.5f, 26.5f)
         cv.drawOval(r, paint(color))
         cv.drawOval(r, paint(Color.WHITE, Paint.Style.STROKE, 2f))
@@ -254,6 +280,7 @@ object MapIcons {
         val backing = if (satellite) Color.WHITE else c(0x9AA0A6)
         fun add(category: String, icon: ImageVector, categoryColor: Int) {
             val marker = image(29f, 29f) { cv ->
+                if (drawThemePlate(cv, icon, categoryColor, 29f)) return@image
                 val body = paint(backing)
                 val tail = Path().apply {
                     moveTo(7f, 19f); lineTo(14.5f, 28f); lineTo(22f, 19f); close()

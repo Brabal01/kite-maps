@@ -267,6 +267,9 @@ class RouteTracker(val route: Route) {
     private val cum = Geo.cumulative(route.polyline)
     private val total = cum.last()
     private var segment = 0
+    private var previousFix: LatLng? = null
+    private var previousAlong = 0.0
+    private var distantFixes = 0
     private var offCount = 0
     private var wrongWayCount = 0
 
@@ -275,13 +278,24 @@ class RouteTracker(val route: Route) {
     /** [heading] is the way the car is moving, only when it's moving fast enough for the course to mean something. */
     fun update(fix: LatLng, accuracy: Double = 10.0, heading: Double? = null): Progress {
         val line = route.polyline
-        var best = nearest(fix, max(0, segment - 3), min(line.size - 2, segment + 40))
-        if (best.dist > 60) {
+        val previous = previousFix
+        val distance = previous?.distanceTo(fix) ?: 0.0
+        val backward = max(28.0, distance + 18.0)
+        val forward = max(90.0, distance * 1.8 + 30.0)
+        var from = segment
+        var to = segment
+        while (from > 0 && cum[from] > previousAlong - backward) from--
+        while (to < line.size - 2 && cum[to + 1] < previousAlong + forward) to++
+        var best = nearest(fix, from, to)
+        distantFixes = if (best.dist > 60) distantFixes + 1 else 0
+        if (best.dist > 60 && (previous == null || distance > 180 || distantFixes >= 2)) {
             val all = nearest(fix, 0, line.size - 2)
             if (all.dist < best.dist - 15) best = all
         }
         segment = best.seg
         val along = cum[best.seg] + best.t * (cum[best.seg + 1] - cum[best.seg])
+        previousFix = fix
+        previousAlong = along
         val a0 = line[best.seg]
         val b0 = line[best.seg + 1]
         val snapped = LatLng(a0.lat + (b0.lat - a0.lat) * best.t, a0.lng + (b0.lng - a0.lng) * best.t)

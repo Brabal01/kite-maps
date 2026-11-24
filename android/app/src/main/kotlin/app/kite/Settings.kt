@@ -10,6 +10,12 @@ import kotlin.properties.ReadWriteProperty
 import kotlin.reflect.KProperty
 
 enum class MapStyleMode(val label: String) { SYSTEM("App"), LIGHT("Light"), DARK("Dark"), SUN("Sunrise & sunset") }
+enum class MarkerTheme(val label: String, val resource: Int?) {
+    CLASSIC("Classic", null), PORCELAIN("Porcelain", R.drawable.icon_porcelain),
+    NIGHT("Neon", R.drawable.icon_night), TRAIL("Trail", R.drawable.icon_trail),
+}
+enum class RoadStripStyle(val label: String) { CLASSIC("Classic"), MINIMAL("Minimal"), CONTRAST("High contrast") }
+
 enum class RoadStripPosition(val label: String) { BOTTOM("Bottom"), TOP("Top"), LEFT("Left"), RIGHT("Right") }
 
 enum class DriveMarker(val label: String, val sprite: String, val top: Int? = null, val tilted: Int? = null) {
@@ -74,6 +80,14 @@ object AppSettings {
     }, { e, v -> e.putString("browseMapLook", v.name) })
     var solidMapSearch by bool("solidMapSearch", true)
     var osmOnlySearch by bool("osmOnlySearch")
+    var markerTheme by Pref("markerTheme",
+        { p -> MarkerTheme.entries.firstOrNull { it.name == p.getString("markerTheme", null) } ?: MarkerTheme.CLASSIC },
+        { e, v -> e.putString("markerTheme", v.name) })
+    var roadStripStyle by Pref("roadStripStyle",
+        { p -> RoadStripStyle.entries.firstOrNull { it.name == p.getString("roadStripStyle", null) } ?: RoadStripStyle.CLASSIC },
+        { e, v -> e.putString("roadStripStyle", v.name) })
+    var wazeMapPercent by int("wazeMapPercent", 100)
+    var wazeStripPercent by int("wazeStripPercent", 100)
     var googleIconPercent by int("googleIconPercent", 100)
     var osmIconPercent by int("osmIconPercent", 100)
     var resultIconPercent by int("resultIconPercent", 100)

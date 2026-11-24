@@ -280,9 +280,7 @@ fun PlaceBody(model: AppModel, place: Place) {
                 }
                 PhotoStrip(photos.take(6), 156.dp, opensViewer = true, streetView = place, model = model)
                 PlaceOverview(place)
-                if (ArrivalHelp.isBigPlace(place.category) || isStop(place)) {
-                    IndoorPlaceActions(model, place, station = isStop(place))
-                }
+                IndoorPlaceActions(model, place, station = isStop(place))
                 if (reviews.orEmpty().isNotEmpty() || canReview && !place.featuredReview.isNullOrBlank()) {
                     Text("Reviews", fontWeight = FontWeight.Bold, color = primaryText, fontSize = KType.headline)
                     if (reviews.orEmpty().isEmpty()) place.featuredReview?.let { Text(it, color = secondaryText) }

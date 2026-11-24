@@ -658,9 +658,20 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         }
     }
 
+    fun refreshMarkerTheme() {
+        val style = map?.style?.takeIf { styleReady } ?: return
+        MapIcons.register(style, dark)
+        MapIcons.registerMapPlaces(style, selectedStyle?.json != null)
+    }
+
     fun refreshPinSizes() { map?.style?.let(::applyPinSizes) }
 
     private fun applyPinSizes(style: Style) {
+        val waze = AppSettings.wazeMapPercent.coerceIn(60, 160) / 100f
+        for (id in listOf("vela-waze", "vela-waze-group")) {
+            (style.getLayer(id) as? SymbolLayer)?.setProperties(iconSize(
+                interpolate(linear(), zoom(), stop(11, 0.62f * waze), stop(15, 0.95f * waze))))
+        }
         val sizes = MapPinSizes.read()
         for (id in listOf("kite-google-places", GOOGLE_UNREVIEWED))
             (style.getLayer(id) as? SymbolLayer)?.setProperties(iconSize(sizes.google.toFloat()))
@@ -1127,9 +1138,9 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             if (m.locationComponent.isLocationComponentEnabled != showPosition) m.locationComponent.isLocationComponentEnabled = showPosition
         } else if (LocationService.authorized) enableLocation(style)
         // Not before the welcome screen's choice: "Open data only" means nothing ever went to Google.
-        visible(style, "vela-traffic", !showingMapbox && s.traffic && !s.noGoogle && s.welcomed)
+        visible(style, "vela-traffic", !showingMapbox && s.traffic && !navigating && !s.noGoogle && s.welcomed)
         if (showingMapbox) {
-            mapboxTrafficLayers(style).forEach { visible(style, it.id, s.traffic) }
+            mapboxTrafficLayers(style).forEach { visible(style, it.id, s.traffic && !navigating) }
         }
         // The Surveillance layer just switched on: fetch it now, not at the next pan (only on the
         // switch, so a failed fetch keeps its 30-second pause).
