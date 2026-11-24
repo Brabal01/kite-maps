@@ -78,7 +78,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         if (synchronize) map?.cancelTransitions()
         val native = scenery?.takeIf { it.ready }
         if (native == null) {
-            syncFromScenery(camera)
+            syncFromScenery(camera, force = synchronize)
             return
         }
         native.followCamera(camera, synchronize)
@@ -90,9 +90,9 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         }
     }
 
-    fun syncFromScenery(camera: CameraPosition) {
+    fun syncFromScenery(camera: CameraPosition, force: Boolean = false) {
         val m = map ?: return
-        if (m.cameraPosition == camera) return
+        if (!force && m.cameraPosition == camera) return
         syncingClassic = true
         try {
             m.moveCamera(org.maplibre.android.camera.CameraUpdateFactory.newCameraPosition(camera))

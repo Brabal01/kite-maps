@@ -1854,7 +1854,7 @@ class AppModel {
         val view = rawView.applying(settings.mapZoom, settings.driveLook)
         glide.look = if (settings.driveNorthUp) MapLook.NORTH else settings.driveLook
         val across = if (n.route.mode == TravelMode.DRIVE && android.os.SystemClock.elapsedRealtime() < navigationCameraUntil)
-            min(view.across, 560.0 * settings.mapZoom.scale) else view.across
+            min(view.across, 350.0 * settings.mapZoom.scale) else view.across
         glide.fix(n, f, across / 1.36.pow(navZoomSteps), view.pitch)
     }
 

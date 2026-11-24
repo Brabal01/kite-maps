@@ -85,6 +85,7 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
     private var submittedCamera: CameraPosition? = null
     private var cameraEase: com.mapbox.common.Cancelable? = null
     private var cameraEaseSync: Job? = null
+    private var followCameraCheck: Job? = null
     private var lastLampCell: Pair<Int, Int>? = null
     private var errorSubscription: com.mapbox.common.Cancelable? = null
     private var idleSubscription: com.mapbox.common.Cancelable? = null
@@ -401,14 +402,20 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
         sampleCrossStreets()
         if (takeover) {
             val guide = model.mapNavigator ?: return
-            // Check the applied position once the SDK has processed that frame.
-            mapView.postOnAnimation {
-                if (view !== mapView || model.mapNavigator !== guide || !guide.following) return@postOnAnimation
-                val expected = model.glide.followingCamera ?: return@postOnAnimation
-                val center = expected.target ?: return@postOnAnimation
-                val actual = mapView.mapboxMap.cameraState
-                if (NavGlide.needsCameraCorrection(actual.center.kite(), center.kite(), actual.zoom, expected.zoom)) {
-                    submitCamera(expected, force = true)
+            followCameraCheck?.cancel()
+            // A queued preview frame can still land after the first guidance write. Check
+            // again after the preview animation window, using the current GPS camera each time.
+            followCameraCheck = model.scope.launch {
+                for (wait in listOf(32L, 120L, 280L)) {
+                    delay(wait)
+                    if (view !== mapView || model.mapNavigator !== guide) return@launch
+                    val expected = model.glide.followingCamera ?: return@launch
+                    val center = expected.target ?: return@launch
+                    val actual = mapView.mapboxMap.cameraState
+                    if (NavGlide.needsCameraCorrection(actual.center.kite(), center.kite(), actual.zoom, expected.zoom)) {
+                        mapView.camera.cancelAllAnimators()
+                        submitCamera(expected, force = true)
+                    }
                 }
             }
         }
@@ -508,6 +515,7 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
         if (view !== mapView) return
         destroying = true
         cancelCameraEase()
+        followCameraCheck?.cancel()
         attributionDialog?.onStop()
         attributionDialog = null
         idleSubscription?.cancel()
