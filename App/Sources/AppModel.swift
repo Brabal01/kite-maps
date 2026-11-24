@@ -1258,8 +1258,10 @@ final class AppModel: ObservableObject {
         initialMapFix = nil
     }
 
+    func mapLocationAvailable(_ fix: CLLocation) { applyInitialCamera(fix) }
+
     private func applyInitialCamera(_ fix: CLLocation) {
-        guard !initialCameraComplete, nav == nil, transitJourney == nil,
+        guard !location.denied, !initialCameraComplete, nav == nil, transitJourney == nil,
               selected == nil, results.isEmpty, directions == nil, activeIndoor == nil,
               let map, map.bounds.width > 0, map.bounds.height > 0 else { return }
         let accurate = NavigationCamera.reliableFix(age: -fix.timestamp.timeIntervalSinceNow, accuracy: fix.horizontalAccuracy)

@@ -256,8 +256,13 @@ struct SettingsView: View {
             Section("Mapbox") {
                 SecureField("Public Mapbox token", text: $settings.mapboxPublicToken)
                     .textInputAutocapitalization(.never).autocorrectionDisabled()
+                #if canImport(MapboxMaps)
+                Toggle("Mapbox Standard", isOn: $settings.mapboxBasemap)
+                    .disabled(settings.activeMapboxToken == nil)
+                #else
                 Toggle("Mapbox basemap", isOn: $settings.mapboxBasemap)
                     .disabled(settings.activeMapboxToken == nil)
+                #endif
                 if !settings.mapboxPublicToken.isEmpty && settings.activeMapboxToken == nil {
                     Text("Enter a public token beginning with pk.").font(.caption).foregroundStyle(.secondary)
                 }

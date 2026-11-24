@@ -9,14 +9,18 @@ import VelaCore
 struct VelaMapView: UIViewRepresentable {
     @ObservedObject var model: AppModel
     @ObservedObject var settings: AppSettings
+    @ObservedObject private var connectivity = Connectivity.shared
     let dark: Bool
 
     static let styleURL = URL(string: "https://tiles.openfreemap.org/styles/liberty")!
 
     func makeCoordinator() -> Coordinator { Coordinator(model: model) }
 
-    func makeUIView(context: Context) -> MLNMapView {
-        let map = MLNMapView(frame: .zero, styleURL: Self.styleURL)
+    func makeUIView(context: Context) -> UIView {
+        let container = UIView()
+        let map = MLNMapView(frame: container.bounds, styleURL: Self.styleURL)
+        map.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        container.addSubview(map)
         let c = context.coordinator
         map.delegate = c
         map.showsUserLocation = true
@@ -53,15 +57,19 @@ struct VelaMapView: UIViewRepresentable {
         LiveCamStore.shared.onChange = { [weak c, weak map] in if let c, let map { c.render(map) } }
         // On a first launch, location is asked for after the welcome, not on top of it.
         if (settings.welcomed && !settings.needsWazeChoice) || DemoScript.active { model.location.start() }
-        return map
+        return container
     }
 
-    func updateUIView(_ map: MLNMapView, context: Context) {
+    func updateUIView(_ container: UIView, context: Context) {
         let c = context.coordinator
+        guard let map = container.subviews.first as? MLNMapView else { return }
         if c.dark != dark {
             c.dark = dark
             c.repaint(map)
         }
+        #if canImport(MapboxMaps)
+        c.updateStandard(in: container, classic: map, online: connectivity.online)
+        #endif
         c.render(map)
         c.loadCameras(map)
         c.loadWazeCameras(map)
@@ -108,7 +116,32 @@ struct VelaMapView: UIViewRepresentable {
         var dark = false
         private var styleReady = false
         private var mapboxSignature: String?
-        private var movedToUser = false
+        #if canImport(MapboxMaps)
+        private var standard: MapboxStandardSurface?
+
+        func updateStandard(in container: UIView, classic: MLNMapView, online: Bool) {
+            let settings = model.settings
+            let openOverlays = model.activeIndoor != nil || model.measurement.count == 2 ||
+                settings.hikingTrails || settings.cyclingTrails || model.profileRoute != nil
+            guard online, !settings.offlineBasemap, !openOverlays, settings.mapboxBasemap,
+                  let token = settings.activeMapboxToken else {
+                standard?.removeFromSuperview()
+                standard = nil
+                return
+            }
+            let look = MapboxStandardSurface.Appearance(dark: dark, satellite: settings.satellite,
+                                                       driving: model.nav?.route.mode == .drive || model.cruise != nil,
+                                                       terrain: settings.terrain)
+            if let standard, standard.usesToken(token) {
+                standard.update(look)
+                return
+            }
+            standard?.removeFromSuperview()
+            let surface = MapboxStandardSurface(classic: classic, token: token, appearance: look)
+            container.addSubview(surface)
+            standard = surface
+        }
+        #endif
         private var pinDroppedAt = Date.distantPast
         private var originalLabels: [String: (NSExpression?, NSExpression?, NSExpression?)] = [:]
         private var lastResultsKey = ""
@@ -650,6 +683,9 @@ struct VelaMapView: UIViewRepresentable {
             updateHeat(map)
             renderMine(style)
             if s.transitLines { loadRail(map) }
+            #if canImport(MapboxMaps)
+            standard?.syncOverlays()
+            #endif
         }
 
         private func renderTrails(_ style: MLNStyle, kind: String, visible: Bool) {
@@ -779,8 +815,12 @@ struct VelaMapView: UIViewRepresentable {
 
         private func renderMapboxBasemap(_ style: MLNStyle, driving: Bool) -> Bool {
             let settings = model.settings
+            #if canImport(MapboxMaps)
+            let token: String? = nil
+            #else
             let token = settings.mapboxBasemap && !settings.offlineBasemap && Connectivity.shared.online
                 ? settings.activeMapboxToken : nil
+            #endif
             let mapStyle = settings.satellite ? "satellite-streets-v12" : driving
                 ? (dark ? "navigation-night-v1" : "navigation-day-v1") : (dark ? "dark-v11" : "streets-v12")
             let signature = token.map { "\(mapStyle):\($0)" }
@@ -1486,6 +1526,13 @@ struct VelaMapView: UIViewRepresentable {
                     self.model.select(place)
                     return
                 }
+                #if canImport(MapboxMaps)
+                if let standard = self.standard, let (name, coordinate) = await standard.place(at: pt),
+                   self.standard === standard, self.model.nav == nil, self.model.directions == nil {
+                    self.model.resolveTapped(name: name, at: LatLng(coordinate.latitude, coordinate.longitude))
+                    return
+                }
+                #endif
                 let pois = map.visibleFeatures(in: box, styleLayerIdentifiers: ["poi_r1", "poi_r7", "poi_r20", "poi_transit", "airport"])
                 if let poi = pois.first, let name = (poi.attribute(forKey: "name:en") ?? poi.attribute(forKey: "name")) as? String {
                     let c = poi.coordinate
@@ -1547,11 +1594,20 @@ struct VelaMapView: UIViewRepresentable {
                 updateHeat(mapView)
                 loadRail(mapView)
                 noteHeading(mapView)
+                #if canImport(MapboxMaps)
+                standard?.syncCamera()
+                #endif
             }
         }
 
         nonisolated func mapViewRegionIsChanging(_ mapView: MLNMapView) {
-            MainActor.assumeIsolated { noteHeading(mapView) }
+            MainActor.assumeIsolated {
+                noteHeading(mapView)
+                #if canImport(MapboxMaps)
+                standard?.syncCamera()
+                standard?.syncOverlays()
+                #endif
+            }
         }
 
         /** The compass button shows while the map isn't facing north. */
@@ -1565,10 +1621,10 @@ struct VelaMapView: UIViewRepresentable {
         nonisolated func mapView(_ mapView: MLNMapView, didUpdate userLocation: MLNUserLocation?) {
             guard let loc = userLocation?.location else { return }
             MainActor.assumeIsolated {
-                guard !movedToUser else { return }
-                movedToUser = true
-                guard model.results.isEmpty, model.selected == nil else { return }
-                mapView.setCenter(loc.coordinate, zoomLevel: 15, animated: false)
+                model.mapLocationAvailable(loc)
+                #if canImport(MapboxMaps)
+                standard?.syncOverlays()
+                #endif
             }
         }
     }
