@@ -10,8 +10,10 @@ permissions:
 
 jobs:
   ipa:
-    runs-on: macos-15
+    runs-on: xcode-27
     timeout-minutes: 40
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
         with:
