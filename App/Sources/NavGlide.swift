@@ -43,6 +43,7 @@ final class NavGlide: NSObject {
     private var fixBearing: Double = 0
     private var fixSpeed: Double = 0
     private var fixCourse: Double = -1
+    private var waitingForAccurateFix = false
     private var onRoute = false
     private var line: [LatLng] = []
     private var cum: [Double] = []
@@ -62,6 +63,15 @@ final class NavGlide: NSObject {
 
     /** Called on every GPS fix while navigating. */
     func fix(_ n: Navigator, _ loc: CLLocation, across: Double, pitch: Double = 50, jump: Bool) {
+        let starting = nav !== n
+        let accurate = abs(loc.timestamp.timeIntervalSinceNow) <= 5 && (0...45).contains(loc.horizontalAccuracy)
+        let recovered = !starting && waitingForAccurateFix && accurate && shownCoord.map {
+            LatLng($0.latitude, $0.longitude).distance(to: LatLng(loc.coordinate.latitude, loc.coordinate.longitude)) >
+                max(45, loc.horizontalAccuracy * 2)
+        } == true
+        if starting { waitingForAccurateFix = !accurate }
+        else if accurate { waitingForAccurateFix = false }
+        let recenter = jump || starting || recovered
         nav = n
         let p = n.progress
         let poly = n.route.polyline
@@ -79,7 +89,7 @@ final class NavGlide: NSObject {
         fixBearing = fixCourse >= 0 ? fixCourse : (p?.routeBearing ?? shownBearing)
         targetAcross = across
         targetPitch = pitch
-        if jump || shownCoord == nil {
+        if recenter || shownCoord == nil {
             shownAlong = onRoute ? fixAlong : nil
             shownCoord = onRoute ? coord(at: fixAlong) : fixCoord
             shownBearing = fixBearing
@@ -88,7 +98,7 @@ final class NavGlide: NSObject {
             northBlend = look == .north ? 1 : 0
         }
         start()
-        if jump { step(dt: 0) }
+        if recenter { step(dt: 0) }
     }
 
     func stop() {

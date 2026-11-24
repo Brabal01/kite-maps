@@ -128,6 +128,11 @@ final class AppModel: ObservableObject {
     @Published var directions: DirectionsState?
     @Published var transitJourney: TransitJourney?
     @Published var showNearbyDepartures = false
+    @Published var availableIndoor: IndoorPlan?
+    @Published var activeIndoor: IndoorPlan?
+    @Published var indoorFloor = "0"
+    @Published var indoorFeature: IndoorPlan.Feature?
+    private var indoorCache: [String: IndoorPlan] = [:]
     var mapNavigator: Navigator? { nav ?? transitJourney?.walking }
     private var transitWalkingTask: Task<Void, Never>?
     @Published var nav: Navigator?
@@ -763,7 +768,8 @@ final class AppModel: ObservableObject {
             directions?.loading.insert(m)
             Task {
                 let r = await Directions.routes(from: from, to: to, mode: m, avoidHighways: hw, avoidTolls: tolls, useGoogle: google, via: via,
-                                                heading: m == .drive ? heading : nil, alternatives: true)
+                                                heading: m == .drive ? heading : nil, alternatives: true,
+                                                engine: settings.engine(for: m), mapboxToken: settings.activeMapboxToken)
                 guard directions?.destination.id == d.destination.id, routesRequest == req else { return }
                 directions?.loading.remove(m)
                 // The fastest first, so it's the one picked (Matteo, 2026-11-13: a bike route marked
@@ -938,7 +944,8 @@ final class AppModel: ObservableObject {
         let index = journey.index
         let useGoogle = !settings.noGoogle
         transitWalkingTask = Task {
-            let result = await Directions.routes(from: start, to: goal, mode: .walk, useGoogle: useGoogle)
+            let result = await Directions.routes(from: start, to: goal, mode: .walk, useGoogle: useGoogle,
+                                                 engine: settings.walkEngine, mapboxToken: settings.activeMapboxToken)
             guard !Task.isCancelled, transitJourney === journey, journey.index == index else { return }
             guard let route = result.routes.first else {
                 journey.walkingUnavailable = true
@@ -958,8 +965,12 @@ final class AppModel: ObservableObject {
     }
 
     func startNavigation() {
-        guard let d = directions, let route = d.route, !d.previewOnly else { return }
+        guard let d = directions, let route = d.route, !d.previewOnly, transitJourney == nil else { return }
         endCruise()
+        routesRequest += 1
+        transitRequest += 1
+        directions = nil
+        browseFollowing = false
         let n = Navigator(route: route, destination: d.destination, stops: d.stops, settings: settings)
         // Roads tapped away on the plan stay avoided when the way is worked out again on the drive.
         if d.mode == .drive { n.avoid = d.avoid }
@@ -1050,7 +1061,7 @@ final class AppModel: ObservableObject {
     func recenterNav() {
         guard let n = nav else { return }
         n.following = true
-        if let loc = location.last { followCamera(n, loc, animated: true) }
+        if let loc = location.last { followCamera(n, loc, animated: false) }
     }
 
     /** Show the whole remaining trip; the camera stops following until re-centered. */
@@ -1174,10 +1185,11 @@ final class AppModel: ObservableObject {
         let p = n.progress
         // Further out on long stretches, closer in and flatter just before a turn (see NavZoom).
         // Then the zoom setting (Closer, Normal, Wider) and the 3D, 2D or north-up button.
-        let view = NavZoom.view(speed: loc.speed, toNext: p?.distanceToNext, next: n.nextManeuver?.type, driving: n.route.mode == .drive)
-            .applying(settings.mapZoom, settings.driveLook)
+        let raw = n.route.mode == .walk ? NavZoom.View(across: 135, pitch: 40) :
+            NavZoom.view(speed: loc.speed, toNext: p?.distanceToNext, next: n.nextManeuver?.type, driving: n.route.mode == .drive)
+        let view = raw.applying(settings.mapZoom, settings.driveLook)
         glide.look = settings.driveLook
-        glide.fix(n, loc, across: view.across, pitch: view.pitch, jump: !animated)
+        glide.fix(n, loc, across: animated ? view.across : min(view.across, 350), pitch: view.pitch, jump: !animated)
     }
 
     /** The map button while driving: 3D, then 2D, then north up. Kept for the next drive. */
@@ -1189,6 +1201,41 @@ final class AppModel: ObservableObject {
     }
 
     // MARK: Map
+
+    func probeIndoor(_ place: Place) async {
+        availableIndoor = nil
+        if let plan = indoorCache[place.id] { availableIndoor = plan; return }
+        try? await Task.sleep(nanoseconds: 360_000_000)
+        guard !Task.isCancelled, selected?.id == place.id else { return }
+        let plan = await IndoorPlan.near(place.location)
+        guard !Task.isCancelled, selected?.id == place.id else { return }
+        if let plan {
+            if indoorCache.count >= 6 { indoorCache.removeAll() }
+            indoorCache[place.id] = plan
+        }
+        availableIndoor = plan
+    }
+
+    func openIndoor() {
+        guard let plan = availableIndoor else { return }
+        activeIndoor = plan
+        indoorFeature = nil
+        indoorFloor = plan.floors.contains("0") ? "0" : plan.floors.last ?? "0"
+        frame(plan.building, bottomFraction: 0.12, top: 70)
+    }
+
+    func pickIndoor(_ point: LatLng) {
+        indoorFeature = activeIndoor?.features.filter {
+            $0.floors.contains(indoorFloor) && $0.name != nil &&
+                ($0.isPolygon && IndoorPlan.contains(point, ring: $0.points) || $0.center.distance(to: point) < 18)
+        }.min(by: { $0.center.distance(to: point) < $1.center.distance(to: point) })
+    }
+
+    func closeIndoor() {
+        activeIndoor = nil
+        indoorFeature = nil
+        if let selected { frame([selected.location], bottomFraction: 0.3) }
+    }
 
     func centerOnUser() {
         guard let map, let loc = location.last ?? map.userLocation?.location else {
@@ -1215,7 +1262,7 @@ final class AppModel: ObservableObject {
     }
 
     func frame(_ points: [LatLng], bottomFraction: CGFloat = 0.45, top: CGFloat = 130) {
-        guard let map, !points.isEmpty else { return }
+        guard mapNavigator?.following != true, let map, !points.isEmpty else { return }
         // Showing a place or a route: stop following, or the next fix would pull the map away.
         browseFollowing = false
         if nav == nil { browseLook = .north }

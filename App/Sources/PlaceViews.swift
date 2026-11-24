@@ -19,21 +19,26 @@ struct PlaceHeader: View {
                     .copyable(place.name, below: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 CircleIconButton(icon: settings.isSaved(place) ? "bookmark.fill" : "bookmark") { settings.toggleSaved(place) }
-                if let url = place.shareURL {
-                    ShareLink(item: url) {
+                Menu {
+                    if let url = place.shareURL { ShareLink("Google Maps link", item: url) }
+                    ShareLink("Place name", item: place.name)
+                    ShareLink("Coordinates", item: String(format: "%.6f, %.6f", place.location.lat, place.location.lng))
+                } label: {
                         Image(systemName: "square.and.arrow.up")
                             .font(.system(size: 17, weight: .bold))
                             .foregroundColor(.primary)
                             .frame(width: 44, height: 44)
                             .background(Circle().fill(Color.secondary.opacity(0.18)))
-                    }
-                    .buttonStyle(.plain)
-                }
+                }.buttonStyle(.plain).accessibilityLabel("Share place")
                 CircleIconButton(icon: "xmark") { withAnimation { model.closePlace() } }
             }
             PlaceMetaLine(place: place, here: model.userLatLng)
                 // Tapping the stars opens the reviews (GitHub #70).
                 .onTapGesture { if place.rating != nil { model.showReviews = place.id; model.detent = .full } }
+            if model.availableIndoor != nil {
+                Button { model.openIndoor() } label: { Label("Floor plan", systemImage: "square.3.layers.3d") }
+                    .buttonStyle(.bordered)
+            }
             StatusText(place: place).font(.subheadline)
             // The one thing most people want, in reach even with the sheet down.
             HStack(spacing: 10) {
@@ -67,6 +72,7 @@ struct PlaceHeader: View {
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 10)
+        .task(id: place.id) { await model.probeIndoor(place) }
     }
 }
 
@@ -212,8 +218,6 @@ struct PlaceBody: View {
                     .onTapGesture { if let u = webURL(site) { openURL(u) } }
                     .copyable(site)
             }
-            let coords = String(format: "%.6f, %.6f", place.location.lat, place.location.lng)
-            InfoRow(icon: "scope", text: coords).copyable(coords)
             if let r = place.featuredReview {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {

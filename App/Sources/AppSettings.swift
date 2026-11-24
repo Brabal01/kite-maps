@@ -43,6 +43,24 @@ final class AppSettings: ObservableObject {
     @Published var voiceAlertsOnly: Bool { didSet { d.set(voiceAlertsOnly, forKey: "voiceAlertsOnly") } }
     @Published var traffic: Bool { didSet { d.set(traffic, forKey: "traffic") } }
     @Published var satellite: Bool { didSet { d.set(satellite, forKey: "satellite") } }
+    @Published var mapboxPublicToken: String { didSet { d.set(mapboxPublicToken, forKey: "kite.mapboxPublicToken") } }
+    @Published var mapboxBasemap: Bool { didSet { d.set(mapboxBasemap, forKey: "kite.mapboxBasemap") } }
+    @Published var offlineBasemap: Bool { didSet { d.set(offlineBasemap, forKey: "kite.offlineBasemap") } }
+    @Published var driveEngine: RouteEngine { didSet { d.set(driveEngine.rawValue, forKey: "kite.driveEngine") } }
+    @Published var walkEngine: RouteEngine { didSet { d.set(walkEngine.rawValue, forKey: "kite.walkEngine") } }
+    @Published var bikeEngine: RouteEngine { didSet { d.set(bikeEngine.rawValue, forKey: "kite.bikeEngine") } }
+    var activeMapboxToken: String? {
+        let token = mapboxPublicToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        return RouteEngine.isMapboxPublicToken(token) ? token : nil
+    }
+
+    func engine(for mode: TravelMode) -> RouteEngine {
+        switch mode {
+        case .drive: return driveEngine
+        case .walk: return walkEngine
+        case .bike: return bikeEngine
+        }
+    }
     /** Hill shading, and metro/rail lines in their colors. */
     @Published var terrain: Bool { didSet { d.set(terrain, forKey: "terrain") } }
     @Published var transitLines: Bool { didSet { d.set(transitLines, forKey: "transitLines") } }
@@ -124,6 +142,12 @@ final class AppSettings: ObservableObject {
         transitExitAlerts = d.object(forKey: "kite.transitExitAlerts") as? Bool ?? true
         traffic = d.object(forKey: "traffic") as? Bool ?? true
         satellite = d.bool(forKey: "satellite")
+        mapboxPublicToken = d.string(forKey: "kite.mapboxPublicToken") ?? ""
+        mapboxBasemap = d.object(forKey: "kite.mapboxBasemap") as? Bool ?? true
+        offlineBasemap = d.bool(forKey: "kite.offlineBasemap")
+        driveEngine = RouteEngine(rawValue: d.string(forKey: "kite.driveEngine") ?? "") ?? .automatic
+        walkEngine = RouteEngine(rawValue: d.string(forKey: "kite.walkEngine") ?? "") ?? .openStreetMap
+        bikeEngine = RouteEngine(rawValue: d.string(forKey: "kite.bikeEngine") ?? "") ?? .automatic
         terrain = d.bool(forKey: "terrain")
         transitLines = d.bool(forKey: "transitLines")
         avoidTolls = d.bool(forKey: "avoidTolls")

@@ -539,7 +539,23 @@ public enum Directions {
     public static func routes(from a: LatLng, to b: LatLng, mode: TravelMode,
                               avoidHighways: Bool = false, avoidTolls: Bool = false,
                               useGoogle: Bool = true, via: [LatLng] = [], heading: Double? = nil,
-                              alternatives: Bool = false) async -> Result {
+                              alternatives: Bool = false, engine: RouteEngine = .automatic, mapboxToken: String? = nil) async -> Result {
+        switch engine {
+        case .mapbox:
+            guard let mapboxToken else { return Result(routes: [], error: "Add a public Mapbox token in Settings.") }
+            let found = await MapboxRoutes.plan(from: a, to: b, via: via, mode: mode, heading: heading,
+                                               alternatives: alternatives, avoidHighways: avoidHighways, avoidTolls: avoidTolls, token: mapboxToken)
+            return Result(routes: found, error: found.isEmpty ? "Mapbox couldn't find a route." : nil)
+        case .openStreetMap:
+            let routes = (try? await OSRM.route(from: a, to: b, mode: mode, via: via, heading: heading)) ?? []
+            return Result(routes: routes, error: routes.isEmpty ? "OpenStreetMap routing is unavailable for this trip." : nil)
+        case .google:
+            guard useGoogle else { return Result(routes: [], error: "Google is disabled in Settings.") }
+            let routes = (try? await GoogleClient.shared.directions(from: a, to: b, mode: mode,
+                        avoidHighways: avoidHighways, avoidTolls: avoidTolls, via: via)) ?? []
+            return Result(routes: routes, error: routes.isEmpty ? "Google couldn't find a route." : nil)
+        case .automatic: break
+        }
         // Ask both at once: Google's route knows traffic, OSRM's steps read better (Vela puts
         // the open router's turn-by-turn on Google's line the same way).
         let osrmTask = Task { try await OSRM.route(from: a, to: b, mode: mode, via: via, heading: heading) }

@@ -102,11 +102,13 @@ struct VelaMapView: UIViewRepresentable {
         let model: AppModel
         var dark = false
         private var styleReady = false
+        private var mapboxSignature: String?
         private var movedToUser = false
         private var pinDroppedAt = Date.distantPast
         private var originalLabels: [String: (NSExpression?, NSExpression?, NSExpression?)] = [:]
         private var lastResultsKey = ""
         private var lastRouteKey = ""
+        private var lastIndoorKey = ""
         private var lastMineKey = ""
         private var lastPuckKey = ""
         /** Whether the map is currently stripped down for driving; nil after a style load. */
@@ -156,10 +158,12 @@ struct VelaMapView: UIViewRepresentable {
             MapIcons.register(in: style)
             addVelaLayers(style)
             styleReady = true
+            mapboxSignature = nil
             heatTiles.styleReloaded()
             styledDriving = nil
             repaint(mapView)
             lastResultsKey = ""; lastRouteKey = ""; lastMineKey = ""; lastPuckKey = ""; lastCameraKey = ""; lastSignalsKey = ""; lastWazeKey = ""; lastLiveKey = ""
+            lastIndoorKey = ""
             render(mapView)
         }
 
@@ -585,12 +589,13 @@ struct VelaMapView: UIViewRepresentable {
             guard styleReady, let style = map.style else { return }
             let s = model.settings
             let navigating = model.mapNavigator != nil
+            let mapbox = renderMapboxBasemap(style, driving: model.nav?.route.mode == .drive)
             // The navigation arrow replaces the blue dot.
             if map.showsUserLocation == navigating { map.showsUserLocation = !navigating }
             // Not before the welcome screen's choice: "Open data only" means nothing ever went to Google.
             style.layer(withIdentifier: "vela-traffic")?.isVisible = s.traffic && !navigating && !s.noGoogle && s.welcomed
-            style.layer(withIdentifier: "vela-sat")?.isVisible = s.satellite
-            style.layer(withIdentifier: "vela-terrain")?.isVisible = s.terrain && !s.satellite
+            style.layer(withIdentifier: "vela-sat")?.isVisible = s.satellite && !mapbox && !s.offlineBasemap
+            style.layer(withIdentifier: "vela-terrain")?.isVisible = s.terrain && !s.satellite && !mapbox && !s.offlineBasemap
             for id in ["vela-rail", "vela-rail-case"] { style.layer(withIdentifier: id)?.isVisible = s.transitLines && !navigating }
             // The driving view with no route gets the driving map too, without the route line.
             let driving = model.nav?.route.mode == .drive || model.cruise != nil
@@ -601,7 +606,8 @@ struct VelaMapView: UIViewRepresentable {
                 (style.layer(withIdentifier: "vela-route-line") as? MLNLineStyleLayer)?.lineWidth = NSExpression(forConstantValue: navigating ? 12 : 10)
                 (style.layer(withIdentifier: "vela-route-edge") as? MLNLineStyleLayer)?.lineWidth = NSExpression(forConstantValue: navigating ? 22 : 15)
             }
-            for id in ["building", "building-3d"] { style.layer(withIdentifier: id)?.isVisible = !s.satellite && !driving }
+            for id in ["building", "building-3d"] { style.layer(withIdentifier: id)?.isVisible = !s.satellite && !driving && model.activeIndoor == nil }
+            renderIndoor(style)
             renderResults(style)
             renderRoutes(style)
             if let source = style.source(withIdentifier: "kite-transit-vehicle") as? MLNShapeSource {
@@ -622,6 +628,85 @@ struct VelaMapView: UIViewRepresentable {
             updateHeat(map)
             renderMine(style)
             if s.transitLines { loadRail(map) }
+        }
+
+        private func renderIndoor(_ style: MLNStyle) {
+            let id = "kite-indoor-floor"
+            let plan = model.activeIndoor
+            let key = plan.map { _ in "\(model.selected?.id ?? ""):\(model.indoorFloor):\(model.indoorFeature?.id ?? "")" } ?? ""
+            guard key != lastIndoorKey else { return }
+            lastIndoorKey = key
+            let source: MLNShapeSource
+            if let old = style.source(withIdentifier: id) as? MLNShapeSource { source = old }
+            else {
+                source = MLNShapeSource(identifier: id, shape: nil, options: nil)
+                style.addSource(source)
+                let fill = MLNFillStyleLayer(identifier: "\(id)-fill", source: source)
+                fill.predicate = NSPredicate(format: "role == 'area'")
+                fill.fillColor = NSExpression(mglJSONObject: ["to-color", ["get", "fill"]])
+                fill.fillOutlineColor = NSExpression(forConstantValue: UIColor(hex: 0x64748B))
+                style.addLayer(fill)
+                let dots = MLNCircleStyleLayer(identifier: "\(id)-dots", source: source)
+                dots.predicate = NSPredicate(format: "role == 'pin'")
+                dots.circleColor = NSExpression(forConstantValue: UIColor(hex: 0x0F766E))
+                dots.circleRadius = NSExpression(forConstantValue: 4)
+                style.addLayer(dots)
+                let labels = MLNSymbolStyleLayer(identifier: "\(id)-names", source: source)
+                labels.predicate = NSPredicate(format: "role == 'pin'")
+                labels.text = NSExpression(forKeyPath: "name")
+                labels.textFontSize = NSExpression(forConstantValue: 12)
+                labels.textColor = NSExpression(forConstantValue: UIColor(hex: 0x123243))
+                labels.textHaloColor = NSExpression(forConstantValue: UIColor.white)
+                labels.textHaloWidth = NSExpression(forConstantValue: 1.4)
+                labels.textOffset = NSExpression(forConstantValue: NSValue(cgVector: CGVector(dx: 0, dy: -1)))
+                style.addLayer(labels)
+            }
+            guard let plan else { source.shape = nil; return }
+            func polygon(_ points: [LatLng], color: String) -> MLNPolygonFeature {
+                var coordinates = points.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lng) }
+                let shape = MLNPolygonFeature(coordinates: &coordinates, count: UInt(coordinates.count))
+                shape.attributes = ["role": "area", "fill": color]
+                return shape
+            }
+            var shapes: [MLNShape] = [polygon(plan.building, color: "#E2E8F0")]
+            for feature in plan.features.filter({ $0.floors.contains(model.indoorFloor) }) {
+                if feature.isPolygon {
+                    let color = feature == model.indoorFeature ? "#8DE0CB" :
+                        feature.kind == "shop" ? "#CFE7F6" : "#F5F7FA"
+                    shapes.append(polygon(feature.points, color: color))
+                }
+                if let name = feature.name {
+                    let pin = MLNPointFeature()
+                    pin.coordinate = CLLocationCoordinate2D(latitude: feature.center.lat, longitude: feature.center.lng)
+                    pin.attributes = ["role": "pin", "name": name]
+                    shapes.append(pin)
+                }
+            }
+            source.shape = MLNShapeCollectionFeature(shapes: shapes)
+        }
+
+        private func renderMapboxBasemap(_ style: MLNStyle, driving: Bool) -> Bool {
+            let settings = model.settings
+            let token = settings.mapboxBasemap && !settings.offlineBasemap && Connectivity.shared.online
+                ? settings.activeMapboxToken : nil
+            let mapStyle = settings.satellite ? "satellite-streets-v12" : driving
+                ? (dark ? "navigation-night-v1" : "navigation-day-v1") : (dark ? "dark-v11" : "streets-v12")
+            let signature = token.map { "\(mapStyle):\($0)" }
+            if mapboxSignature == signature { return signature != nil }
+            mapboxSignature = signature
+            let id = "kite-mapbox-basemap"
+            if let layer = style.layer(withIdentifier: id) { style.removeLayer(layer) }
+            if let source = style.source(withIdentifier: id) { style.removeSource(source) }
+            guard let token else { return false }
+            let template = "https://api.mapbox.com/styles/v1/mapbox/\(mapStyle)/tiles/512/{z}/{x}/{y}?access_token=\(token)"
+            let source = MLNRasterTileSource(identifier: id, tileURLTemplates: [template],
+                                             options: [.tileSize: 512, .maximumZoomLevel: 22,
+                                                       .attributionHTMLString: "<a href='https://www.mapbox.com/about/maps/'>© Mapbox</a> <a href='https://www.openstreetmap.org/copyright'>© OpenStreetMap</a>"])
+            style.addSource(source)
+            let layer = MLNRasterStyleLayer(identifier: id, source: source)
+            if let traffic = style.layer(withIdentifier: "vela-traffic") { style.insertLayer(layer, below: traffic) }
+            else { style.addLayer(layer) }
+            return true
         }
 
         /**
@@ -1181,6 +1266,11 @@ struct VelaMapView: UIViewRepresentable {
             let pt = g.location(in: map)
             let box = CGRect(x: pt.x - 22, y: pt.y - 22, width: 44, height: 44)
             Task { @MainActor in
+                if self.model.activeIndoor != nil {
+                    let point = map.convert(pt, toCoordinateFrom: map)
+                    self.model.pickIndoor(LatLng(point.latitude, point.longitude))
+                    return
+                }
                 if self.model.directions != nil {
                     let hits = map.visibleFeatures(in: box, styleLayerIdentifiers: ["vela-route-bubble-0", "vela-route-alt", "vela-route-alt-edge"])
                     if let idx = hits.first?.attribute(forKey: "idx") as? Int {

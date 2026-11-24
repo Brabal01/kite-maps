@@ -906,7 +906,9 @@ final class Navigator: ObservableObject {
         let course = heading(loc), id = route.id, planned = p.remainingSeconds / trafficScale
         let to = destination.location, hw = avoidHighways, tolls = avoidTolls, via = stops.map(\.location)
         Task {
-            let r = await Directions.routes(from: from, to: to, mode: .drive, avoidHighways: hw, avoidTolls: tolls, via: via, heading: course)
+            let app = AppSettings.shared
+            let r = await Directions.routes(from: from, to: to, mode: .drive, avoidHighways: hw, avoidTolls: tolls,
+                                            via: via, heading: course, engine: app.driveEngine, mapboxToken: app.activeMapboxToken)
             self.trafficLoading = false
             // Arrived (or ended) while asking: no new route, and no "Found a faster route" in the car park.
             guard !self.stopped, !self.arrived,
@@ -1057,7 +1059,8 @@ final class Navigator: ObservableObject {
         Task {
             var r = await Directions.routes(from: from, to: to, mode: mode, avoidHighways: hw, avoidTolls: tolls,
                                             useGoogle: !AppSettings.shared.noGoogle, via: self.stops.map(\.location),
-                                            heading: course)
+                                            heading: course, engine: AppSettings.shared.engine(for: mode),
+                                            mapboxToken: AppSettings.shared.activeMapboxToken)
             // The new way goes back along a road tapped away on the plan: the way round it instead,
             // when there is one (otherwise the usual route, rather than none at all).
             if !avoid.isEmpty, let first = r.routes.first, Directions.touches(first.polyline, avoid), req == self.rerouteRequest,

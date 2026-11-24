@@ -21,7 +21,9 @@ struct ContentView: View {
         ZStack {
             VelaMapView(model: model, settings: settings, dark: dark)
                 .ignoresSafeArea()
-            if let journey = model.transitJourney {
+            if let indoor = model.activeIndoor {
+                IndoorOverlay(model: model, plan: indoor)
+            } else if let journey = model.transitJourney {
                 TransitJourneyView(model: model, journey: journey)
             } else if let nav = model.nav {
                 NavigationOverlay(model: model, nav: nav)

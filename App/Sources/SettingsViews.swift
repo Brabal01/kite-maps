@@ -184,6 +184,15 @@ struct SettingsView: View {
                 }
             }
             Section("Routes") {
+                Picker("Driving engine", selection: $settings.driveEngine) {
+                    ForEach(RouteEngine.allCases) { Text($0.title).tag($0) }
+                }
+                Picker("Walking engine", selection: $settings.walkEngine) {
+                    ForEach(RouteEngine.allCases) { Text($0.title).tag($0) }
+                }
+                Picker("Cycling engine", selection: $settings.bikeEngine) {
+                    ForEach(RouteEngine.allCases) { Text($0.title).tag($0) }
+                }
                 Toggle(isOn: $settings.avoidTolls) { SettingLabel("Avoid tolls", icon: "sterlingsign.circle.fill", color: 0xF59E0B) }
                 Toggle(isOn: $settings.avoidHighways) {
                     SettingLabel(Fmt.yards ? "Avoid motorways" : "Avoid highways", icon: "road.lanes", color: 0x1D4ED8)
@@ -202,6 +211,18 @@ struct SettingsView: View {
 
     private var camerasPage: some View {
         Form {
+            Section("Mapbox") {
+                SecureField("Public Mapbox token", text: $settings.mapboxPublicToken)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                Toggle("Mapbox basemap", isOn: $settings.mapboxBasemap)
+                    .disabled(settings.activeMapboxToken == nil)
+                if !settings.mapboxPublicToken.isEmpty && settings.activeMapboxToken == nil {
+                    Text("Enter a public token beginning with pk.").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Section("Downloads") {
+                NavigationLink { OfflineMapsView() } label: { Label("Offline maps", systemImage: "arrow.down.circle") }
+            }
             Section("Warnings") {
                 Toggle(isOn: $settings.cameraWarnings) { SettingLabel("Say when a speed camera is ahead", icon: "speaker.wave.3.fill", color: 0xDC2626) }
                 Toggle(isOn: $settings.speedingAlert) { SettingLabel("Say when I'm over the speed limit", icon: "gauge.with.dots.needle.67percent", color: 0xEA580C) }
