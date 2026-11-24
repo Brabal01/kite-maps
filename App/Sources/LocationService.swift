@@ -11,6 +11,7 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     @Published private(set) var denied = false
     @Published private(set) var reducedAccuracy = false
     var onUpdate: (@MainActor (CLLocation) -> Void)?
+    var onDenied: (@MainActor () -> Void)?
     private let manager = CLLocationManager()
 
     override init() {
@@ -41,6 +42,7 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
         guard let loc = locations.last, loc.horizontalAccuracy >= 0,
               abs(loc.timestamp.timeIntervalSinceNow) < 120 else { return }
         Task { @MainActor in
+            guard !self.denied, self.last.map({ loc.timestamp >= $0.timestamp }) ?? true else { return }
             self.last = loc
             self.onUpdate?(loc)
         }
@@ -54,6 +56,10 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
             self.denied = s == .denied || s == .restricted
             self.reducedAccuracy = reduced
             if self.authorized { self.manager.startUpdatingLocation() }
+            if self.denied {
+                self.last = nil
+                self.onDenied?()
+            }
         }
     }
 

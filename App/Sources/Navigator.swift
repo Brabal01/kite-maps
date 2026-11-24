@@ -216,7 +216,9 @@ final class Navigator: ObservableObject {
 
     /** The posted limit where the user is now, in km/h. */
     var speedLimitKmh: Double? {
-        demoLimitKmh ?? route.speedLimit(at: progress?.alongMeters ?? 0)
+        if let demoLimitKmh { return demoLimitKmh }
+        guard let progress, !progress.offRoute, !gpsLost || estimating else { return nil }
+        return route.speedLimit(at: progress.alongMeters)
     }
 
     /**
@@ -225,7 +227,7 @@ final class Navigator: ObservableObject {
      */
     var limitDropAhead: LimitDrop? {
         if let demoLimitDrop { return demoLimitDrop }
-        guard route.mode == .drive, !arrived, let p = progress, !p.offRoute,
+        guard route.mode == .drive, !arrived, let p = progress, !p.offRoute, !gpsLost || estimating,
               let next = route.nextLimitDrop(at: p.alongMeters, within: NavZoom.limitHeadsUp(speed: speedMps)),
               let kmh = next.kmh else { return nil }
         let meters = next.startMeters - p.alongMeters

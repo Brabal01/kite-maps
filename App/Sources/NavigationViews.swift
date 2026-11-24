@@ -192,6 +192,17 @@ struct NavigationOverlay: View {
                         .shadow(color: .black.opacity(0.3), radius: 6, y: 2)
                         .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .bottomTrailing)))
                     }
+                    MapFab(icon: "location.fill", tint: Vela.accentText(scheme), size: 44) {
+                        model.tapNavigationLocation()
+                    }
+                    .accessibilityLabel("Follow location")
+                    .accessibilityHint("Tap again from the same position to zoom in")
+                    HStack(spacing: 6) {
+                        MapFab(icon: "minus", size: 36) { model.zoomNavigation(by: -1) }
+                            .accessibilityLabel("Zoom out")
+                        MapFab(icon: "plus", size: 36) { model.zoomNavigation(by: 1) }
+                            .accessibilityLabel("Zoom in")
+                    }
                     // 3D, 2D or north up: one tap each, and the drive carries on.
                     MapLookButton(look: settings.driveLook, size: 52) {
                         model.cycleDriveLook()
@@ -216,7 +227,7 @@ struct NavigationOverlay: View {
             .environment(\.layoutDirection, settings.mirrorNavigationButtons ? .rightToLeft : .leftToRight)
             .padding(.horizontal, 16)
             if !nav.following {
-                Button { model.recenterNav() } label: {
+                Button { model.tapNavigationLocation() } label: {
                     Label("Re-centre", systemImage: "location.north.line.fill")
                         .font(.system(size: 18, weight: .bold))
                         .padding(.horizontal, 22).frame(height: 52)

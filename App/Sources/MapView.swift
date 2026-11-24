@@ -178,6 +178,7 @@ struct VelaMapView: UIViewRepresentable {
             lastProfileProbe = nil
             lastProfileSection = []
             render(mapView)
+            model.mapStyleReady()
         }
 
         func repaint(_ map: MLNMapView) {
@@ -318,11 +319,11 @@ struct VelaMapView: UIViewRepresentable {
             vehicle.circleStrokeColor = NSExpression(forConstantValue: UIColor.white)
             vehicle.circleStrokeWidth = NSExpression(forConstantValue: 2)
             insert(vehicle)
-            for (level, color) in [(1, 0xF59E0B), (2, 0xEF4444), (3, 0xB91C1C)] {
-                let l = line("vela-route-traffic-\(level)", spanSrc, UIColor(hex: UInt32(color)), width: 10)
-                l.predicate = NSPredicate(format: "level == %d", level)
-                insert(l)
-            }
+            let traffic = line("vela-route-traffic", spanSrc, UIColor(hex: 0x2563EB), width: 10)
+            traffic.lineColor = NSExpression(mglJSONObject: ["match", ["get", "level"],
+                                                             1, "#F59E0B", 2, "#EF4444", 3, "#B91C1C", "#2563EB"])
+            traffic.lineCap = NSExpression(forConstantValue: "butt")
+            style.insertLayer(traffic, above: fill)
 
             // Metro, tram and rail lines in their own colors, from zoom 10 in (Transitous).
             let railSrc = MLNShapeSource(identifier: "vela-rail", shape: nil, options: nil)
@@ -1269,7 +1270,7 @@ struct VelaMapView: UIViewRepresentable {
                 alts = d.current.filter { $0.id != main?.id }
             }
             let trip = model.transitJourney?.trip ?? (model.nav == nil ? model.directions?.pickedTrip : nil)
-            let key = (model.mapNavigator == nil ? "" : "nav") + (trip?.id.uuidString ?? "") + (main?.id.uuidString ?? "") + alts.map(\.id.uuidString).joined() + "\(Int(from / 5))"
+            let key = (model.mapNavigator == nil ? "" : "nav") + (trip?.id.uuidString ?? "") + (main?.id.uuidString ?? "") + alts.map(\.id.uuidString).joined() + "\(Int(from / 5)):\(main?.trafficSpans.hashValue ?? 0)"
             guard key != lastRouteKey else { return }
             lastRouteKey = key
 
@@ -1298,11 +1299,11 @@ struct VelaMapView: UIViewRepresentable {
             routeSrc?.shape = ahead.count >= 2 ? polyline(ahead) : nil
             let driven = model.nav != nil && from > 1 ? Geo.slice(r.polyline, from: 0, to: from, cumulative: cum) : []
             (style.source(withIdentifier: "vela-route-done") as? MLNShapeSource)?.shape = driven.count >= 2 ? polyline(driven) : nil
-            let spans: [MLNPolylineFeature] = r.trafficSpans.compactMap { s in
-                let a = max(s.startMeters, from), b = min(s.startMeters + s.lengthMeters, total)
-                guard b > a else { return nil }
-                let piece = Geo.slice(r.polyline, from: a, to: b, cumulative: cum)
-                return piece.count >= 2 ? polyline(piece, ["level": min(s.level, 3)]) : nil
+            let colorRoute = r.source == "mapbox" && r.mode == .drive || !r.trafficSpans.isEmpty
+            let ranges = colorRoute ? RouteTrafficPaint.ranges(from: from, to: total, traffic: r.trafficSpans) : []
+            let spans: [MLNPolylineFeature] = ranges.compactMap { segment in
+                let piece = Geo.slice(r.polyline, from: segment.from, to: segment.to, cumulative: cum)
+                return piece.count >= 2 ? polyline(piece, ["level": segment.level]) : nil
             }
             spanSrc?.shape = MLNShapeCollectionFeature(shapes: spans)
 
@@ -1523,9 +1524,10 @@ struct VelaMapView: UIViewRepresentable {
             let gesture: MLNCameraChangeReason = [.gesturePan, .gesturePinch, .gestureRotate, .gestureZoomIn,
                                                   .gestureZoomOut, .gestureOneFingerZoom, .gestureTilt]
             guard !reason.intersection(gesture).isEmpty else { return }
-            Task { @MainActor in
-                if let n = self.model.mapNavigator, n.following { n.following = false }
-                self.model.transitJourney?.following = false
+            MainActor.assumeIsolated {
+                model.mapGestureBegan()
+                if let n = model.mapNavigator, n.following { n.following = false }
+                model.transitJourney?.following = false
                 // Off a route in 3D or 2D, dragging or turning the map stops following; zooming doesn't.
                 let moved: MLNCameraChangeReason = [.gesturePan, .gestureRotate]
                 if self.model.nav == nil, self.model.browseFollowing, !reason.intersection(moved).isEmpty {

@@ -65,7 +65,7 @@ struct PlaceHeader: View {
                 .buttonStyle(.plain)
                 Button {
                     model.openDirections(to: place)
-                    model.autoStart = true
+                    model.startNavigation()
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "location.north.fill").font(.system(size: 18, weight: .bold))

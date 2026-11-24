@@ -363,7 +363,7 @@ struct TripHeader: View {
         Button { model.startNavigation() } label: {
             HStack(spacing: 10) {
                 Image(systemName: "location.north.fill").font(.system(size: 24, weight: .bold))
-                Text("Go").font(.system(size: 26, weight: .heavy))
+                Text(model.autoStart ? "Starting…" : "Go").font(.system(size: 26, weight: .heavy))
             }
             .foregroundColor(Vela.onAccent(scheme))
             .frame(maxWidth: .infinity, minHeight: 68)
@@ -491,7 +491,7 @@ struct TripHeader: View {
                 }
                 ModeTabs(model: model, state: d)
                 closingLine(d)
-                if !d.transit, d.route != nil { goButton }
+                if !d.transit { goButton }
             }
             .padding(.horizontal, 18)
             .padding(.bottom, 10)

@@ -11,25 +11,16 @@ import VelaCore
  */
 @MainActor
 final class NavGlide: NSObject {
-    weak var map: MLNMapView?
-    /**
-     * Where the car sits on screen while following: low down, about 75% of the way, so most of the
-     * screen shows the road ahead rather than what's already behind. That's as low as it goes with
-     * the road name under it still clear of the trip bar.
-     */
-    nonisolated static let topFraction: CGFloat = 0.7
-    nonisolated static let bottomInset: CGFloat = 170
-    /** The car's height on a screen [height] tall, for things drawn next to it. */
+    weak var map: MLNMapView? {
+        didSet {
+            if map != nil, nav != nil { start() }
+        }
+    }
     nonisolated static func carY(_ height: CGFloat, north: Bool = false) -> CGFloat {
-        ((north ? 0 : topInset(height)) + height - bottomInset) / 2
+        let padding = NavigationCamera.padding(height: Double(height))
+        return ((north ? 0 : CGFloat(padding.top)) + height - CGFloat(padding.bottom)) / 2
     }
-    /**
-     * How much of the top the car stays below. On a short (landscape) screen 70% would push the car
-     * onto the trip bar, so there it stays 100 pt above it instead.
-     */
-    nonisolated static func topInset(_ height: CGFloat) -> CGFloat {
-        height < 500 ? max(0, min(height * topFraction, height - bottomInset - 100)) : height * topFraction
-    }
+
     /** The side panel's width on a big screen, so the car drives in the middle of the map beside it. */
     var leftInset: CGFloat = 0
     private weak var nav: Navigator?
@@ -65,10 +56,10 @@ final class NavGlide: NSObject {
     /** Called on every GPS fix while navigating. */
     func fix(_ n: Navigator, _ loc: CLLocation, across: Double, pitch: Double = 50, jump: Bool) {
         let starting = nav !== n
-        let accurate = abs(loc.timestamp.timeIntervalSinceNow) <= 5 && (0...45).contains(loc.horizontalAccuracy)
-        let recovered = !starting && waitingForAccurateFix && accurate && shownCoord.map {
-            LatLng($0.latitude, $0.longitude).distance(to: LatLng(loc.coordinate.latitude, loc.coordinate.longitude)) >
-                max(45, loc.horizontalAccuracy * 2)
+        let accurate = NavigationCamera.reliableFix(age: -loc.timestamp.timeIntervalSinceNow, accuracy: loc.horizontalAccuracy)
+        let recovered = !starting && shownCoord.map {
+            NavigationCamera.reanchor(firstReliableFix: waitingForAccurateFix && accurate,
+                                      displacement: distance($0, loc.coordinate), accuracy: loc.horizontalAccuracy)
         } == true
         if starting { waitingForAccurateFix = !accurate }
         else if accurate { waitingForAccurateFix = false }
@@ -81,12 +72,14 @@ final class NavGlide: NSObject {
             cum = Geo.cumulative(poly)
             shownAlong = nil
         }
-        onRoute = p.map { !$0.offRoute && $0.offsetMeters < 40 } ?? false
+        onRoute = p.map {
+            NavigationCamera.snappedToRoute(mode: n.route.mode, offset: $0.offsetMeters, offRoute: $0.offRoute)
+        } ?? false
         fixAt = CACurrentMediaTime()
         fixAlong = p?.alongMeters ?? 0
         fixCoord = loc.coordinate
         fixSpeed = loc.speed > 0.5 ? loc.speed : 0
-        fixCourse = loc.course >= 0 && loc.speed > 2 ? loc.course : -1
+        fixCourse = loc.course >= 0 && loc.speed >= 1.3 && (0...50).contains(loc.horizontalAccuracy) ? loc.course : -1
         fixBearing = fixCourse >= 0 ? fixCourse : (p?.routeBearing ?? shownBearing)
         targetAcross = across
         targetPitch = pitch
@@ -98,8 +91,15 @@ final class NavGlide: NSObject {
             shownPitch = pitch
             northBlend = look == .north ? 1 : 0
         }
-        start()
+        if map != nil { start() }
         if recenter { step(dt: 0) }
+    }
+
+    func restoreOnMap() {
+        guard nav != nil else { return }
+        lastPuckDraw = nil
+        step(dt: 0.0001)
+        start()
     }
 
     func stop() {
@@ -132,7 +132,8 @@ final class NavGlide: NSObject {
     }
 
     private func step(dt: Double) {
-        guard let n = nav, let map else { stop(); return }
+        guard let n = nav else { stop(); return }
+        guard let map, map.bounds.width > 0, map.bounds.height > 0 else { return }
         // Keep rolling forward for up to 2 s after a fix, so a late fix doesn't stall the arrow.
         let ahead = fixSpeed * min(2, max(0, CACurrentMediaTime() - fixAt))
         // How quickly the screen catches up with where the car should be: about a third of a second.
@@ -163,8 +164,7 @@ final class NavGlide: NSObject {
             }
         }
         shownCoord = coordNow
-        var turn = (bearingTarget - shownBearing).truncatingRemainder(dividingBy: 360)
-        if turn > 180 { turn -= 360 } else if turn < -180 { turn += 360 }
+        let turn = NavigationCamera.shortestTurn(from: shownBearing, to: bearingTarget)
         shownBearing = (shownBearing + turn * (dt == 0 ? 1 : 1 - exp(-dt / 0.4)) + 360).truncatingRemainder(dividingBy: 360)
         // Zooming in for a turn takes about a second; easing back out afterwards is gentler.
         let zoomTime = targetAcross < shownAcross ? 1.0 : 2.0
@@ -189,12 +189,12 @@ final class NavGlide: NSObject {
         if n.following {
             // North up: the map turns to face north and the car moves up to the middle, as the road
             // ahead can be any way round. Otherwise it faces the way you go with the car low down.
-            var toNorth = (-shownBearing).truncatingRemainder(dividingBy: 360)
-            if toNorth > 180 { toNorth -= 360 } else if toNorth < -180 { toNorth += 360 }
+            let toNorth = NavigationCamera.shortestTurn(from: shownBearing, to: 0)
             let heading = (shownBearing + toNorth * northBlend + 360).truncatingRemainder(dividingBy: 360)
             let cam = MLNMapCamera(lookingAtCenter: coordNow, acrossDistance: shownAcross, pitch: shownPitch, heading: heading)
-            let top = Self.topInset(map.bounds.height) * (1 - northBlend)
-            let pad = UIEdgeInsets(top: top, left: leftInset, bottom: Self.bottomInset, right: 0)
+            let padding = NavigationCamera.padding(height: Double(map.bounds.height))
+            let pad = UIEdgeInsets(top: CGFloat(padding.top) * (1 - northBlend), left: leftInset,
+                                   bottom: CGFloat(padding.bottom), right: 0)
             map.setCamera(cam, withDuration: 0, animationTimingFunction: nil, edgePadding: pad, completionHandler: nil)
         }
     }

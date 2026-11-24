@@ -6,6 +6,7 @@ import VelaCore
 
 struct ContentView: View {
     @StateObject private var model = AppModel()
+    @Environment(\.scenePhase) private var scenePhase
     @ObservedObject private var launch = LaunchAction.shared
     @ObservedObject private var settings = AppSettings.shared
     @Environment(\.colorScheme) private var systemScheme
@@ -22,8 +23,7 @@ struct ContentView: View {
         case .light: return false
         case .dark: return true
         case .time:
-            let hour = Calendar.current.component(.hour, from: mapTime)
-            return hour < 7 || hour >= 19
+            return Daylight.isDark(at: model.userLatLng ?? model.viewport.center, time: mapTime)
         }
     }
 
@@ -116,6 +116,9 @@ struct ContentView: View {
         }
         .preferredColorScheme(settings.colorScheme)
         .task { await DemoScript.run(model) }
+        .onChange(of: scenePhase) { phase in
+            if phase == .active { model.mapStyleReady() }
+        }
         .task(id: settings.mapLighting) {
             guard settings.mapLighting == .time else { return }
             while !Task.isCancelled {
