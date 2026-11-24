@@ -70,6 +70,16 @@ final class AppSettings: ObservableObject {
         case .bike: return bikeEngine
         }
     }
+    @Published var driveMarker = DriveMarker(rawValue: UserDefaults.standard.string(forKey: "driveMarker") ?? "") ?? .arrow {
+        didSet { d.set(driveMarker.rawValue, forKey: "driveMarker") }
+    }
+    @Published var pressToAddStop = UserDefaults.standard.bool(forKey: "pressToAddStop") {
+        didSet { d.set(pressToAddStop, forKey: "pressToAddStop") }
+    }
+    @Published var mirrorNavigationButtons = UserDefaults.standard.bool(forKey: "mirrorNavigationButtons") {
+        didSet { d.set(mirrorNavigationButtons, forKey: "mirrorNavigationButtons") }
+    }
+
     @Published var aheadPosition = AheadPosition(rawValue: UserDefaults.standard.string(forKey: "aheadPosition") ?? "") ?? .bottom {
         didSet { d.set(aheadPosition.rawValue, forKey: "aheadPosition") }
     }

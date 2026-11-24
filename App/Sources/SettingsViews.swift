@@ -182,6 +182,13 @@ struct SettingsView: View {
                     ForEach(TravelMode.allCases) { Text($0.label).tag($0) }
                 } label: { SettingLabel("Default travel mode", icon: "car.fill", color: 0x2563EB) }
             }
+            Section("Navigation map") {
+                Picker("Vehicle marker", selection: $settings.driveMarker) {
+                    ForEach(DriveMarker.allCases) { Text($0.title).tag($0) }
+                }
+                Toggle("Swap controls during navigation", isOn: $settings.mirrorNavigationButtons)
+                Toggle("Hold the map to add a stop", isOn: $settings.pressToAddStop)
+            }
             Section("Road ahead") {
                 NavigationLink {
                     Form {

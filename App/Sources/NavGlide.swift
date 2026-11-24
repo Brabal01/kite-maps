@@ -60,6 +60,7 @@ final class NavGlide: NSObject {
     private var shownBearing: Double = 0
     private var shownAcross: Double = 600
     private var shownPitch: Double = 50
+    private var lastPuckDraw: (coordinate: CLLocationCoordinate2D, bearing: Double)?
 
     /** Called on every GPS fix while navigating. */
     func fix(_ n: Navigator, _ loc: CLLocation, across: Double, pitch: Double = 50, jump: Bool) {
@@ -108,13 +109,15 @@ final class NavGlide: NSObject {
         shownAlong = nil
         shownCoord = nil
         lastFrame = 0
+        lastPuckDraw = nil
         (map?.style?.source(withIdentifier: "vela-puck") as? MLNShapeSource)?.shape = nil
     }
 
     private func start() {
         guard link == nil else { return }
         let l = CADisplayLink(target: self, selector: #selector(frame(_:)))
-        l.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
+        let preferred: Float = ProcessInfo.processInfo.isLowPowerModeEnabled ? 30 : 60
+        l.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: preferred, preferred: preferred)
         l.add(to: .main, forMode: .common)
         link = l
         lastFrame = 0
@@ -168,11 +171,17 @@ final class NavGlide: NSObject {
         shownAcross += (targetAcross - shownAcross) * (dt == 0 ? 1 : 1 - exp(-dt / zoomTime))
         shownPitch += (targetPitch - shownPitch) * (dt == 0 ? 1 : 1 - exp(-dt / zoomTime))
 
-        if let src = map.style?.source(withIdentifier: "vela-puck") as? MLNShapeSource {
+        let puckChanged = lastPuckDraw.map { draw in
+            let turn = abs((draw.bearing - shownBearing + 540).truncatingRemainder(dividingBy: 360) - 180)
+            return abs(draw.coordinate.latitude - coordNow.latitude) > 0.000002 ||
+                abs(draw.coordinate.longitude - coordNow.longitude) > 0.000003 || turn > 0.3
+        } ?? true
+        if let src = map.style?.source(withIdentifier: "vela-puck") as? MLNShapeSource, puckChanged || src.shape == nil {
             let f = MLNPointFeature()
             f.coordinate = coordNow
             f.attributes = ["bearing": shownBearing]
             src.shape = f
+            lastPuckDraw = (coordNow, shownBearing)
         }
         let northTarget: Double = look == .north ? 1 : 0
         northBlend += (northTarget - northBlend) * (dt == 0 ? 1 : 1 - exp(-dt / 0.3))

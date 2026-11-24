@@ -135,6 +135,7 @@ final class AppModel: ObservableObject {
     @Published var activeIndoor: IndoorPlan?
     @Published var indoorFloor = "0"
     @Published var indoorFeature: IndoorPlan.Feature?
+    @Published var routePointRole: RoutePointRole?
     @Published var profileRoute: Route?
     @Published var profileProbe: LatLng?
     @Published var profileSection: [LatLng] = []
@@ -431,11 +432,12 @@ final class AppModel: ObservableObject {
         detent = .half
         guard focus, let map else { return }
         browseFollowing = false
-        browseLook = .north
         let target = CLLocationCoordinate2D(latitude: p.location.lat, longitude: p.location.lng)
         let pad = sideInset > 0 ? UIEdgeInsets(top: 0, left: sideInset, bottom: 0, right: 0)
                                 : UIEdgeInsets(top: 120, left: 0, bottom: map.bounds.height * 0.45, right: 0)
-        let cam = MLNMapCamera(lookingAtCenter: target, acrossDistance: 900, pitch: 0, heading: 0)
+        let cam = MLNMapCamera(lookingAtCenter: target, acrossDistance: 900,
+                              pitch: browseLook == .tilted ? max(map.camera.pitch, 42) : 0,
+                              heading: browseLook == .north ? 0 : map.direction)
         if map.zoomLevel > 16 { cam.altitude = map.camera.altitude }
         map.setCamera(cam, withDuration: 0.6, animationTimingFunction: CAMediaTimingFunction(name: .easeInEaseOut),
                       edgePadding: pad, completionHandler: nil)
@@ -594,6 +596,24 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func acceptRoutePoint(_ role: RoutePointRole, at point: LatLng) {
+        let name: String
+        switch role {
+        case .origin: name = "Start pin"
+        case .destination: name = "Destination pin"
+        case .stop: name = "Map stop"
+        }
+        let place = Place(id: "pin:\(point.lat),\(point.lng)", name: name, location: point, source: "osm")
+        switch role {
+        case .origin: setOrigin(place)
+        case .destination: setDestination(place)
+        case .stop:
+            if let nav { nav.addStop(place) }
+            else { addStop(place) }
+        }
+        routePointRole = nil
+    }
+
     // MARK: Directions
 
     func openDirections(to place: Place) {
@@ -606,6 +626,7 @@ final class AppModel: ObservableObject {
     }
 
     func closeDirections() {
+        routePointRole = nil
         autoStart = false
         directions = nil
         showSteps = false
@@ -1077,6 +1098,7 @@ final class AppModel: ObservableObject {
     }
 
     func endNavigation() {
+        routePointRole = nil
         LiveTurn.shared.end()
         nav?.stop()
         glide.stop()
@@ -1142,7 +1164,7 @@ final class AppModel: ObservableObject {
     func recenterNav() {
         guard let n = nav else { return }
         n.following = true
-        if let loc = location.last { followCamera(n, loc, animated: false) }
+        if let loc = location.last ?? map?.userLocation?.location { followCamera(n, loc, animated: false) }
     }
 
     /** Show the whole remaining trip; the camera stops following until re-centered. */
@@ -1321,6 +1343,16 @@ final class AppModel: ObservableObject {
     func centerOnUser() {
         guard let map, let loc = location.last ?? map.userLocation?.location else {
             if location.denied { LocationService.openSettings() } else { location.start() }
+            return
+        }
+        let there = LatLng(loc.coordinate.latitude, loc.coordinate.longitude)
+        let here = LatLng(map.centerCoordinate.latitude, map.centerCoordinate.longitude)
+        let alreadyCentered = here.distance(to: there) < 24 && selected == nil && directions == nil
+        if alreadyCentered {
+            let camera = MLNMapCamera(lookingAtCenter: loc.coordinate, acrossDistance: 125,
+                                      pitch: browseLook == .tilted ? max(42, map.camera.pitch) : 0, heading: map.direction)
+            map.setCamera(camera, withDuration: 0.26, animationTimingFunction: CAMediaTimingFunction(name: .easeOut),
+                          edgePadding: UIEdgeInsets(top: 0, left: sideInset, bottom: 0, right: 0), completionHandler: nil)
             return
         }
         // In 3D or 2D, Centre on me picks up following again.

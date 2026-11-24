@@ -1367,7 +1367,20 @@ struct VelaMapView: UIViewRepresentable {
 
         /** While navigating, NavGlide draws the arrow every frame; this only clears it afterwards. */
         private func renderPuck(_ style: MLNStyle) {
-            if model.mapNavigator != nil { lastPuckKey = "nav"; return }
+            if let nav = model.mapNavigator {
+                let mode = model.settings.driveLook
+                let choice = nav.route.mode == .drive ? model.settings.driveMarker : .arrow
+                let asset = choice.imageName(tilted: mode == .tilted)
+                let key = asset ?? "puck"
+                if lastPuckKey != key, let layer = style.layer(withIdentifier: "vela-puck") as? MLNSymbolStyleLayer {
+                    if let asset, let image = UIImage(named: asset) {
+                        style.setImage(image, forName: asset)
+                    }
+                    layer.iconImageName = NSExpression(forConstantValue: key)
+                    lastPuckKey = key
+                }
+                return
+            }
             guard lastPuckKey != "" else { return }
             (style.source(withIdentifier: "vela-puck") as? MLNShapeSource)?.shape = nil
             lastPuckKey = ""
@@ -1389,8 +1402,13 @@ struct VelaMapView: UIViewRepresentable {
         func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
 
         @objc func tapped(_ g: UITapGestureRecognizer) {
-            guard let map = g.view as? MLNMapView, model.nav == nil,
-                  Date().timeIntervalSince(pinDroppedAt) > 1 else { return }
+            guard let map = g.view as? MLNMapView, Date().timeIntervalSince(pinDroppedAt) > 1 else { return }
+            if let role = model.routePointRole {
+                let c = map.convert(g.location(in: map), toCoordinateFrom: map)
+                model.acceptRoutePoint(role, at: LatLng(c.latitude, c.longitude))
+                return
+            }
+            guard model.nav == nil else { return }
             let pt = g.location(in: map)
             let box = CGRect(x: pt.x - 22, y: pt.y - 22, width: 44, height: 44)
             Task { @MainActor in
@@ -1486,9 +1504,16 @@ struct VelaMapView: UIViewRepresentable {
             pinDroppedAt = Date()
             let c = map.convert(g.location(in: map), toCoordinateFrom: map)
             Task { @MainActor in
-                guard self.model.nav == nil, self.model.directions == nil else { return }
-                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                self.model.dropPin(at: LatLng(c.latitude, c.longitude))
+                let point = LatLng(c.latitude, c.longitude)
+                if let role = self.model.routePointRole {
+                    self.model.acceptRoutePoint(role, at: point)
+                } else if self.model.nav != nil, self.model.settings.pressToAddStop {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    self.model.acceptRoutePoint(.stop, at: point)
+                } else if self.model.nav == nil, self.model.directions == nil {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    self.model.dropPin(at: point)
+                }
             }
         }
 

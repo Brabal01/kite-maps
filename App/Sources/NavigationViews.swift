@@ -178,6 +178,7 @@ struct NavigationOverlay: View {
                     if showRiskChip, !((mainAlert != nil || nav.limitDropAhead != nil) && Self.shortScreen), let risk = nav.policeRisk { PoliceRiskChip(score: risk) }
                     SpeedBadge(mps: nav.speedMps, limitKmh: nav.speedLimitKmh, coming: nav.limitDropAhead)
                 }
+                .environment(\.layoutDirection, .leftToRight)
                 Spacer()
                 VStack(alignment: .trailing, spacing: 10) {
                     if let note = buttonNote {
@@ -210,7 +211,9 @@ struct NavigationOverlay: View {
                     try? await Task.sleep(nanoseconds: 2_500_000_000)
                     withAnimation(.easeIn(duration: 0.25)) { buttonNote = nil }
                 }
+                .environment(\.layoutDirection, .leftToRight)
             }
+            .environment(\.layoutDirection, settings.mirrorNavigationButtons ? .rightToLeft : .leftToRight)
             .padding(.horizontal, 16)
             if !nav.following {
                 Button { model.recenterNav() } label: {
@@ -241,6 +244,12 @@ struct NavigationOverlay: View {
                     .inSidePanel(panel)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             } else {
+                if let road = nav.currentRoad, !road.isEmpty, !nav.arrived, nav.following {
+                    Text(road).font(.footnote.weight(.semibold)).lineLimit(1)
+                        .padding(.horizontal, 12).padding(.vertical, 5)
+                        .background(Vela.sheet(scheme), in: Capsule())
+                        .inSidePanel(panel)
+                }
                 if let jam = trafficAhead {
                     TrafficLine(ahead: jam)
                         .onTapGesture { withAnimation { nav.dismissWaze() } }
@@ -293,6 +302,11 @@ struct NavigationOverlay: View {
                         tripAction("mountain.2", "Route profile") {
                             profileAfterSteps = true
                             showSteps = false
+                        }
+                        if let next = nav.stops.first {
+                            Button(role: .destructive) { nav.removeNextStop(); showSteps = false } label: {
+                                Label("Remove next stop · \(next.name)", systemImage: "minus.circle")
+                            }
                         }
                         StepsList(route: nav.route, from: nav.progress?.nextIndex ?? 0)
                     }

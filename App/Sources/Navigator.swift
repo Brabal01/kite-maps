@@ -414,6 +414,12 @@ final class Navigator: ObservableObject {
         if let fix = lastFix { reroute(from: fix, quiet: true, adding: p) }
     }
 
+    func removeNextStop() {
+        guard !stops.isEmpty, let fix = lastFix else { return }
+        stops.removeFirst()
+        reroute(from: fix, quiet: true)
+    }
+
     /** Says when a stop is reached (within 40 m of it along the route) and drops it. */
     private func checkStops(_ p: RouteTracker.Progress) {
         guard let next = stops.first else { return }

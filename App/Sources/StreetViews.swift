@@ -196,7 +196,7 @@ private struct PanoramaMiniMap: UIViewRepresentable {
         let coordinator = context.coordinator
         let changedLocation = coordinator.owner.pano.id != pano.id
         coordinator.owner = self
-        if changedLocation { map.setCenter(coordinate, animated: true) }
+        if changedLocation { map.setCenter(coordinate, zoomLevel: map.zoomLevel, animated: true) }
         if let style = map.style { coordinator.updatePin(style) }
     }
 

@@ -102,6 +102,18 @@ struct ContentView: View {
         .animation(.easeOut(duration: 0.25), value: model.wazeInfo?.id)
         .animation(.easeOut(duration: 0.2), value: model.tab)
         .kiteType()
+        .overlay(alignment: .top) {
+            if model.routePointRole != nil {
+                HStack(spacing: 12) {
+                    Label("Tap the map to choose", systemImage: "mappin")
+                    Button("Cancel") { model.routePointRole = nil }
+                }
+                .font(.subheadline.weight(.semibold))
+                .padding(11)
+                .background(Vela.sheet(settings.colorScheme ?? systemScheme), in: Capsule())
+                .padding(.top, 70)
+            }
+        }
         .preferredColorScheme(settings.colorScheme)
         .task { await DemoScript.run(model) }
         .task(id: settings.mapLighting) {

@@ -1083,6 +1083,10 @@ struct StopPicker: View {
                 } else if searching {
                     HStack { ProgressView(); Text("Searching…").foregroundColor(.secondary) }
                 }
+                Button {
+                    model.routePointRole = origin ? .origin : destination ? .destination : .stop
+                    dismiss()
+                } label: { Label("Choose on map", systemImage: "map") }
                 let mine = [settings.home.map { ($0, "house.fill") }, settings.work.map { ($0, "briefcase.fill") }].compactMap { $0 }
                     + settings.saved.prefix(12).map { ($0, "bookmark.fill") }
                 if !mine.isEmpty && found.isEmpty {
