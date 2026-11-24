@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 public struct StationEntrance: Identifiable, Hashable, Sendable {
     public let id: Int

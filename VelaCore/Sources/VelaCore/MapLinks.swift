@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /**
  * Map links pasted into the search bar: Google Maps (full and maps.app.goo.gl short links), Waze,

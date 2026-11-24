@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /**
  * "Merge onto M5" only where you really have to merge. Where a slip road joins and its lane

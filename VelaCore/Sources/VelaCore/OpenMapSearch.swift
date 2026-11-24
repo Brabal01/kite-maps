@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 public enum OpenMapSearch {
     public static func search(_ text: String, near at: LatLng, meters: Double) async -> [Place]? {

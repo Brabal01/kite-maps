@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// Official Prague Integrated Transport data for Transitous trips from the cz-PID feed.
 public enum PidRealtime {

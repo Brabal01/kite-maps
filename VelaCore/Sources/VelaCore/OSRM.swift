@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /**
  * The FOSSGIS OSRM servers (routing.openstreetmap.de), which Vela uses for turn-by-turn steps.
@@ -134,13 +137,14 @@ public enum OSRM {
         return a.distance(to: b) > 1 ? Geo.bearing(a, b) : nil
     }
 
-    static func parse(_ data: Data, mode: TravelMode) -> [Route] {
+    static func parse(_ data: Data, mode: TravelMode, source: String = "osm") -> [Route] {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let routes = root["routes"] as? [[String: Any]] else { return [] }
         return routes.compactMap { r in
             guard let geo = r["geometry"] as? String,
                   let distance = r["distance"] as? Double,
                   let duration = r["duration"] as? Double else { return nil }
+            let typical = source == "mapbox" && mode == .drive ? r["duration_typical"] as? Double : nil
             let line = Geo.decodePolyline(geo, precision: 1e6)
             guard line.count >= 2 else { return nil }
             let cum = Geo.cumulative(line)
@@ -218,8 +222,12 @@ public enum OSRM {
                 maneuvers[last].alongMeters = cum.last ?? along
             }
             let via = roads.max { $0.value < $1.value }?.key
-            var route = Route(mode: mode, polyline: line, distanceMeters: distance, typicalSeconds: duration,
-                              trafficSeconds: nil, summary: via, maneuvers: maneuvers, source: "osm")
+            var route = Route(mode: mode, polyline: line, distanceMeters: distance, typicalSeconds: typical ?? duration,
+                              trafficSeconds: source == "mapbox" && mode == .drive ? duration : nil,
+                              summary: via, maneuvers: maneuvers, source: source)
+            if source == "mapbox", mode == .drive {
+                route.trafficSpans = MapboxRoutes.trafficSpans(legs, cumulative: cum)
+            }
             route.speedLimits = speedLimits(legs, line: line, cumulative: cum)
             return route
         }

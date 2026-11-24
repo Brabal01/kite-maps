@@ -1,4 +1,7 @@
 import Foundation
+#if os(Linux)
+import CZlib
+#endif
 
 /**
  * Fixed speed cameras from Waze's own map. OpenStreetMap, where Kite's cameras came from until
@@ -77,8 +80,28 @@ public enum WazeCameras {
         guard packed > 6, at + 20 + packed <= d.count else { return nil }
         // Past zlib's two-byte header, without its four-byte check at the end.
         let body = Data(d[(at + 22)..<(at + 20 + packed - 4)])
+        #if os(Linux)
+        let unpacked = u32(d, at + 16)
+        guard (1...16_777_216).contains(unpacked) else { return nil }
+        var stream = z_stream()
+        guard inflateInit2_(&stream, -MAX_WBITS, ZLIB_VERSION, Int32(MemoryLayout<z_stream>.size)) == Z_OK else { return nil }
+        defer { inflateEnd(&stream) }
+        var output = [UInt8](repeating: 0, count: unpacked)
+        let status = body.withUnsafeBytes { input in
+            output.withUnsafeMutableBufferPointer { bytes in
+                stream.next_in = UnsafeMutablePointer(mutating: input.bindMemory(to: UInt8.self).baseAddress)
+                stream.avail_in = uInt(input.count)
+                stream.next_out = bytes.baseAddress
+                stream.avail_out = uInt(bytes.count)
+                return inflate(&stream, Z_FINISH)
+            }
+        }
+        guard status == Z_STREAM_END, stream.total_out == unpacked else { return nil }
+        return cameras(tables: output)
+        #else
         guard let out = try? (body as NSData).decompressed(using: .zlib) as Data else { return nil }
         return cameras(tables: [UInt8](out))
+        #endif
     }
 
     /**

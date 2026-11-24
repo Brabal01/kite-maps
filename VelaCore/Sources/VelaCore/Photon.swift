@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /**
  * Photon, the OpenStreetMap geocoder (photon.komoot.io). Vela's no-Google search: it knows

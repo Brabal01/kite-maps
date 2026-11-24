@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 public enum RouteEngine: String, CaseIterable, Identifiable, Sendable {
     case automatic, openStreetMap, mapbox, google
@@ -43,6 +46,40 @@ enum MapboxRoutes {
         let request = URLRequest(url: endpoint, timeoutInterval: 10)
         guard let (data, response) = try? await URLSession.shared.data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200 else { return [] }
-        return OSRM.parse(data, mode: mode)
+        return parse(data, mode: mode)
+    }
+
+    static func parse(_ data: Data, mode: TravelMode) -> [Route] {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              object["code"] as? String == "Ok" else { return [] }
+        return OSRM.parse(data, mode: mode, source: "mapbox")
+    }
+
+    static func trafficSpans(_ legs: [[String: Any]], cumulative: [Double]) -> [TrafficSpan] {
+        let congestion = legs.flatMap { leg -> [Any] in
+            let annotation = leg["annotation"] as? [String: Any]
+            return annotation?["congestion"] as? [Any] ?? []
+        }
+        guard congestion.count == cumulative.count - 1 else { return [] }
+        let levels = congestion.map { value in
+            switch value as? String {
+            case "moderate": return 1
+            case "heavy": return 2
+            case "severe": return 3
+            default: return 0
+            }
+        }
+        var spans: [TrafficSpan] = []
+        var start = 0
+        while start < levels.count {
+            var end = start + 1
+            while end < levels.count && levels[end] == levels[start] { end += 1 }
+            let distance = cumulative[end] - cumulative[start]
+            if levels[start] > 0, distance > 0 {
+                spans.append(TrafficSpan(level: levels[start], startMeters: cumulative[start], lengthMeters: distance))
+            }
+            start = end
+        }
+        return spans
     }
 }

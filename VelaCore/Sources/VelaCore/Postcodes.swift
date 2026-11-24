@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /**
  * British postcodes ("SW1A 1AA", "cf10 1ns") from postcodes.io: free, keyless, open data. OSM's

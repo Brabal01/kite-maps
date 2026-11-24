@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 public struct IndoorPlan: Sendable {
     public struct Feature: Identifiable, Hashable, Sendable {
