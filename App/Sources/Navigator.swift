@@ -68,6 +68,12 @@ final class Navigator: ObservableObject {
     @Published private(set) var averageCheck: AverageCheck?
     /** Traffic lights on the route, one per junction, drawn on the map like Waze. */
     @Published private(set) var routeSignals: [LatLng] = []
+    @Published private(set) var roadEvents: [RouteRoadEvent] = []
+    private var roadEventTask: Task<Void, Never>?
+    private var roadEventRoute: UUID?
+    private var roadEventWindow: Int?
+    var roadStripReports: [(alert: WazeAlert, along: Double)] { routeWaze }
+    var roadStripCameras: [(camera: RoadCamera, along: Double)] { routeCameras.filter { $0.camera.kind == .speed } }
 
     let destination: Place
     /** Stops still ahead, in trip order; each is dropped once reached. */
@@ -201,6 +207,7 @@ final class Navigator: ObservableObject {
 
     func stop() {
         stopped = true
+        roadEventTask?.cancel()
         gpsWatch?.invalidate()
         speech.stopSpeaking(at: .immediate)
         UIApplication.shared.isIdleTimerDisabled = false
@@ -299,6 +306,25 @@ final class Navigator: ObservableObject {
         onEstimate?(loc)
     }
 
+    private func loadRoadEvents(at traveled: Double) {
+        guard route.mode == .walk || route.mode == .drive else { return }
+        let stride = route.mode == .walk ? 600.0 : 2_500.0
+        let window = Int(max(0, traveled) / stride)
+        let id = route.id
+        guard id != roadEventRoute || window != roadEventWindow else { return }
+        if id != roadEventRoute { roadEvents = [] }
+        roadEventRoute = id
+        roadEventWindow = window
+        roadEventTask?.cancel()
+        let line = route.polyline
+        let from = max(0, Double(window) * stride - 70)
+        roadEventTask = Task { [weak self] in
+            let events = await RouteRoadEvent.load(on: line, from: from, length: stride * 1.7)
+            guard !Task.isCancelled, let self, self.route.id == id else { return }
+            self.roadEvents = events
+        }
+    }
+
     /** [estimated]: a position worked out along the route while GPS is gone, not a real fix. */
     func handle(_ loc: CLLocation, estimated: Bool = false) {
         guard !arrived else { return }
@@ -317,6 +343,7 @@ final class Navigator: ObservableObject {
         // The arrival time follows the traffic as it changes on the way, not only as it was at the start.
         p.remainingSeconds *= trafficScale
         progress = p
+        if !estimated && !p.offRoute { loadRoadEvents(at: p.alongMeters) }
         // Parked in a car park short of the pin, or on the far side of the building: that's
         // arriving too, or the trip (and full-power GPS) would never end.
         // The pin itself counts too, not only the route's end: a place in a park, out on a pier or

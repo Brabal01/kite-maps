@@ -12,6 +12,7 @@ struct PanoramaViewer: UIViewRepresentable {
     let pano: StreetView.Panorama
     /** Which way to face at the start (toward the place). */
     let heading: Double
+    var onHeading: ((Double) -> Void)?
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -41,6 +42,8 @@ struct PanoramaViewer: UIViewRepresentable {
         view.pointOfView = cam
         c.camera = cam
         c.material = m
+        c.panoramaHeading = pano.heading
+        c.onHeading = onHeading
         c.yaw = Coordinator.yaw(facing: heading, pano: pano)
         c.apply()
         view.addGestureRecognizer(UIPanGestureRecognizer(target: c, action: #selector(Coordinator.panned(_:))))
@@ -49,7 +52,9 @@ struct PanoramaViewer: UIViewRepresentable {
         return view
     }
 
-    func updateUIView(_ view: SCNView, context: Context) {}
+    func updateUIView(_ view: SCNView, context: Context) {
+        context.coordinator.onHeading = onHeading
+    }
 
     /** A made-up panorama for the screenshot run: each column says how far right of the
      *  panorama's own heading it is, so the run shows which way the viewer faces. */
@@ -85,6 +90,9 @@ struct PanoramaViewer: UIViewRepresentable {
         var pitch: Float = 0
         var fov: CGFloat = 80
         var task: Task<Void, Never>?
+        var panoramaHeading = 0.0
+        var onHeading: ((Double) -> Void)?
+        private var lastHeadingTick = Date.distantPast
 
         /** SceneKit turns left for a bigger angle; compass headings turn right. At yaw 0 the camera
          *  looks at the image's edge, half a turn from its middle (the panorama's own heading). */
@@ -106,6 +114,11 @@ struct PanoramaViewer: UIViewRepresentable {
             yaw += Float(t.x) * perPoint
             pitch = min(max(pitch + Float(t.y) * perPoint, -1.4), 1.4)
             apply()
+            if g.state == .ended || Date().timeIntervalSince(lastHeadingTick) > 0.08 {
+                lastHeadingTick = Date()
+                let compass = -Double(yaw) * 180 / .pi + panoramaHeading - 180
+                onHeading?((compass.truncatingRemainder(dividingBy: 360) + 360).truncatingRemainder(dividingBy: 360))
+            }
         }
 
         @objc func pinched(_ g: UIPinchGestureRecognizer) {

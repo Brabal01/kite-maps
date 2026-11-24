@@ -182,6 +182,30 @@ struct SettingsView: View {
                     ForEach(TravelMode.allCases) { Text($0.label).tag($0) }
                 } label: { SettingLabel("Default travel mode", icon: "car.fill", color: 0x2563EB) }
             }
+            Section("Road ahead") {
+                NavigationLink {
+                    Form {
+                        Picker("Position", selection: $settings.aheadPosition) {
+                            ForEach(AheadPosition.allCases) { Text($0.rawValue.capitalized).tag($0) }
+                        }
+                        Picker("Appearance", selection: $settings.aheadStyle) {
+                            ForEach(AheadStyle.allCases) { Text($0.title).tag($0) }
+                        }
+                        HStack {
+                            Text("Alert icon size")
+                            Slider(value: $settings.alertScale, in: 0.75...1.5, step: 0.05)
+                            Text(settings.alertScale.formatted(.percent.precision(.fractionLength(0)))).monospacedDigit()
+                        }
+                        Section("Show along the route") {
+                            ForEach(RouteRoadEvent.Kind.allCases, id: \.self) { kind in
+                                Toggle(kind.title, isOn: Binding(get: { settings.roadEvents.contains(kind) }, set: { on in
+                                    if on { settings.roadEvents.insert(kind) } else { settings.roadEvents.remove(kind) }
+                                }))
+                            }
+                        }
+                    }.kiteList().navigationTitle("Road ahead")
+                } label: { SettingLabel("Road ahead", icon: "road.lanes", color: 0x2563EB) }
+            }
             Section("Transit") {
                 Toggle("Exit reminders", isOn: $settings.transitExitAlerts)
                 Toggle("Learn my walking pace", isOn: $settings.learnWalkingPace)

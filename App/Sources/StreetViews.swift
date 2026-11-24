@@ -1,4 +1,5 @@
 import MapKit
+import MapLibre
 import SwiftUI
 import VelaCore
 
@@ -87,39 +88,154 @@ struct StreetViewTile: View {
     }
 }
 
-/** Google Street View, full screen: drag to look around, pinch to zoom. Google Maps can take you
- *  walking down the street from here. */
 struct GoogleStreetViewScreen: View {
     let name: String
-    let pano: StreetView.Panorama
-    let heading: Double
+    @State private var pano: StreetView.Panorama
+    @State private var startingHeading: Double
+    @State private var heading: Double
+    @State private var target: LatLng?
+    @State private var expanded = false
+    @State private var status: String?
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.openURL) private var openURL
+    @Environment(\.colorScheme) private var scheme
+
+    init(name: String, pano: StreetView.Panorama, heading: Double) {
+        self.name = name
+        _pano = State(initialValue: pano)
+        _startingHeading = State(initialValue: heading)
+        _heading = State(initialValue: heading)
+    }
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            Color.black.ignoresSafeArea()
-            PanoramaViewer(pano: pano, heading: heading).ignoresSafeArea()
-            PanoramaBar(name: name, source: "Street View") { dismiss() }
-            VStack {
-                Spacer()
-                HStack {
+        GeometryReader { geometry in
+            ZStack(alignment: .topLeading) {
+                Color.black.ignoresSafeArea()
+                PanoramaViewer(pano: pano, heading: startingHeading) { heading = $0 }
+                    .id(pano.id).ignoresSafeArea()
+                PanoramaBar(name: name, source: "Street View") { dismiss() }
+                VStack(alignment: .trailing, spacing: 8) {
                     Spacer()
-                    Button {
-                        openURL(URL(string: "https://www.google.com/maps/@?api=1&map_action=pano&pano=\(pano.id)&heading=\(Int(heading))")!)
-                    } label: {
-                        Label("Walk around in Google Maps", systemImage: "figure.walk")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 16).frame(height: 42)
-                            .background(Capsule().fill(.ultraThinMaterial))
-                            .overlay(Capsule().stroke(Color.white.opacity(0.25), lineWidth: 0.75))
+                    if let status {
+                        Text(status).font(.footnote.weight(.semibold))
+                            .padding(9).background(.regularMaterial, in: Capsule())
                     }
-                    .environment(\.colorScheme, .dark)
-                    Spacer()
+                    PanoramaMiniMap(pano: pano, heading: heading, dark: scheme == .dark) { target = $0 }
+                        .frame(maxWidth: expanded ? .infinity : 200)
+                        .frame(height: expanded ? min(geometry.size.height * 0.55, 460) : 150)
+                        .overlay(alignment: .topTrailing) {
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
+                            } label: {
+                                Image(systemName: expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                                    .padding(10).background(.regularMaterial, in: Circle())
+                            }.accessibilityLabel(expanded ? "Shrink street map" : "Expand street map").padding(7)
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: 18))
+                    HStack(spacing: 8) {
+                        Button {
+                            target = Geo.destination(pano.location, bearing: heading + 180, meters: 23)
+                        } label: {
+                            Label("Back", systemImage: "arrow.down")
+                        }
+                        Button {
+                            target = Geo.destination(pano.location, bearing: heading, meters: 23)
+                        } label: {
+                            Label("Forward", systemImage: "arrow.up")
+                        }
+                    }.buttonStyle(.borderedProminent).tint(.teal)
                 }
-                .padding(.bottom, 24)
+                .frame(maxWidth: .infinity)
+                .padding(12)
             }
+        }
+        .task(id: target) {
+            guard let target else { return }
+            status = "Looking for Street View…"
+            let match = await StreetView.find(near: target, radius: 25)
+            guard !Task.isCancelled else { return }
+            if let match, match.id != pano.id {
+                startingHeading = heading
+                pano = match
+                status = nil
+            } else {
+                status = "No other panorama here"
+                try? await Task.sleep(for: .seconds(2))
+                if !Task.isCancelled { status = nil }
+            }
+        }
+    }
+}
+
+private struct PanoramaMiniMap: UIViewRepresentable {
+    let pano: StreetView.Panorama
+    let heading: Double
+    let dark: Bool
+    let onPick: (LatLng) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(owner: self) }
+
+    func makeUIView(context: Context) -> MLNMapView {
+        let map = MLNMapView(frame: .zero, styleURL: VelaMapView.styleURL)
+        map.delegate = context.coordinator
+        map.isRotateEnabled = false
+        map.isPitchEnabled = false
+        map.compassView.isHidden = true
+        map.attributionButtonPosition = .bottomLeft
+        map.setCenter(coordinate, zoomLevel: 17, animated: false)
+        let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.tapped(_:)))
+        for gesture in map.gestureRecognizers ?? [] {
+            if let doubleTap = gesture as? UITapGestureRecognizer, doubleTap.numberOfTapsRequired == 2 {
+                tap.require(toFail: doubleTap)
+            }
+        }
+        map.addGestureRecognizer(tap)
+        return map
+    }
+
+    func updateUIView(_ map: MLNMapView, context: Context) {
+        let coordinator = context.coordinator
+        let changedLocation = coordinator.owner.pano.id != pano.id
+        coordinator.owner = self
+        if changedLocation { map.setCenter(coordinate, animated: true) }
+        if let style = map.style { coordinator.updatePin(style) }
+    }
+
+    var coordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: pano.location.lat, longitude: pano.location.lng)
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, MLNMapViewDelegate {
+        var owner: PanoramaMiniMap
+        init(owner: PanoramaMiniMap) { self.owner = owner }
+
+        nonisolated func mapView(_ mapView: MLNMapView, didFinishLoading style: MLNStyle) {
+            MainActor.assumeIsolated {
+                MapStyler.apply(style, dark: owner.dark)
+                style.setImage(MapIcons.puck(dark: owner.dark), forName: "panorama-heading")
+                let source = MLNShapeSource(identifier: "panorama-position", shape: nil, options: nil)
+                style.addSource(source)
+                let arrow = MLNSymbolStyleLayer(identifier: "panorama-arrow", source: source)
+                arrow.iconImageName = NSExpression(forConstantValue: "panorama-heading")
+                arrow.iconRotation = NSExpression(forKeyPath: "bearing")
+                arrow.iconAllowsOverlap = NSExpression(forConstantValue: true)
+                arrow.iconRotationAlignment = NSExpression(forConstantValue: "map")
+                style.addLayer(arrow)
+                updatePin(style)
+            }
+        }
+
+        func updatePin(_ style: MLNStyle) {
+            let arrow = MLNPointFeature()
+            arrow.coordinate = owner.coordinate
+            arrow.attributes = ["bearing": owner.heading]
+            (style.source(withIdentifier: "panorama-position") as? MLNShapeSource)?.shape = arrow
+        }
+
+        @objc func tapped(_ gesture: UITapGestureRecognizer) {
+            guard let map = gesture.view as? MLNMapView else { return }
+            let at = map.convert(gesture.location(in: map), toCoordinateFrom: map)
+            owner.onPick(LatLng(at.latitude, at.longitude))
         }
     }
 }

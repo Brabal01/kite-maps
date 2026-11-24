@@ -70,6 +70,20 @@ final class AppSettings: ObservableObject {
         case .bike: return bikeEngine
         }
     }
+    @Published var aheadPosition = AheadPosition(rawValue: UserDefaults.standard.string(forKey: "aheadPosition") ?? "") ?? .bottom {
+        didSet { d.set(aheadPosition.rawValue, forKey: "aheadPosition") }
+    }
+    @Published var aheadStyle = AheadStyle(rawValue: UserDefaults.standard.string(forKey: "aheadStyle") ?? "") ?? .line {
+        didSet { d.set(aheadStyle.rawValue, forKey: "aheadStyle") }
+    }
+    @Published var alertScale = UserDefaults.standard.object(forKey: "alertScale") as? Double ?? 1.0 {
+        didSet { d.set(alertScale, forKey: "alertScale") }
+    }
+    @Published var roadEvents = Set((UserDefaults.standard.stringArray(forKey: "roadEvents") ?? RouteRoadEvent.Kind.allCases.map(\.rawValue))
+        .compactMap(RouteRoadEvent.Kind.init(rawValue:))) {
+        didSet { d.set(roadEvents.map(\.rawValue), forKey: "roadEvents") }
+    }
+
     /** Hill shading, and metro/rail lines in their colors. */
     @Published var terrain: Bool { didSet { d.set(terrain, forKey: "terrain") } }
     @Published var transitLines: Bool { didSet { d.set(transitLines, forKey: "transitLines") } }

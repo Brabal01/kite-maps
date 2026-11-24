@@ -73,6 +73,15 @@ struct NavigationOverlay: View {
         (UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first?.bounds.height ?? 800) < 700
     }
 
+    private func roadAhead(at position: AheadPosition) -> some View {
+        Group {
+            if !nav.arrived && settings.aheadPosition == position {
+                RouteAheadView(nav: nav, settings: settings, events: nav.roadEvents,
+                               vertical: position == .left || position == .right)
+            }
+        }
+    }
+
     var body: some View {
         // One column, so however many warnings are up, they push the map buttons down rather than cover them.
         VStack(spacing: 10) {
@@ -151,7 +160,14 @@ struct NavigationOverlay: View {
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { peek = nil }
             }
 
+            roadAhead(at: .top)
             Spacer(minLength: 0)
+            HStack {
+                roadAhead(at: .left)
+                Spacer(minLength: 0)
+                roadAhead(at: .right)
+            }
+            .padding(.horizontal, 12)
 
             HStack(alignment: .bottom) {
                 VStack(alignment: .leading, spacing: 10) {
@@ -232,6 +248,7 @@ struct NavigationOverlay: View {
                         .inSidePanel(panel)
                         .transition(.opacity)
                 }
+                roadAhead(at: .bottom)
                 TripBar(nav: nav, onEnd: {
                     if nav.arrived { model.endNavigation() } else {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { confirmEnd = true }

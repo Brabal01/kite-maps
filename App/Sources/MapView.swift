@@ -123,6 +123,7 @@ struct VelaMapView: UIViewRepresentable {
         private var styledDriving: Bool?
         private var lastCameraKey = ""
         private var lastSignalsKey = ""
+        private var styledAlertScale: Double?
         private var lastLiveKey = ""
         /** The box the drawn live camera dots cover, so panning inside it redraws nothing. */
         private var liveBox: (s: Double, w: Double, n: Double, e: Double)?
@@ -172,6 +173,7 @@ struct VelaMapView: UIViewRepresentable {
             repaint(mapView)
             lastResultsKey = ""; lastRouteKey = ""; lastMineKey = ""; lastPuckKey = ""; lastCameraKey = ""; lastSignalsKey = ""; lastWazeKey = ""; lastLiveKey = ""
             lastIndoorKey = ""
+            styledAlertScale = nil
             lastMeasurement = []
             lastProfileProbe = nil
             lastProfileSection = []
@@ -338,7 +340,10 @@ struct VelaMapView: UIViewRepresentable {
             let sigSrc = MLNShapeSource(identifier: "vela-signals", shape: nil, options: nil)
             style.addSource(sigSrc)
             let sigs = MLNSymbolStyleLayer(identifier: "vela-signals", source: sigSrc)
-            sigs.iconImageName = NSExpression(forConstantValue: "traffic-light")
+            style.setImage(MapIcons.roadEvent("octagon.fill", color: .systemRed), forName: "route-stop")
+            style.setImage(MapIcons.roadEvent("tram.fill", color: .systemIndigo), forName: "route-railway")
+            style.setImage(MapIcons.roadEvent("figure.walk", color: .systemTeal), forName: "route-pedestrian")
+            sigs.iconImageName = NSExpression(forKeyPath: "icon")
             sigs.iconAllowsOverlap = NSExpression(forConstantValue: true)
             sigs.iconAnchor = NSExpression(forConstantValue: "bottom")
             sigs.iconScale = NSExpression(mglJSONObject: ["interpolate", ["linear"], ["zoom"], 14, 0.75, 17, 1.0])
@@ -638,6 +643,7 @@ struct VelaMapView: UIViewRepresentable {
             renderCameras(style)
             renderLiveCams(map, style)
             renderSignals(style)
+            applyAlertScale(style, scale: s.alertScale)
             renderRoadName(style)
             renderWaze(style)
             updateHeat(map)
@@ -945,16 +951,42 @@ struct VelaMapView: UIViewRepresentable {
         }
 
         private func renderSignals(_ style: MLNStyle) {
-            let lights = model.nav?.routeSignals ?? []
-            let key = "\(lights.count)\(lights.first?.lat ?? 0)"
+            let shown = model.settings.roadEvents
+            let progress = model.nav?.progress?.alongMeters ?? 0
+            let events = (model.nav?.roadEvents ?? []).filter { shown.contains($0.kind) && $0.along > progress - 10 }
+            let key = events.map { "\($0.id)" }.joined(separator: ",")
             guard key != lastSignalsKey else { return }
             lastSignalsKey = key
-            let features: [MLNPointFeature] = lights.map { p in
-                let f = MLNPointFeature()
-                f.coordinate = CLLocationCoordinate2D(latitude: p.lat, longitude: p.lng)
-                return f
+            let features: [MLNPointFeature] = events.map { event in
+                let feature = MLNPointFeature()
+                feature.coordinate = CLLocationCoordinate2D(latitude: event.point.lat, longitude: event.point.lng)
+                let icon: String
+                switch event.kind {
+                case .trafficLight: icon = "traffic-light"
+                case .stop: icon = "route-stop"
+                case .railway: icon = "route-railway"
+                case .pedestrian: icon = "route-pedestrian"
+                }
+                feature.attributes = ["icon": icon]
+                return feature
             }
-            (style.source(withIdentifier: "vela-signals") as? MLNShapeSource)?.shape = MLNShapeCollectionFeature(shapes: features)
+            (style.source(withIdentifier: "vela-signals") as? MLNShapeSource)?.shape =
+                features.isEmpty ? nil : MLNShapeCollectionFeature(shapes: features)
+        }
+
+        private func applyAlertScale(_ style: MLNStyle, scale: Double) {
+            guard styledAlertScale != scale else { return }
+            styledAlertScale = scale
+            let waze = NSExpression(mglJSONObject: ["interpolate", ["linear"], ["zoom"], 11, 0.62 * scale, 15, 0.95 * scale])
+            for id in ["vela-waze", "vela-waze-group"] {
+                (style.layer(withIdentifier: id) as? MLNSymbolStyleLayer)?.iconScale = waze
+            }
+            let big: [Any] = ["==", ["get", "big"], 1]
+            (style.layer(withIdentifier: "vela-cameras") as? MLNSymbolStyleLayer)?.iconScale =
+                NSExpression(mglJSONObject: ["interpolate", ["linear"], ["zoom"],
+                    11, ["case", big, scale, 0.7 * scale],
+                    14, ["case", big, 1.33 * scale, 0.92 * scale],
+                    17, ["case", big, 1.65 * scale, 1.15 * scale]])
         }
 
         private func renderWaze(_ style: MLNStyle) {

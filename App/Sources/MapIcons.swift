@@ -167,6 +167,10 @@ enum MapIcons {
         }
     }
 
+    static func roadEvent(_ symbol: String, color: UIColor) -> UIImage {
+        dot(symbol, color)
+    }
+
     private static func dot(_ symbol: String, _ color: UIColor) -> UIImage {
         let size = CGSize(width: 28, height: 28)
         return UIGraphicsImageRenderer(size: size).image { ctx in
