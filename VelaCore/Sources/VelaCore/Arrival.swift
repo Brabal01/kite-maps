@@ -27,6 +27,10 @@ public enum ArrivalHelp {
             .contains { c.contains($0) }
     }
 
+    public static func offerParking(remainingMeters: Double, stopsRemaining: Int, offRoute: Bool) -> Bool {
+        stopsRemaining == 0 && !offRoute && (1...1000).contains(remainingMeters)
+    }
+
     public static func parkingQuery(near p: LatLng, radius: Int = 500) -> String {
         "[out:json][timeout:25];nwr[\"amenity\"=\"parking\"](around:\(radius),\(p.lat),\(p.lng));out center tags 60;"
     }
