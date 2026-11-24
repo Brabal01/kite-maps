@@ -47,7 +47,7 @@ internal fun StopResultsPanel(
         }
     }
 
-    BottomSheet(detent, setDetent, height, peekHeight = 104.dp, topClearance = 68.dp, opaque = true,
+    BottomSheet(detent, setDetent, height, peekHeight = 104.dp, topClearance = 68.dp, opaque = true, allowPeek = false,
         header = {
             Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {

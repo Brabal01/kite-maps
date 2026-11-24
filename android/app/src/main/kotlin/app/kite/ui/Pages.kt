@@ -260,7 +260,7 @@ private fun SavedRow(p: Place, icon: ImageVector, color: Color, distance: String
 
 private enum class SettingsScreen(val title: String) {
     MENU("Settings"), DRIVING("Voice & driving"), CAMERAS("Cameras & speed"), WAZE("Road alerts"), LIVECAMS("Live cameras"), MAP("Map & display"),
-    ROUTING("Route engines"), OFFLINE("Offline maps"), PLACES("My places"), PRIVACY("Privacy"), ABOUT("About"), DIAGNOSTICS("Diagnostics");
+    ROUTING("Route engines"), TRANSIT("Public transport"), OFFLINE("Offline maps"), PLACES("My places"), PRIVACY("Privacy"), ABOUT("About"), DIAGNOSTICS("Diagnostics");
 
     /** Where the back button goes. */
     val parent: SettingsScreen get() = if (this == DIAGNOSTICS) ABOUT else MENU
@@ -301,6 +301,7 @@ fun SettingsPage(model: AppModel) {
                         SettingsScreen.LIVECAMS -> LiveCamSettings()
                         SettingsScreen.MAP -> MapSettings()
                         SettingsScreen.ROUTING -> RouteEngineSettings()
+                        SettingsScreen.TRANSIT -> TransitSettings()
                         SettingsScreen.OFFLINE -> OfflineMapsPage(model)
                         SettingsScreen.PLACES -> PlacesSettings(model)
                         SettingsScreen.PRIVACY -> PrivacySettings()
@@ -397,6 +398,7 @@ private fun SettingsMenu(open: (SettingsScreen) -> Unit) {
         item(SettingsScreen.LIVECAMS, "Road camera photos and scenic webcams", if (s.liveCams) "On" else "Off", Icons.Filled.Videocam, 0x0284C7)
         item(SettingsScreen.MAP, "Theme, units, map zoom, parking button", null, Icons.Filled.Contrast, 0x334155)
         item(SettingsScreen.ROUTING, "Driving, walking and cycling", null, Icons.Filled.AltRoute, 0x0F766E)
+        item(SettingsScreen.TRANSIT, "Live data for Prague and Central Bohemia", null, Icons.Filled.Tram, 0x6750A4)
         item(SettingsScreen.OFFLINE, "Download and manage map areas", null, Icons.Filled.Download, 0x315E91)
         item(SettingsScreen.PLACES, "Home and work", null, Icons.Filled.Home, 0x16A34A)
         item(SettingsScreen.PRIVACY, "Use Kite without Google", if (s.noGoogle) "On" else null, Icons.Filled.Lock, 0x475569)
@@ -483,6 +485,26 @@ private fun MapSettingLink(title: String, icon: ImageVector, tint: Long, open: (
 }
 
 @Composable
+private fun TransitSettings() {
+    val context = LocalContext.current
+    val settings = AppSettings
+    var value by remember { mutableStateOf(settings.pidAccessToken) }
+    SettingsGroup(header = "Prague Integrated Transport",
+        footer = "With a Golemio token, Kite can read live departure times and vehicle positions for supported PID trips. The token stays in Kite's settings.") {
+        Column(Modifier.fillMaxWidth().padding(14.dp)) {
+            OutlinedTextField(value, { value = it }, label = { Text("Golemio API token") }, singleLine = true,
+                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth())
+            Row {
+                TextButton({ context.open("https://api.golemio.cz/api-keys") }) { Text("Get token") }
+                TextButton({ settings.pidAccessToken = value.trim() }, enabled = value.trim() != settings.pidAccessToken) { Text("Save") }
+                if (settings.pidAccessToken.isNotBlank()) TextButton({ settings.pidAccessToken = ""; value = "" }) { Text("Remove") }
+            }
+        }
+    }
+}
+
+@Composable
 private fun RouteEngineSettings() {
     val s = AppSettings
     val engines = RouteEngine.entries.filter { !s.noGoogle || it != RouteEngine.GOOGLE }
@@ -506,6 +528,7 @@ private fun MapSettings() {
     var editRoadReports by remember { mutableStateOf(false) }
     var editOpenPlaces by remember { mutableStateOf(false) }
     var editNavigationPlaces by remember { mutableStateOf(false) }
+    var editWalkingAhead by remember { mutableStateOf(false) }
     var editRoadAhead by remember { mutableStateOf(false) }
     SettingsGroup(header = "Appearance and units") {
         PickRow("App theme", Icons.Filled.Contrast, 0x334155, s.theme, ThemeMode.entries.toList(), { it.label }) { s.theme = it }
@@ -622,6 +645,34 @@ private fun MapSettings() {
         MapSettingLink("Places while navigating", Icons.Filled.Place, 0x0F766E) { editNavigationPlaces = true }
         RowDivider()
         MapSettingLink("Road ahead and map alerts", Icons.Filled.Traffic, 0xAD362C) { editRoadAhead = true }
+        RowDivider()
+        MapSettingLink("Walking side panel", Icons.AutoMirrored.Filled.DirectionsWalk, 0x126782) { editWalkingAhead = true }
+    }
+    if (editWalkingAhead) TripSheet("Walking side panel", "Done", { editWalkingAhead = false }) {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp)) {
+            SettingsGroup(footer = "Also applies while walking to or between transit stops.") {
+                ToggleRow("Show side panel", Icons.AutoMirrored.Filled.DirectionsWalk, 0x126782, s.walkingAhead) { s.walkingAhead = it }
+                RowDivider()
+                PickRow("Side", Icons.Filled.SwapHoriz, 0x126782, s.walkingAheadRight,
+                    listOf(false, true), { if (it) "Right" else "Left" }) { s.walkingAheadRight = it }
+                RowDivider()
+                PickRow("Look ahead", Icons.Filled.RemoveRedEye, 0x126782, s.walkingAheadRange,
+                    listOf(300, 600, 1000), { Fmt.distance(it.toDouble()) }) { s.walkingAheadRange = it }
+            }
+            SettingsGroup(header = "Events") {
+                ToggleRow("Pedestrian crossings", Icons.AutoMirrored.Filled.DirectionsWalk, 0x126782, s.walkingCrossings) { s.walkingCrossings = it }
+                RowDivider()
+                ToggleRow("Traffic lights", Icons.Filled.Traffic, 0x1D4ED8, s.walkingSignals) { s.walkingSignals = it }
+                RowDivider()
+                ToggleRow("Stop signs", Icons.Filled.StopCircle, 0xB91C1C, s.walkingStops) { s.walkingStops = it }
+                RowDivider()
+                ToggleRow("Railway crossings", Icons.Filled.Train, 0x92400E, s.walkingRail) { s.walkingRail = it }
+                RowDivider()
+                ToggleRow("Waze reports", Icons.Filled.Warning, 0x0F766E, s.walkingWaze) { s.walkingWaze = it }
+                RowDivider()
+                ToggleRow("Speed cameras", Icons.Filled.PhotoCamera, 0x6D4EB0, s.walkingCameras) { s.walkingCameras = it }
+            }
+        }
     }
     if (editNavigationPlaces) TripSheet("Places while navigating", "Done", { editNavigationPlaces = false }) {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),

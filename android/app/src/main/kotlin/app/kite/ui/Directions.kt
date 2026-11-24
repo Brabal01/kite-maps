@@ -81,16 +81,19 @@ fun DirectionsOverlay(model: AppModel, showMapbox: Boolean) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val d = model.directions
         val full = maxHeight
+        val transit = d?.transit == true
+        val fullTransit = transit && model.detent == SheetDetent.FULL
         Box(Modifier.align(Alignment.BottomCenter)) {
             BottomSheet(model.detent, { model.detent = it }, full, tripPeek(d),
-                topClearance = statusTop + 6.dp + cardHeight + 16.dp, opaque = true,
+                topClearance = if (transit) statusTop + 6.dp else statusTop + 6.dp + cardHeight + 16.dp,
+                opaque = true, allowPeek = !transit,
                 header = { TripHeader(model) }, content = { TripBody(model) })
         }
-        if (showMapbox) {
+        if (showMapbox && !fullTransit) {
             MapboxAttribution(Modifier.align(Alignment.TopStart).statusBarsPadding()
                 .padding(start = 16.dp, top = cardHeight + 9.dp))
         }
-        if (d != null) {
+        if (d != null && !fullTransit) {
             Box(Modifier.statusBarsPadding().padding(top = 6.dp).onSizeChanged { cardHeight = with(density) { it.height.toDp() } }) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     EndpointsCard(model, d)
@@ -101,14 +104,6 @@ fun DirectionsOverlay(model: AppModel, showMapbox: Boolean) {
                         trailingIcon = { Icon(Icons.Filled.Close, "Clear section", Modifier.size(16.dp)) },
                         colors = AssistChipDefaults.assistChipColors(containerColor = interfaceSurface))
                 }
-                d.pickedTrip?.takeIf { it.path.isNotEmpty() }?.let { trip ->
-                        AssistChip(onClick = {
-                            model.detent = SheetDetent.PEEK
-                            model.frame(trip.path, bottomFraction = 0.30f, top = 170)
-                        }, label = { Text("Show trip on map") },
-                            leadingIcon = { Icon(Icons.Filled.Map, null, Modifier.size(17.dp)) },
-                            colors = AssistChipDefaults.assistChipColors(containerColor = interfaceSurface))
-                    }
                 }
             }
             Box(Modifier.statusBarsPadding().padding(top = 6.dp + cardHeight + 14.dp).padding(horizontal = 16.dp).fillMaxWidth(),
@@ -117,7 +112,10 @@ fun DirectionsOverlay(model: AppModel, showMapbox: Boolean) {
             }
         }
     }
-    androidx.activity.compose.BackHandler { model.closeDirections() }
+    androidx.activity.compose.BackHandler {
+        if (model.directions?.transit == true && model.detent == SheetDetent.FULL) model.detent = SheetDetent.HALF
+        else model.closeDirections()
+    }
 }
 
 @Composable
@@ -481,12 +479,25 @@ fun TripHeader(model: AppModel) {
     val ctx = LocalContext.current
     Column(Modifier.padding(horizontal = 18.dp).padding(bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (!d.transit && (d.route != null || d.startRequested && !d.waitingForLocation)) GoButton(model, d.startRequested)
-        if (d.transit && d.pickedTrip != null)
-            Button(model::startTransitNavigation, Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
-                Icon(Icons.Filled.DirectionsTransit, null, Modifier.size(21.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Start transit navigation", fontWeight = FontWeight.Bold)
+        if (d.transit) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.weight(1f)) {
+                    Text("Public transport", color = primaryText, fontWeight = FontWeight.Bold, fontSize = KType.headline)
+                    Text(d.destination.name, color = secondaryText, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                if (d.pickedTrip != null) IconButton({
+                    model.detent = SheetDetent.HALF
+                    model.frameRoute()
+                }) { Icon(Icons.Filled.Map, "Show trip on map", tint = interfaceAccentText) }
+                if (model.detent == SheetDetent.FULL) IconButton({ model.detent = SheetDetent.HALF }) {
+                    Icon(Icons.Filled.ExpandMore, "Half height")
+                } else IconButton({ model.detent = SheetDetent.FULL }) {
+                    Icon(Icons.Filled.ExpandLess, "Expand connections")
+                }
             }
+            ModeTabs(model, d)
+            return
+        }
         Row(verticalAlignment = Alignment.Top) {
             Box(Modifier.weight(1f)) {
                 val r = d.route
@@ -503,11 +514,6 @@ fun TripHeader(model: AppModel) {
                         }, fontSize = KType.subheadline, fontWeight = FontWeight.SemiBold, color = primaryText)
                         if (model.location.denied || model.location.systemOff)
                             TextButton({ LocationService.openSettings(ctx) }) { Text("Location settings") }
-                    }
-                    d.transit -> Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(d.pickedTrip?.let { Fmt.duration(it.durationSeconds) } ?: "Transit", fontSize = 40.sp, fontWeight = FontWeight.ExtraBold,
-                            color = interfaceAccentText)
-                        Text("By public transport", fontSize = 17.sp, fontWeight = FontWeight.Medium, color = Vela.muted(dark))
                     }
                     r != null -> Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(Fmt.duration(r.durationSeconds), fontSize = 44.sp, fontWeight = FontWeight.ExtraBold, color = delayColor(r, dark),
@@ -770,7 +776,9 @@ fun TransitBody(model: AppModel, state: DirectionsState) {
                     val picked = t.id == state.pickedTrip?.id
                     val expanded = picked && expandedTrip == t.id
                     Column {
-                        TripRow(t, picked, expanded, model.transitLive[t.rides.firstOrNull()?.tripId], select = {
+                        val shown = if (picked) model.latestTransit(t) ?: t else t
+                        val live = if (picked) model.transitLive else emptyMap()
+                        TripRow(shown, picked, expanded, live, select = {
                             if (!picked) {
                                 expandedTrip = null
                                 model.selectTrip(i)
@@ -779,7 +787,17 @@ fun TransitBody(model: AppModel, state: DirectionsState) {
                             if (!picked) model.selectTrip(i)
                             expandedTrip = if (expanded) null else t.id
                         })
-                        if (expanded) TransitSteps(t, live = model.transitLive)
+                        if (picked) {
+                            val disrupted = shown.rides.any { it.cancelled || live[it.tripId]?.cancelled == true } ||
+                                shown.transferWarnings(live).any { it.kind == TransferTiming.Kind.MISSED }
+                            Button({ if (disrupted) model.loadTransit() else model.startTransitNavigation() },
+                                Modifier.fillMaxWidth().padding(top = 5.dp).heightIn(min = 45.dp)) {
+                                Icon(if (disrupted) Icons.Filled.Refresh else Icons.Filled.Navigation, null, Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(if (disrupted) "Find another connection" else "Start transit navigation")
+                            }
+                        }
+                        if (expanded) TransitSteps(shown, live = live)
                     }
                 }
             }
@@ -803,7 +821,8 @@ fun TransitBody(model: AppModel, state: DirectionsState) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun TripRow(trip: TransitTrip, picked: Boolean, expanded: Boolean, live: TransitLive?, select: () -> Unit, toggleDetails: () -> Unit) {
+fun TripRow(trip: TransitTrip, picked: Boolean, expanded: Boolean, liveUpdates: Map<String, TransitLive>, select: () -> Unit, toggleDetails: () -> Unit) {
+    val live = liveUpdates[trip.rides.firstOrNull()?.tripId]
     val shape = RoundedCornerShape(18.dp)
     Column(Modifier.fillMaxWidth().clip(shape).background(interfaceGround)
         .border(1.dp, if (picked) interfaceAccent else secondaryText.copy(alpha = 0.25f), shape)
@@ -819,7 +838,8 @@ fun TripRow(trip: TransitTrip, picked: Boolean, expanded: Boolean, live: Transit
                     if (expanded) "Collapse trip details" else "Expand trip details", tint = primaryText)
             }
         }
-        // Wraps onto more lines for trips with many changes, like Google Maps does.
+        TransitTimeBar(trip, liveUpdates)
+        // The labels wrap independently of the timeline so even a short connecting leg keeps its name.
         FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             trip.legs.forEachIndexed { i, leg ->
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -831,6 +851,7 @@ fun TripRow(trip: TransitTrip, picked: Boolean, expanded: Boolean, live: Transit
                 }
             }
         }
+        TransitTransferNotes(trip, liveUpdates)
         val transfers = when (trip.transfers) { 0 -> "Direct"; 1 -> "1 transfer"; else -> "${trip.transfers} transfers" }
         Text("$transfers · ${Fmt.duration(trip.walkSeconds)} walking", fontSize = KType.caption, color = secondaryText)
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1139,8 +1160,16 @@ fun EndpointPicker(model: AppModel, destination: Boolean = false) {
 /** Search for a stop, then choose a result on the map. */
 @Composable
 fun StopPicker(model: AppModel) {
-    var query by remember { mutableStateOf(model.stopSearch?.query.orEmpty()) }
-    val close = { model.addingStop = false }
+    var query by rememberSaveable { mutableStateOf(model.stopSearch?.query.orEmpty()) }
+    val close = { model.clearStopDraft(); model.addingStop = false }
+    DisposableEffect(Unit) { onDispose { model.clearStopDraft() } }
+    LaunchedEffect(query) {
+        model.clearStopDraft()
+        if (query.trim().length >= 2) {
+            delay(475)
+            model.searchStops(query, named = OutdoorData.kind(query) == null, draft = true)
+        }
+    }
     fun search() { model.searchStops(query, named = OutdoorData.kind(query) == null) }
     var detent by rememberSaveable { mutableStateOf(SheetDetent.HALF) }
     androidx.activity.compose.BackHandler {
@@ -1149,7 +1178,7 @@ fun StopPicker(model: AppModel) {
     BoxWithConstraints(Modifier.fillMaxSize().systemBarsPadding().imePadding()) {
         val height = maxHeight
         Box(Modifier.align(Alignment.BottomCenter)) {
-            BottomSheet(detent, { detent = it }, height, peekHeight = 126.dp, opaque = true,
+            BottomSheet(detent, { detent = it }, height, opaque = true, allowPeek = false,
                 header = {
                     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text("Add stop", Modifier.weight(1f), fontSize = KType.headline, fontWeight = FontWeight.Bold, color = primaryText)
@@ -1161,8 +1190,34 @@ fun StopPicker(model: AppModel) {
                     PickerSearchField(query, { query = it }, "Search by name or address", autoFocus = false, onFocused = { detent = SheetDetent.FULL }, onSearch = ::search)
                 }, content = {
                     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
-                        if (query.isNotBlank()) item {
-                            IconRow(Icons.Filled.Search, "Search for “${query.trim()}”") { search() }
+                        if (query.trim().isNotEmpty()) {
+                            val current = model.stopDraft?.takeIf { it.query == query.trim() }
+                            if (current?.loading == true) item {
+                                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                    Text("Searching along your route…", color = secondaryText)
+                                }
+                            }
+                            if (current != null && !current.loading && current.results.isEmpty()) item {
+                                Text("No nearby results along this route", Modifier.padding(16.dp), color = secondaryText)
+                            }
+                            items(current?.results.orEmpty(), key = { it.place.id }) { candidate ->
+                                val place = candidate.place
+                                Box(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                                    .clip(RoundedCornerShape(17.dp)).background(interfaceSurface)) {
+                                    PlaceResultSummary(place, onOpen = { model.acceptStop(candidate) }, here = model.userLatLng,
+                                        openLabel = "Add ${place.name}") {
+                                        FilledTonalIconButton({ model.acceptStop(candidate) }) {
+                                            Icon(Icons.Filled.Add, "Add ${place.name}")
+                                        }
+                                    }
+                                }
+                            }
+                            if (query.trim().length >= 2) item {
+                                IconRow(Icons.Filled.Map, "Show results on map") { search() }
+                            }
+                            return@LazyColumn
                         }
                         item { IconRow(Icons.Filled.AddLocationAlt, "Choose a point on the map") { model.beginStopPin() } }
                         item { SectionTitle("Along the route") }
@@ -1203,7 +1258,7 @@ fun StopMapOverlay(model: AppModel, showMapbox: Boolean) {
     }
     LaunchedEffect(search.selected?.place?.id) { if (search.selected != null) showList = false }
     androidx.activity.compose.BackHandler {
-        if (showList && listDetent != SheetDetent.PEEK) listDetent = SheetDetent.PEEK else model.closeStopSearch()
+        if (showList && listDetent == SheetDetent.FULL) listDetent = SheetDetent.HALF else model.closeStopSearch()
     }
     BoxWithConstraints(Modifier.fillMaxSize().systemBarsPadding()) {
         val height = maxHeight

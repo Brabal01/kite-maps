@@ -134,11 +134,11 @@ fun NavigationOverlay(model: AppModel, nav: Navigator, showMapbox: Boolean,
         val h = maxHeight
         val w = maxWidth
         val walking = nav.route.mode == TravelMode.WALK
-        val showRoadAhead = AppSettings.roadAheadStrip && (nav.route.mode == TravelMode.DRIVE || walking) &&
+        val showRoadAhead = (if (walking) AppSettings.walkingAhead else nav.route.mode == TravelMode.DRIVE && AppSettings.roadAheadStrip) &&
             !nav.arrived && !confirmEnd && (h >= 480.dp || mainAlert == null)
         val roadPosition = when {
             !walking -> AppSettings.roadStripPosition
-            AppSettings.roadStripPosition == RoadStripPosition.RIGHT -> RoadStripPosition.RIGHT
+            AppSettings.walkingAheadRight -> RoadStripPosition.RIGHT
             else -> RoadStripPosition.LEFT
         }
         val bottomStrip = showRoadAhead && roadPosition == RoadStripPosition.BOTTOM

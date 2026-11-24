@@ -330,6 +330,8 @@ class AppModel {
         set(v) { field = v; glide.map = v }
     var nativeCamera: ((CameraPosition, Int) -> Boolean)? = null
     var visibleCamera: (() -> CameraPosition?)? = null
+    var refreshedTransit by mutableStateOf<TransitTrip?>(null)
+    fun latestTransit(trip: TransitTrip?): TransitTrip? = refreshedTransit?.takeIf { it.id == trip?.id } ?: trip
     var transitLive by mutableStateOf<Map<String, TransitLive>>(emptyMap())
     /** The map view's size in dp, for framing. */
     var mapWidthDp = 400f
@@ -885,8 +887,18 @@ class AppModel {
         frameRoute()
     }
 
-    fun searchStops(query: String, named: Boolean = false, parking: Boolean = false) {
-        navigationPlace = null
+    private var stopDraftJob: Job? = null
+    var stopDraft by mutableStateOf<StopSearch?>(null)
+        private set
+
+    fun clearStopDraft() {
+        stopDraftJob?.cancel()
+        stopDraftJob = null
+        stopDraft = null
+    }
+
+    fun searchStops(query: String, named: Boolean = false, parking: Boolean = false, draft: Boolean = false) {
+        if (!draft) navigationPlace = null
         val q = query.trim()
         if (q.isEmpty()) return
         val driving = nav
@@ -903,12 +915,17 @@ class AppModel {
         val destinationId = (driving?.destination ?: d?.orderedPlaces()?.lastOrNull())?.id
         val useGoogle = settings.welcomed && !settings.noGoogle
         val search = StopSearch(q, wasFollowing = stopSearch?.wasFollowing ?: (driving?.following == true), parking = parking)
-        stopSearchJob?.cancel()
-        stopSearch = search
-        addingStop = false
-        driving?.following = false
-        map?.cancelTransitions()
-        stopSearchJob = scope.launch {
+        clearStopDraft()
+        if (draft) {
+            stopDraft = search
+        } else {
+            stopSearchJob?.cancel()
+            stopSearch = search
+            addingStop = false
+            driving?.following = false
+            map?.cancelTransitions()
+        }
+        val job = scope.launch {
             val results = withContext(Dispatchers.Default) {
                 if (parking && driving != null) {
                     val target = driving.destination.location
@@ -929,7 +946,7 @@ class AppModel {
                         .filter { it.offset <= 1500 && it.place.id != destinationId }.sortedBy { it.offset }.take(20)
                 }
                 val count = ceil(span / (if (driving == null) 27_000 else 14_000)).toInt()
-                    .coerceIn(1, if (driving == null) 72 else 3)
+                    .coerceIn(1, if (draft) 3 else if (driving == null) 72 else 3)
                 val window = Geo.slice(line, start, end, cum)
                 val windowCum = Geo.cumulative(window)
                 val found = (0 until count).chunked(4).flatMap { batch ->
@@ -966,6 +983,10 @@ class AppModel {
                         if (size == 100) break
                     }
                 }
+            }
+            if (draft) {
+                if (stopDraft === search && addingStop) stopDraft = search.copy(loading = false, results = results.take(14))
+                return@launch
             }
             if (stopSearch !== search) return@launch
             if (nav !== driving || directions?.destination?.id != d?.destination?.id) {
@@ -1007,6 +1028,7 @@ class AppModel {
                 }
             }
         }
+        if (draft) stopDraftJob = job else stopSearchJob = job
     }
 
     fun selectStopPin(id: String?) {
@@ -1328,7 +1350,7 @@ class AppModel {
         }
         val route = plan.route ?: run { mapTick++; return }
         frame(plan.current.ifEmpty { listOf(route) }.flatMap { it.polyline },
-            bottomFraction = 0.44f, top = 150, flat = true)
+            bottomFraction = 0.47f, top = 156, flat = true, marginZoom = 0.40)
     }
 
     /** Police risk within about a kilometre of you, from remembered and live Waze police reports. */
@@ -1934,41 +1956,71 @@ class AppModel {
         MapCam.animate(m, CameraPosition.Builder().target(p.ml()).zoom(15.0).build(), ms = 500)
     }
 
-    data class IndoorView(val place: Place, val plan: IndoorMaps.Plan, val floor: String)
+    data class IndoorView(val place: Place, val plan: IndoorMaps.Plan, val floor: String,
+                          val feature: IndoorMaps.Feature? = null)
     var indoorView by mutableStateOf<IndoorView?>(null)
         private set
-    var loadingIndoor by mutableStateOf(false)
+    var placeIndoorPlan by mutableStateOf<Pair<String, IndoorMaps.Plan>?>(null)
         private set
+    private val knownIndoor = mutableListOf<IndoorMaps.Plan>()
+    private val indoorMisses = mutableMapOf<String, Long>()
 
-    fun openIndoor(place: Place) {
-        if (loadingIndoor) return
-        loadingIndoor = true
-        scope.launch {
-            val plan = try {
-                IndoorMaps.plan(place.location)
-            } finally {
-                loadingIndoor = false
+    suspend fun probeIndoor(place: Place?) {
+        placeIndoorPlan = null
+        if (place == null) return
+        val cached = knownIndoor.firstOrNull { it.covers(place.location) }
+        if (cached == null && !Connectivity.online) return
+        val checked = indoorMisses[place.id] ?: 0L
+        if (cached == null && System.currentTimeMillis() - checked < 5 * 60_000) return
+        if (cached == null) delay(450)
+        val plan = cached ?: IndoorMaps.plan(place.location)
+        if (selected?.id != place.id) return
+        if (plan == null) {
+            if (indoorMisses.size >= 24) indoorMisses.remove(indoorMisses.keys.first())
+            indoorMisses[place.id] = System.currentTimeMillis()
+        } else {
+            placeIndoorPlan = place.id to plan
+            if (cached == null) {
+                if (knownIndoor.size >= 6) knownIndoor.removeAt(0)
+                knownIndoor.add(plan)
             }
-            if (selected?.id != place.id) return@launch
-            val floor = plan?.floors?.let { it.firstOrNull { f -> f == "0" } ?: it.lastOrNull() }
-            if (plan == null || floor == null) {
-                notice = "No indoor floor plan found here."
-                return@launch
-            }
-            indoorView = IndoorView(place, plan, floor)
-            val m = map ?: return@launch
-            MapCam.animate(m, CameraPosition.Builder(m.cameraPosition).target(place.location.ml())
-                .zoom(18.9).tilt(0.0).build(), ms = 260, native = nativeCamera)
         }
     }
 
+    fun openIndoor(place: Place) {
+        val plan = placeIndoorPlan?.takeIf { it.first == place.id }?.second ?: return
+        val facility = plan.features.filter { it.name != null && place.name.equals(it.name, ignoreCase = true) }
+            .minByOrNull { it.center.distanceTo(place.location) }
+        val floor = facility?.floors?.firstOrNull() ?: plan.floors.firstOrNull { it == "0" } ?: plan.floors.lastOrNull() ?: return
+        indoorView = IndoorView(place, plan, floor, facility)
+        val points = plan.building ?: plan.features.filter { floor in it.floors }.flatMap { it.geometry }
+        frame(points, bottomFraction = 0.18f, top = 108, flat = true)
+    }
+
     fun setIndoorFloor(floor: String) {
-        indoorView = indoorView?.copy(floor = floor)
+        indoorView = indoorView?.copy(floor = floor, feature = null)
+    }
+
+    fun selectIndoor(at: LatLng): Boolean {
+        val view = indoorView ?: return false
+        val named = view.plan.features.asSequence().filter { view.floor in it.floors && it.name != null }
+        val feature = named.filter { it.covers(at) || it.center.distanceTo(at) < 14 }
+            .minByOrNull { it.center.distanceTo(at) }
+        indoorView = view.copy(feature = feature)
+        return true
     }
 
     fun closeIndoor() {
         indoorView = null
         resetCamera()
+        selected?.let { frame(listOf(it.location), bottomFraction = 0.32f) }
+    }
+
+    fun openIndoorPlace(feature: IndoorMaps.Feature) {
+        val name = feature.name ?: return
+        indoorView = null
+        select(Place("indoor:${feature.center.lat},${feature.center.lng}:$name", name,
+            feature.center, "osm", category = feature.category ?: feature.kind))
     }
 
     fun showStationEntrance(at: LatLng) {
@@ -2032,7 +2084,7 @@ class AppModel {
         frame(points, bottomFraction = if (profileRoute == null) 0.30f else 0.52f, top = 58)
     }
 
-    fun frame(points: List<LatLng>, bottomFraction: Float = 0.45f, top: Int = 130, flat: Boolean = false) {
+    fun frame(points: List<LatLng>, bottomFraction: Float = 0.45f, top: Int = 130, flat: Boolean = false, marginZoom: Double = 0.0) {
         if (mapNavigator?.following == true) return
         val m = map ?: return
         val first = points.firstOrNull() ?: return
@@ -2047,7 +2099,7 @@ class AppModel {
         val b = LatLngBounds.Builder().apply { points.forEach { include(it.ml()) } }.build()
         val topInset = top.coerceAtMost((mapHeightDp * 0.35f).toInt())
         val bottomInset = (mapHeightDp * bottomFraction + 20).toInt().coerceAtMost((mapHeightDp * 0.55f).toInt())
-        MapCam.fit(m, b, intArrayOf(40, topInset, 40, bottomInset), ms = 360, native = nativeCamera, pitch = pitch)
+        MapCam.fit(m, b, intArrayOf(40, topInset, 40, bottomInset), ms = 360, native = nativeCamera, pitch = pitch, marginZoom = marginZoom)
     }
 
     companion object {

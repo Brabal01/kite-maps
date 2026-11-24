@@ -43,7 +43,7 @@ import app.kite.primaryText
 import app.kite.secondaryText
 import app.kite.KType
 
-private data class AheadMarker(val distance: Double, val name: String, val icon: ImageVector, val color: Color, val alert: WazeAlert? = null)
+private data class AheadMarker(val distance: Double, val name: String, val icon: ImageVector, val color: Color, val alert: WazeAlert? = null, val scalable: Boolean = alert != null)
 
 @Composable
 fun RoadAheadStrip(nav: Navigator, modifier: Modifier = Modifier, showLabels: Boolean = true,
@@ -52,11 +52,11 @@ fun RoadAheadStrip(nav: Navigator, modifier: Modifier = Modifier, showLabels: Bo
     if ((progress?.offsetMeters ?: 0.0) > 120 || (progress?.remainingMeters ?: nav.route.distanceMeters) <= 0) return
     val start = progress?.alongMeters ?: 0.0
     val walking = nav.route.mode == TravelMode.WALK
-    val range = (progress?.remainingMeters ?: nav.route.distanceMeters).coerceIn(1.0, if (walking) 600.0 else 3_000.0)
+    val range = (progress?.remainingMeters ?: nav.route.distanceMeters).coerceIn(1.0, if (walking) AppSettings.walkingAheadRange.coerceIn(300, 1000).toDouble() else 3_000.0)
     val end = start + range
     val dark = LocalDark.current
     val traffic = nav.roadTraffic.takeIf { AppSettings.aheadTraffic }.orEmpty().filter { it.startMeters < end && it.startMeters + it.lengthMeters > start }
-    val controls = nav.roadControls.asSequence().filter { it.along in start..end && AppSettings.showsControl(it.kind) }.map {
+    val controls = nav.roadControls.asSequence().filter { it.along in start..end && (if (walking) AppSettings.showsWalkingControl(it.kind) else AppSettings.showsControl(it.kind)) }.map {
         val distance = it.along - start
         when (it.kind) {
             Overpass.ControlKind.SIGNAL -> AheadMarker(distance, "Traffic lights", Icons.Filled.Traffic,
@@ -69,33 +69,49 @@ fun RoadAheadStrip(nav: Navigator, modifier: Modifier = Modifier, showLabels: Bo
                 if (dark) Color(0xFFFFCD80) else Color(0xFF835021))
         }
     }
-    val cameras = nav.routeCameras.asSequence().filter { AppSettings.aheadCameras && it.along in start..end && !it.camera.quiet }
-        .map { AheadMarker(it.along - start, "Camera", Icons.Filled.PhotoCamera, if (dark) Color(0xFFDBC5FF) else Color(0xFF643894)) }
+    val cameras = nav.routeCameras.asSequence().filter { (if (walking) AppSettings.walkingCameras else AppSettings.aheadCameras) && it.along in start..end && !it.camera.quiet }
+        .map { AheadMarker(it.along - start, "Camera", Icons.Filled.PhotoCamera, if (dark) Color(0xFFDBC5FF) else Color(0xFF643894), scalable = true) }
     val reports = nav.routeWaze.asSequence().filter {
-        it.along in start..end && AppSettings.showsOnRoad(it.alert)
+        it.along in start..end && (!walking || AppSettings.walkingWaze) && AppSettings.showsOnRoad(it.alert)
     }.map { AheadMarker(it.along - start, it.alert.title, MapIcons.wazeIcon(it.alert.kind),
         Color(0xFF000000 or MapIcons.wazeColor(it.alert.kind)), it.alert) }
     val markers = (reports + controls + cameras).sortedBy { it.distance }.toList()
 
-    if (walking && verticalHeight != null) {
-        if (markers.isEmpty()) return
-        val count = ((verticalHeight.value - 12) / 53).toInt().coerceIn(1, 3)
-        Column(modifier.width(66.dp).glass(RoundedCornerShape(17.dp), solid = true).padding(vertical = 6.dp),
-            horizontalAlignment = Alignment.CenterHorizontally) {
-            for (marker in markers.take(count)) {
-                Column(Modifier.fillMaxWidth().height(53.dp), horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center) {
-                    Icon(marker.icon, marker.name, Modifier.size(23.dp), tint = marker.color)
-                    Text(Fmt.distance(marker.distance), fontSize = KType.caption2, fontWeight = FontWeight.SemiBold, color = primaryText)
+    val vertical = verticalHeight != null
+    if (walking && markers.isEmpty()) return
+    val style = AppSettings.roadStripStyle
+    val iconScale = AppSettings.wazeStripPercent.coerceIn(60, 160) / 100f
+    if (style == RoadStripStyle.CONTRAST && markers.isNotEmpty()) {
+        val n = if (vertical) ((requireNotNull(verticalHeight).value - 10) / 53).toInt().coerceIn(1, 4) else 4
+        @Composable
+        fun event(marker: AheadMarker, width: Modifier) {
+            val label = Fmt.distance(marker.distance)
+            val action = marker.alert?.let { Modifier.clickable { onAlert(it) } } ?: Modifier
+            Column(width.then(action).glass(RoundedCornerShape(13.dp), solid = true).padding(5.dp),
+                horizontalAlignment = Alignment.CenterHorizontally) {
+                val icon = 21.dp * if (marker.scalable) iconScale else 1f
+                Icon(marker.icon, marker.name, Modifier.size(icon), tint = marker.color)
+                Text(label, color = primaryText, fontWeight = FontWeight.Bold, fontSize = KType.caption2)
+            }
+        }
+        Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            if (vertical) markers.take(n).forEach { event(it, Modifier.width(64.dp)) }
+            else Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                markers.take(n).forEach { event(it, Modifier.weight(1f)) }
+            }
+            if (traffic.isNotEmpty() && !vertical) {
+                Canvas(Modifier.fillMaxWidth().height(5.dp)) {
+                    drawLine(Color.Gray, Offset(0f, size.height / 2), Offset(size.width, size.height / 2), size.height)
+                    for (span in traffic) {
+                        val a = ((span.startMeters - start) / range).coerceIn(0.0, 1.0).toFloat() * size.width
+                        val b = ((span.startMeters + span.lengthMeters - start) / range).coerceIn(0.0, 1.0).toFloat() * size.width
+                        drawLine(trafficInk(span.level), Offset(a, size.height / 2), Offset(b, size.height / 2), size.height)
+                    }
                 }
             }
         }
         return
     }
-
-    val vertical = verticalHeight != null
-    val style = AppSettings.roadStripStyle
-    val iconScale = AppSettings.wazeStripPercent.coerceIn(60, 160) / 100f
     val railWidth = when (style) {
         RoadStripStyle.MINIMAL -> 3.dp
         RoadStripStyle.CLASSIC -> 6.dp
@@ -107,8 +123,9 @@ fun RoadAheadStrip(nav: Navigator, modifier: Modifier = Modifier, showLabels: Bo
     val shape = RoundedCornerShape(if (vertical) 27.dp else 19.dp)
     val stripSize = if (vertical) Modifier.width(maxOf(51.dp, 23.dp * iconScale + 20.dp)).height(requireNotNull(verticalHeight))
         else Modifier.fillMaxWidth()
-    Column(modifier.then(stripSize).glass(shape, solid = true).padding(if (vertical) 5.dp else 8.dp)) {
-        if (showLabels && !vertical) Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+    val chrome = if (style == RoadStripStyle.MINIMAL) Modifier else Modifier.glass(shape, solid = true)
+    Column(modifier.then(stripSize).then(chrome).padding(if (style == RoadStripStyle.MINIMAL) 0.dp else if (vertical) 5.dp else 8.dp)) {
+        if (showLabels && !vertical && style != RoadStripStyle.MINIMAL) Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp),
             horizontalArrangement = Arrangement.SpaceBetween) {
             Text("Road ahead", color = primaryText, fontSize = KType.caption, fontWeight = FontWeight.SemiBold)
             val incident = traffic.minByOrNull { it.startMeters }
@@ -138,11 +155,7 @@ fun RoadAheadStrip(nav: Navigator, modifier: Modifier = Modifier, showLabels: Bo
                 val rail = if (style == RoadStripStyle.CONTRAST) origin.copy(alpha = 0.72f) else railColor
                 drawLine(rail, point(0.0), point(range), strokeWidth = railWidth.toPx(), cap = StrokeCap.Round)
                 for (span in traffic) {
-                    val color = when (span.level) {
-                        1 -> Color(0xFFF59E0B)
-                        2 -> Color(0xFFF05240)
-                        else -> Color(0xFFC01E40)
-                    }
+                    val color = trafficInk(span.level)
                     drawLine(color, point(span.startMeters - start), point(span.startMeters + span.lengthMeters - start),
                         strokeWidth = railWidth.toPx(), cap = StrokeCap.Round)
                 }
@@ -158,16 +171,16 @@ fun RoadAheadStrip(nav: Navigator, modifier: Modifier = Modifier, showLabels: Bo
                 val position = if (vertical) Modifier.align(Alignment.TopCenter).offset(y = length - offset)
                     else Modifier.align(Alignment.CenterStart).offset(x = offset)
                 val asset = AppSettings.markerTheme.resource
-                val size = 23.dp * if (marker.alert != null) iconScale else 1f
+                val size = 23.dp * if (marker.scalable) iconScale else 1f
                 val ring = when (style) {
                     RoadStripStyle.MINIMAL -> 0.dp
                     RoadStripStyle.CLASSIC -> 1.5.dp
                     RoadStripStyle.CONTRAST -> 2.5.dp
                 }
                 val iconInk = if (asset != null || marker.color.luminance() < 0.20f && dark) Color.White else marker.color
-                Box(position.size(badge).background(interfaceSurface, CircleShape)
+                val backing = if (style == RoadStripStyle.MINIMAL) Modifier else Modifier.background(interfaceSurface, CircleShape)
                     .border(ring, marker.color.copy(alpha = 0.72f), CircleShape)
-                    .then(action), contentAlignment = Alignment.Center) {
+                Box(position.size(badge).then(backing).then(action), contentAlignment = Alignment.Center) {
                     if (asset != null) Image(painterResource(asset), null, Modifier.size(size + 6.dp))
                     Icon(marker.icon, "${marker.name}, ${Fmt.distance(marker.distance)} ahead",
                         tint = iconInk, modifier = Modifier.size(if (asset == null) size else size * 0.78f))
@@ -175,4 +188,10 @@ fun RoadAheadStrip(nav: Navigator, modifier: Modifier = Modifier, showLabels: Bo
             }
         }
     }
+}
+
+private fun trafficInk(level: Int): Color = when (level) {
+    1 -> Color(0xFFF59E0B)
+    2 -> Color(0xFFF05240)
+    else -> Color(0xFFC01E40)
 }

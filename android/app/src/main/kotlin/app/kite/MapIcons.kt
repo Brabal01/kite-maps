@@ -175,6 +175,8 @@ object MapIcons {
             add("pedestrian-crossing", dot(Icons.AutoMirrored.Filled.DirectionsWalk, c(0x126782)))
             add("osm-drinking_water", dot(Icons.Filled.WaterDrop, c(0x227FA8)))
             add("osm-toilets", dot(Icons.Filled.Wc, c(0x546294)))
+            add("indoor-elevator", dot(Icons.Filled.Elevator, c(0x256E73)))
+            add("indoor-stairs", dot(Icons.Filled.Stairs, c(0x256E73)))
             add("osm-transit", dot(Icons.Filled.Tram, c(0x4D66BB)))
             add("osm-bicycle_parking", dot(Icons.Filled.PedalBike, c(0x227D6B)))
             // Live camera photos: sky blue for road cameras, violet for Windy's scenic webcams.

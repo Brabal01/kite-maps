@@ -98,6 +98,7 @@ data class TransitTrip(
     val transfers: Int,
     val legs: List<TransitLeg>,
     val id: String = UUID.randomUUID().toString(),
+    val itineraryId: String? = null,
 ) {
     val rides: List<TransitLeg> get() = legs.filter { !it.isWalk }
     val walkSeconds: Double get() = legs.filter { it.isWalk }.sumOf { it.durationSeconds }
@@ -108,6 +109,7 @@ data class TransitTrip(
 object Transitous {
     const val base = "https://api.transitous.org"
     private val client = Http.client(25)
+    private val refreshClient = Http.client(8)
     private val headers = mapOf("User-Agent" to "Kite-Maps-Android (https://github.com/matteofx1/kite-maps)")
 
     fun planURL(from: LatLng, to: LatLng, max: Int = 5, timeMillis: Long? = null, arriveBy: Boolean = false): String {
@@ -121,9 +123,36 @@ object Transitous {
 
     /** Trips leaving now, or around [timeMillis]. Throws on a network error. */
     suspend fun plan(from: LatLng, to: LatLng, timeMillis: Long? = null, arriveBy: Boolean = false): List<TransitTrip> {
-        val r = Http.get(planURL(from, to, timeMillis = timeMillis, arriveBy = arriveBy), headers, client)
-        if (r.code != 200) throw KiteError.http(r.code)
+        val oldUrl = planURL(from, to, timeMillis = timeMillis, arriveBy = arriveBy)
+        val modern = Http.getOrNull(oldUrl.replace("/api/v1/", "/api/v6/") + "&withFares=false", headers, client)
+        if (modern?.ok == true) return parse(modern.body)
+        val r = Http.get(oldUrl, headers, client)
+        if (!r.ok) throw KiteError.http(r.code)
         return parse(r.body)
+    }
+
+    /** Refresh the itinerary in one request. Keep the chosen vehicle IDs and transfer order. */
+    suspend fun refresh(trip: TransitTrip): TransitTrip? {
+        val id = trip.itineraryId ?: return null
+        val response = Http.getOrNull("$base/api/v6/refresh-itinerary?itineraryId=${urlEnc(id)}&withFares=false", headers, refreshClient)
+            ?.takeIf { it.ok } ?: return null
+        return withContext(Dispatchers.Default) {
+            val current = Json.obj(response.body)?.let(::itinerary) ?: return@withContext null
+            val was = trip.rides.map { it.tripId }
+            val fresh = current.rides.map { it.tripId }
+            if (was != fresh || was.any { it == null }) return@withContext null
+            current.copy(id = trip.id, itineraryId = current.itineraryId ?: id)
+        }
+    }
+
+    /** When a regional feed has live times on its departures but not on the trip endpoint. */
+    suspend fun localDeparture(leg: TransitLeg): TransitCall? {
+        val call = leg.calls.firstOrNull() ?: return null
+        val departure = leg.depart ?: return null
+        if (leg.tripId == null || call.stopId == null || abs(System.currentTimeMillis() - departure) > 60 * 60_000) return null
+        val update = departures(call.at, stopId = call.stopId, stopName = call.name)?.departures
+            ?.firstOrNull { it.tripId == leg.tripId && it.delayMinutes != null } ?: return null
+        return call.copy(departure = update.time, departureDelay = update.delayMinutes, platform = update.platform ?: call.platform)
     }
 
     /** Refreshes the same train/bus, identified by its service-day trip ID, not another departure on the line. */
@@ -273,7 +302,8 @@ object Transitous {
         val all = mutableListOf<Departure>()
         for (id in ids) {
             val args = "stopId=${urlEnc(id)}&n=30"
-            val d = Http.getOrNull("$base/api/v5/stoptimes?$args", headers, client)?.takeIf { it.ok }
+            val d = Http.getOrNull("$base/api/v6/stoptimes?$args", headers, client)?.takeIf { it.ok }
+                ?: Http.getOrNull("$base/api/v5/stoptimes?$args", headers, client)?.takeIf { it.ok }
                 ?: Http.getOrNull("$base/api/v1/stoptimes?$args", headers, client)?.takeIf { it.ok } ?: continue
             all += parseStopTimes(d.body, name)
         }
@@ -355,7 +385,7 @@ object Transitous {
         val end = date(it["endTime"])
         val dur = it["duration"].num() ?: if (start != null && end != null) (end - start) / 1000.0 else 0.0
         val transfers = it["transfers"].int() ?: maxOf(0, legs.count { !it.isWalk } - 1)
-        return TransitTrip(start, end, dur, transfers, legs)
+        return TransitTrip(start, end, dur, transfers, legs, itineraryId = ((it["id"] ?: it["itineraryId"]) as? String)?.takeIf(String::isNotBlank))
     }
 
     private fun leg(l: Map<String, Any?>): TransitLeg {

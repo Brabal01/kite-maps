@@ -14,7 +14,7 @@ enum class MarkerTheme(val label: String, val resource: Int?) {
     CLASSIC("Classic", null), PORCELAIN("Porcelain", R.drawable.icon_porcelain),
     NIGHT("Neon", R.drawable.icon_night), TRAIL("Trail", R.drawable.icon_trail),
 }
-enum class RoadStripStyle(val label: String) { CLASSIC("Classic"), MINIMAL("Minimal"), CONTRAST("High contrast") }
+enum class RoadStripStyle(val label: String) { CLASSIC("Classic"), MINIMAL("Bare line"), CONTRAST("Event cards") }
 
 enum class RoadStripPosition(val label: String) { BOTTOM("Bottom"), TOP("Top"), LEFT("Left"), RIGHT("Right") }
 
@@ -103,6 +103,23 @@ object AppSettings {
         { e, value -> e.putString(key, value.colors.joinToString(",")) })
     var dayMapPalette by palette("dayMapPalette", false)
     var nightMapPalette by palette("nightMapPalette", true)
+    var walkingAhead by bool("walkingAhead", true)
+    var walkingAheadRight by bool("walkingAheadRight")
+    var walkingAheadRange by int("walkingAheadRange", 600)
+    var walkingSignals by bool("walkingSignals", true)
+    var walkingStops by bool("walkingStops")
+    var walkingRail by bool("walkingRail", true)
+    var walkingCrossings by bool("walkingCrossings")
+    var walkingWaze by bool("walkingWaze")
+    var walkingCameras by bool("walkingCameras")
+
+    fun showsWalkingControl(kind: Overpass.ControlKind): Boolean = when (kind) {
+        Overpass.ControlKind.SIGNAL -> walkingSignals
+        Overpass.ControlKind.STOP -> walkingStops
+        Overpass.ControlKind.RAIL -> walkingRail
+        Overpass.ControlKind.CROSSING -> walkingCrossings
+    }
+
     var roadAheadStrip by bool("roadAheadStrip", true)
     var terrain3D by bool("terrain3D")
     var buildingShadows by bool("buildingShadows", true)
@@ -156,6 +173,8 @@ object AppSettings {
         Overpass.ControlKind.RAIL -> aheadRail
         Overpass.ControlKind.CROSSING -> aheadCrossings
     }
+    var pidAccessToken by Pref("pidAccessToken", { it.getString("pidAccessToken", "").orEmpty() },
+        { e, token -> e.putString("pidAccessToken", token) })
     var mapboxPublicToken by Pref("mapboxPublicToken", { it.getString("mapboxPublicToken", "").orEmpty() },
         { e, token -> e.putString("mapboxPublicToken", token) })
     val activeMapboxToken: String? get() = mapboxPublicToken.takeIf {

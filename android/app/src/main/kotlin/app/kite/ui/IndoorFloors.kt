@@ -7,7 +7,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Apartment
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Place
@@ -31,9 +31,6 @@ fun IndoorPlaceActions(model: AppModel, place: Place, station: Boolean) {
     val isSantovka = place.name.contains("Šantovka", ignoreCase = true) &&
         place.location.distanceTo(LatLng(49.5861, 17.2587)) < 1000
     Column {
-        IconRow(Icons.Filled.Apartment, "Indoor floors", trailing = if (model.loadingIndoor) "Loading…" else "View map") {
-            model.openIndoor(place)
-        }
         if (station) IconRow(Icons.Filled.ExitToApp, "Station entrances and exits", trailing = "View") { access = true }
         if (isSantovka) IconRow(Icons.Filled.Map, "Official Galerie Šantovka floor map", trailing = "Open") {
             context.open("https://www.galeriesantovka.cz/obchody/mapa-centra/")
@@ -53,8 +50,10 @@ fun IndoorFloorOverlay(model: AppModel, view: AppModel.IndoorView) {
             .background(interfaceSheet).padding(start = 16.dp, end = 6.dp),
             verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f).padding(vertical = 9.dp)) {
-                Text(view.place.name, color = primaryText, fontSize = KType.headline, fontWeight = FontWeight.Bold, maxLines = 1)
-                Text("Indoor floors · OpenStreetMap", color = secondaryText, fontSize = KType.caption)
+                Text(view.plan.buildingName ?: view.place.name, color = primaryText, fontSize = KType.headline, fontWeight = FontWeight.Bold, maxLines = 1)
+                val note = if (view.plan.features.any { it.polygon && view.floor in it.floors && it.kind != "level" })
+                    "Floor ${view.floor} · OpenStreetMap" else "Floor ${view.floor} · mapped places"
+                Text(note, color = secondaryText, fontSize = KType.caption)
             }
             TextButton(model::closeIndoor) { Text("Done") }
         }
@@ -64,6 +63,26 @@ fun IndoorFloorOverlay(model: AppModel, view: AppModel.IndoorView) {
             items(view.plan.floors, key = { it }) { floor ->
                 val selected = floor == view.floor
                 FilterChip(selected, { model.setIndoorFloor(floor) }, label = { Text(floor) })
+            }
+        }
+        view.feature?.let { feature ->
+            Surface(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(end = 4.dp),
+                color = interfaceSheet, shape = RoundedCornerShape(22.dp), tonalElevation = 4.dp) {
+                Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Icon(when (feature.kind) {
+                        "toilets" -> Icons.Filled.Wc
+                        "stairs" -> Icons.Filled.Stairs
+                        "elevator" -> Icons.Filled.Elevator
+                        else -> Icons.Filled.Storefront
+                    }, null, tint = interfaceAccentText)
+                    Column(Modifier.weight(1f)) {
+                        Text(feature.name.orEmpty(), color = primaryText, fontWeight = FontWeight.Bold)
+                        val type = (feature.category ?: feature.kind).replace('_', ' ').replaceFirstChar(Char::uppercase)
+                        Text("Floor ${view.floor} · $type", color = secondaryText, fontSize = KType.caption)
+                    }
+                    TextButton({ model.openIndoorPlace(feature) }) { Text("Details") }
+                }
             }
         }
     }

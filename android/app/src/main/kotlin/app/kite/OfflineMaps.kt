@@ -5,8 +5,6 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import app.kite.core.Box
-import app.kite.core.LatLng
-import app.kite.core.OutdoorData
 import org.maplibre.android.geometry.LatLngBounds
 import org.maplibre.android.offline.OfflineManager
 import org.maplibre.android.offline.OfflineRegion
@@ -19,14 +17,16 @@ internal object OfflineMaps {
     data class Area(
         val id: Long, val name: String, val bounds: LatLngBounds, val maxZoom: Double,
         val active: Boolean = false, val complete: Boolean = false,
-        val bytes: Long = 0, val progress: Float? = null,
+        val bytes: Long = 0, val progress: Float? = null, val resources: Long = 0,
+        val error: String? = null,
     )
 
     val areas = mutableStateMapOf<Long, Area>()
     var message by mutableStateOf<String?>(null)
         private set
-    var creating by mutableStateOf(false)
+    var pendingName by mutableStateOf<String?>(null)
         private set
+    val creating: Boolean get() = pendingName != null
     private var loaded = false
     private val regions = mutableMapOf<Long, OfflineRegion>()
     private val manager get() = OfflineManager.getInstance(KiteApp.app)
@@ -50,7 +50,10 @@ internal object OfflineMaps {
         areas[id] = Area(id, name, bounds, def.maxZoom)
         region.setObserver(object : OfflineRegion.OfflineRegionObserver {
             override fun onStatusChanged(status: OfflineRegionStatus) { update(region, status) }
-            override fun onError(error: OfflineRegionError) { message = error.message }
+            override fun onError(error: OfflineRegionError) {
+                val area = areas[id] ?: return
+                areas[id] = area.copy(error = error.message)
+            }
             override fun mapboxTileCountLimitExceeded(limit: Long) { stop(id); message = "Offline tile limit reached." }
         })
         region.getStatus(object : OfflineRegion.OfflineRegionStatusCallback {
@@ -64,12 +67,10 @@ internal object OfflineMaps {
         val progress = if (status.isRequiredResourceCountPrecise && status.requiredResourceCount > 0) {
             (status.completedResourceCount.toFloat() / status.requiredResourceCount).coerceIn(0f, 1f)
         } else null
-        areas[region.id] = current.copy(complete = status.isComplete, bytes = status.completedResourceSize, progress = progress)
+        areas[region.id] = current.copy(complete = status.isComplete, bytes = status.completedResourceSize,
+            progress = progress, resources = status.completedResourceCount,
+            error = if (status.completedResourceCount > current.resources || status.isComplete) null else current.error)
         if (status.isComplete && current.active) stop(region.id)
-    }
-
-    fun download(name: String, center: LatLng, radiusKm: Float) {
-        download(name, OutdoorData.bounds(center, radiusKm.coerceIn(2f, 15f) * 1000.0), 15)
     }
 
     fun download(region: OfflineRegions.Region) = download(region.name, region.box, region.maxZoom)
@@ -81,7 +82,7 @@ internal object OfflineMaps {
             message = "Choose a map area away from the poles."
             return
         }
-        creating = true
+        pendingName = name
         message = null
         val bounds = LatLngBounds.from(box.n, box.e, box.s, box.w)
         val definition = OfflineTilePyramidRegionDefinition(KiteMap.STYLE_URL, bounds, minOf(9, zoom - 2).toDouble(), zoom.toDouble(),
@@ -89,11 +90,11 @@ internal object OfflineMaps {
         manager.createOfflineRegion(definition, name.trim().ifBlank { "Offline area" }.take(70).toByteArray(),
             object : OfflineManager.CreateOfflineRegionCallback {
                 override fun onCreate(region: OfflineRegion) {
-                    creating = false
                     register(region)
                     resume(region.id)
+                    pendingName = null
                 }
-                override fun onError(error: String) { creating = false; message = error }
+                override fun onError(error: String) { pendingName = null; message = error }
             })
     }
 
@@ -102,7 +103,7 @@ internal object OfflineMaps {
         val area = areas[id]?.takeUnless { it.complete } ?: return
         val region = regions[id] ?: return
         message = null
-        areas[id] = area.copy(active = true)
+        areas[id] = area.copy(active = true, error = null)
         region.setDownloadState(OfflineRegion.STATE_ACTIVE)
     }
 

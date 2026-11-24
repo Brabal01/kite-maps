@@ -50,6 +50,10 @@ fun PlaceHeader(model: AppModel, place: Place) {
     var share by remember(place.id) { mutableStateOf(false) }
     var chooseLists by remember(place.id) { mutableStateOf(false) }
     Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (model.placeIndoorPlan?.first == place.id) {
+            AssistChip(onClick = { model.openIndoor(place) }, label = { Text("Indoor floors") },
+                leadingIcon = { Icon(Icons.Filled.Apartment, null, Modifier.size(17.dp)) })
+        }
         Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Box(Modifier.weight(1f)) {
                 Copyable(place.name) {

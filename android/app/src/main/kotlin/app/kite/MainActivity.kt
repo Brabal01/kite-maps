@@ -29,6 +29,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.viewinterop.AndroidView
 import app.kite.ui.*
+import app.kite.core.PidRealtime
+import app.kite.core.TransitLive
 import app.kite.core.Transitous
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
@@ -36,6 +38,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 
 class MainActivity : ComponentActivity() {
     var inPip by mutableStateOf(false)
@@ -213,8 +216,8 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
     val usableStandardToken = standardToken.takeUnless { scenery.failed }
     val standardReady = usableStandardToken != null && scenery.ready
     val showingMapbox = standardReady || kiteMap.showingMapbox
-    val look = MapboxScenery.Look(mapDark, satellite, s.terrain3D, s.terrain, s.buildingShadows && !driving, s.streetLamps, s.traffic && !driving,
-        if (mapDark) s.nightMapPalette else s.dayMapPalette, driving)
+    val look = MapboxScenery.Look(mapDark, satellite, s.terrain3D && model.indoorView == null, s.terrain, s.buildingShadows && !driving, s.streetLamps, s.traffic && !driving,
+        if (mapDark) s.nightMapPalette else s.dayMapPalette, driving, indoor = model.indoorView != null)
     LaunchedEffect(look) { scenery.setLook(look) }
     LaunchedEffect(mapDark, driving, satellite, mapboxToken, standardReady) {
         kiteMap.applyBasemap(mapDark, driving, satellite && !standardReady, mapboxToken.takeUnless { standardReady })
@@ -232,30 +235,58 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
 
     val journey = model.transitGuidance
     val transitTrip = journey?.trip ?: model.directions?.takeIf { it.transit }?.pickedTrip
-    LaunchedEffect(transitTrip?.id, journey?.legIndex, journey?.phase) {
+    LaunchedEffect(transitTrip?.id, journey?.legIndex, journey?.phase, s.pidAccessToken) {
         model.transitLive = emptyMap()
+        model.refreshedTransit = null
         val trip = transitTrip ?: return@LaunchedEffect
         if (journey?.phase == TransitGuidance.Phase.COMPLETE) return@LaunchedEffect
-        val firstLeg = journey?.legIndex ?: 0
-        val candidates = trip.legs.drop(firstLeg).filter { !it.isWalk }.distinctBy { it.tripId }
+        val candidates = trip.legs.drop(journey?.legIndex ?: 0).filter { !it.isWalk }.distinctBy { it.tripId }
         if (candidates.isEmpty()) return@LaunchedEffect
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            var nextWholeRefresh = 0L
             while (true) {
                 val now = System.currentTimeMillis()
                 val visibleRides = candidates.filter { leg ->
                     val depart = leg.depart ?: return@filter false
-                    val arrive = leg.arrive ?: depart
-                    now in (depart - 45 * 60_000)..(arrive + 12 * 60_000)
-                }.take(2)
-                val updated = coroutineScope {
-                    visibleRides.map { leg ->
+                    now in (depart - 55 * 60_000)..((leg.arrive ?: depart) + 35 * 60_000)
+                }.take(4)
+                val details = coroutineScope {
+                    val refreshed = async {
+                        if (now < nextWholeRefresh || visibleRides.isEmpty()) null else {
+                            nextWholeRefresh = now + 65_000
+                            Transitous.refresh(trip)
+                        }
+                    }
+                    val current = visibleRides.map { original ->
                         async {
-                            val id = leg.tripId ?: return@async null
-                            Transitous.live(leg)?.let { id to it }
+                            val id = original.tripId ?: return@async null
+                            val operator = async { PidRealtime.forLeg(original, s.pidAccessToken) }
+                            val status = withTimeoutOrNull(11_000) { Transitous.live(original) }
+                            val fromItinerary = (refreshed.await() ?: model.refreshedTransit)?.rides?.firstOrNull { it.tripId == id }
+                            val scheduled = (fromItinerary ?: original).calls
+                            val board = status?.board?.takeIf { it.departureDelay != null }
+                                ?: scheduled.firstOrNull()?.takeIf { it.departureDelay != null } ?: status?.board ?: scheduled.firstOrNull()
+                            val exit = status?.exit?.takeIf { it.arrivalDelay != null }
+                                ?: scheduled.lastOrNull()?.takeIf { it.arrivalDelay != null } ?: status?.exit ?: scheduled.lastOrNull()
+                            val pid = operator.await()
+                            val regional = if (pid?.board == null && status?.cancelled != true && board?.departureDelay == null)
+                                withTimeoutOrNull(7_500) { Transitous.localDeparture(original) } else null
+                            val merged = (status ?: TransitLive(null, null, false, original.notices)).copy(
+                                board = pid?.board ?: regional ?: board,
+                                exit = exit,
+                                position = pid?.position ?: status?.position,
+                                gps = pid?.position != null || status?.gps == true,
+                                calls = status?.calls?.takeIf { it.isNotEmpty() } ?: scheduled,
+                                cancelled = pid?.cancelled == true || status?.cancelled == true || fromItinerary?.cancelled == true,
+                                notices = (status?.notices.orEmpty() + fromItinerary?.notices.orEmpty() + original.notices).distinct(),
+                            )
+                            id to merged
                         }
                     }.awaitAll().filterNotNull().toMap()
+                    refreshed.await() to current
                 }
-                model.transitLive = updated
+                details.first?.let { model.refreshedTransit = it }
+                model.transitLive = details.second
                 delay(35_000)
             }
         }
@@ -318,6 +349,7 @@ fun KiteScreen(model: AppModel, activity: MainActivity) {
         }
     }
     LaunchedEffect(model.profileProbe, model.stationEntrance) { kiteMap.refreshProfileProbe() }
+    LaunchedEffect(model.selected?.id, Connectivity.online) { model.probeIndoor(model.selected) }
     LaunchedEffect(model.indoorView) { kiteMap.refreshIndoor() }
     LaunchedEffect(model.streetViewFrame) { kiteMap.refreshStreetView() }
 

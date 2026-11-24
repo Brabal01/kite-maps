@@ -64,7 +64,7 @@ import kotlin.math.floor
 class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
     data class Look(val dark: Boolean, val satellite: Boolean, val terrain: Boolean, val shade: Boolean,
                     val shadows: Boolean, val lamps: Boolean, val traffic: Boolean = true,
-                    val palette: MapPalette = MapPalette.default(dark), val driving: Boolean = false)
+                    val palette: MapPalette = MapPalette.default(dark), val driving: Boolean = false, val indoor: Boolean = false)
 
     private var view: MapView? = null
     private var attributionDialog: AttributionDialogManagerImpl? = null
@@ -110,7 +110,7 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
 
     private fun applyPinSizes(st: Style) {
         val waze = AppSettings.wazeMapPercent.coerceIn(60, 160) / 100.0
-        for (id in listOf("kite-vela-waze", "kite-vela-waze-group")) {
+        for (id in listOf("kite-vela-waze", "kite-vela-waze-group", "kite-vela-cameras")) {
             st.setStyleLayerProperty(id, "icon-size", Value.valueOf(1.17 * waze))
         }
         val sizes = MapPinSizes.read()
@@ -187,7 +187,7 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
             if (error.type.name.startsWith("STYLE") && style == null) failStyle()
         }
         map.addOnMapClickListener { point ->
-            if (model.streetViewMapTapped(point.kite()) || model.positionEndpointPin(point.kite())) true
+            if (model.selectIndoor(point.kite()) || model.streetViewMapTapped(point.kite()) || model.positionEndpointPin(point.kite())) true
             else if (model.stopSearch != null) {
                 val search = model.stopSearch
                 val pixel = map.pixelForCoordinate(point)
@@ -597,15 +597,16 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
             else st.addImage("puck", MapIcons.puck(look.dark))
         }
         val paletteChanged = previous?.palette != look.palette
-        if (themeChanged || paletteChanged || previous.satellite != look.satellite) {
+        if (themeChanged || paletteChanged || previous.satellite != look.satellite || previous.indoor != look.indoor) {
             val configs = hashMapOf(
                 "lightPreset" to Value.valueOf(if (look.dark && !look.satellite) "night" else "day"),
                 "showPointOfInterestLabels" to Value.valueOf(false),
             )
-            configs["show3dObjects"] = Value.valueOf(!look.satellite)
+            configs["show3dObjects"] = Value.valueOf(!look.satellite && !look.indoor)
+            configs["show3dBuildings"] = Value.valueOf(!look.indoor)
             if (!look.satellite) {
-                configs["show3dTrees"] = Value.valueOf(true)
-                configs["show3dLandmarks"] = Value.valueOf(true)
+                configs["show3dTrees"] = Value.valueOf(!look.indoor)
+                configs["show3dLandmarks"] = Value.valueOf(!look.indoor)
                 configs["showHdRoads"] = Value.valueOf(true)
                 for (field in MapColor.entries) field.styleKey?.let { configs[it] = Value.valueOf(look.palette[field]) }
                 configs["colorTrunks"] = Value.valueOf(look.palette[MapColor.HIGHWAYS])
@@ -624,7 +625,7 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
         }
         if (paletteChanged) {
             val color = look.palette[MapColor.ROUTE]
-            st.setStyleLayerProperty("kite-route", "line-color", Value.valueOf(color))
+            Value.fromJson(routePaint(color)).value?.let { st.setStyleLayerProperty("kite-route", "line-color", it) }
             val rgb = Color.parseColor(color)
             val edge = Color.rgb(Color.red(rgb) / 3, Color.green(rgb) / 3, Color.blue(rgb) / 3)
             st.setStyleLayerProperty("kite-edge", "line-color", Value.valueOf(String.format(java.util.Locale.US, "#%06X", edge and 0xFFFFFF)))
@@ -695,6 +696,9 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
             .textHaloColor(if (look.dark) "#203045" else "#FFFFFF").visibility(Visibility.NONE))
     }
 
+    private fun routePaint(color: String) =
+        """["match",["get","level"],1,"#F59E0B",2,"#EF4444",3,"#B91C1C","$color"]"""
+
     private fun addOverlays(st: Style) {
         for (id in overlaySources) st.addSource(GeoJsonSource.Builder(id).data(overlayData[id] ?: EMPTY).build())
         fun line(id: String, source: String, color: Int, width: Double) = LineLayer(id, source).slot("middle")
@@ -705,7 +709,8 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
             .heatmapColor(Expression.fromRaw("""["interpolate",["linear"],["heatmap-density"],0,"rgba(66,98,240,0)",0.2,"#5374F4",0.55,"#9259EC",1,"#EF76D9"]""")))
         st.addLayer(line("kite-alt", "vela-route-alt", 0xFF90BCD1.toInt(), 6.0))
         st.addLayer(line("kite-edge", "vela-route", 0xFF075964.toInt(), 13.0))
-        st.addLayer(line("kite-route", "vela-route", 0xFF2DD4BF.toInt(), 8.0))
+        st.addLayer(line("kite-route", "vela-route-traffic", 0xFF2DD4BF.toInt(), 8.0)
+            .lineCap(LineCap.BUTT).lineColor(Expression.fromRaw(routePaint(look.palette[MapColor.ROUTE]))))
         st.addLayer(SymbolLayer(CROSS_STREETS, CROSS_STREETS).slot("top")
             .iconImage("street-pill").iconTextFit(IconTextFit.BOTH).iconTextFitPadding(listOf(4.0, 9.0, 4.0, 9.0))
             .textField(Expression.get("name")).textSize(12.0)
@@ -726,8 +731,6 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
             .filter(Expression.fromRaw("""["==",["get","walk"],0]""")))
         st.addLayer(line("kite-transit-walk", "vela-transit", 0xFF64748B.toInt(), 5.0)
             .lineDasharray(listOf(0.4, 1.5)).filter(Expression.fromRaw("""["==",["get","walk"],1]""")))
-        st.addLayer(line("kite-traffic-route", "vela-route-traffic", Color.RED, 8.0)
-            .lineColor(Expression.fromRaw("""["match",["get","level"],1,"#F59E0B",2,"#EF4444",3,"#B91C1C","#EF4444"]""")))
         st.addLayer(line("kite-measure", "kite-measure", 0xFF8C61EF.toInt(), 3.3)
             .slot("top").lineDasharray(listOf(2.0, 1.4)))
         st.addLayer(CircleLayer("kite-measure-points", "kite-measure").slot("top")
@@ -823,10 +826,13 @@ class MapboxScenery(private val model: AppModel, private val kite: KiteMap) {
     private fun addSelectionAndStreetView(st: Style) {
         val indoor = KiteMap.INDOOR
         st.addLayer(FillLayer("$indoor-fill", indoor).slot("top")
-            .fillColor(0xFFE0DFEC.toInt()).fillOpacity(0.92).fillOutlineColor(0xFF665886.toInt()).fillEmissiveStrength(1.0))
+            .fillColor(Expression.fromRaw("""["case",["==",["get","picked"],true],"#B1DEDB",["match",["get","kind"],"footprint","#F4F2EF","level","#F4F2EF","corridor","#FFFFFF","toilets","#D9DEF6","#E1EBEA"]]"""))
+            .fillOpacity(0.99).fillOutlineColor(0xFF69807E.toInt()).fillEmissiveStrength(1.0))
         st.addLayer(LineLayer("$indoor-lines", indoor).slot("top").lineColor(0xFF706384.toInt()).lineWidth(1.6)
             .filter(Expression.fromRaw("""["==",["get","role"],"area"]""")).lineEmissiveStrength(1.0))
         st.addLayer(SymbolLayer("$indoor-labels", indoor).slot("top").textField(Expression.get("label")).textSize(12.0)
+            .iconImage(Expression.get("icon")).iconSize(0.72).textAnchor(TextAnchor.TOP).textOffset(listOf(0.0, 0.88))
+            .textOptional(true).iconPadding(2.0)
             .textColor(0xFF352746.toInt()).textHaloColor(Color.WHITE).textHaloWidth(1.3)
             .filter(Expression.fromRaw("""["==",["get","role"],"label"]""")).textEmissiveStrength(1.0))
         val probe = KiteMap.PROFILE_PROBE

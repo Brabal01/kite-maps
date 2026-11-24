@@ -107,20 +107,31 @@ class KiteMap(private val model: AppModel, private val context: Context) {
     fun refreshIndoor() {
         val style = map?.style?.takeIf { styleReady }
         val view = model.indoorView
+        for (id in listOf("building-3d", "kite-mapbox-buildings", "building-extrusion")) {
+            style?.let { visible(it, id, view == null) }
+        }
         val features = if (view == null) emptyList() else buildList {
-            for (item in view.plan.features) {
-                if (view.floor !in item.floors) continue
-                val geometry = item.geometry
-                val props = mapOf("role" to "area", "kind" to item.kind)
-                if (geometry.size >= 4 && geometry.first() == geometry.last()) {
-                    add(Feature.fromGeometry(Polygon.fromLngLats(listOf(geometry.map { Point.fromLngLat(it.lng, it.lat) }))).also {
-                        it.addStringProperty("role", "area")
-                        it.addStringProperty("kind", item.kind)
-                    })
-                } else if (geometry.size > 1) add(polyline(geometry, props))
+            fun ring(points: List<LatLng>) = points.map { Point.fromLngLat(it.lng, it.lat) }
+            fun polygon(points: List<LatLng>, holes: List<List<LatLng>>, kind: String, selected: Boolean) {
+                add(Feature.fromGeometry(Polygon.fromLngLats(listOf(ring(points)) + holes.map(::ring))).apply {
+                    addStringProperty("role", "area")
+                    addStringProperty("kind", kind)
+                    addBooleanProperty("picked", selected)
+                })
+            }
+            view.plan.building?.let { polygon(it, emptyList(), "footprint", false) }
+            val floor = view.plan.features.filter { view.floor in it.floors }
+            for (item in floor.sortedBy { when (it.kind) { "level" -> 0; "area", "corridor" -> 1; else -> 2 } }) {
+                if (item.polygon) polygon(item.geometry, item.holes, item.kind, item == view.feature)
+                else if (item.geometry.size > 1) add(polyline(item.geometry, mapOf("role" to "area", "kind" to item.kind)))
                 val label = item.name ?: continue
-                val center = LatLng(geometry.map { it.lat }.average(), geometry.map { it.lng }.average())
-                add(point(center, mapOf("role" to "label", "label" to label)))
+                val icon = when (item.kind) {
+                    "toilets" -> "osm-toilets"
+                    "elevator" -> "indoor-elevator"
+                    "stairs" -> "indoor-stairs"
+                    else -> if (item.category in listOf("cafe", "restaurant", "food_court")) "cat-food" else "cat-shop"
+                }
+                add(point(item.center, mapOf("role" to "label", "label" to label, "icon" to icon)))
             }
         }
         setShape(style, INDOOR, features)
@@ -672,6 +683,8 @@ class KiteMap(private val model: AppModel, private val context: Context) {
             (style.getLayer(id) as? SymbolLayer)?.setProperties(iconSize(
                 interpolate(linear(), zoom(), stop(11, 0.62f * waze), stop(15, 0.95f * waze))))
         }
+        (style.getLayer("vela-cameras") as? SymbolLayer)?.setProperties(iconSize(
+            interpolate(linear(), zoom(), stop(6, 0.6f * waze), stop(9, 0.7f * waze), stop(13, 0.9f * waze), stop(16, 1.05f * waze))))
         val sizes = MapPinSizes.read()
         for (id in listOf("kite-google-places", GOOGLE_UNREVIEWED))
             (style.getLayer(id) as? SymbolLayer)?.setProperties(iconSize(sizes.google.toFloat()))
@@ -873,8 +886,9 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         // The light look: one plain teal line, no darker edge and no chevrons along it.
         val edge = line("vela-route-edge", "vela-route", c(if (showingMapbox) 0x075964 else 0x0F766E), 15f)
             .withProperties(lineOpacity(if (showingMapbox) 0.95f else 0f))
-        val fill = line("vela-route-line", "vela-route", c(0x2DD4BF), 10f).withProperties(
-            lineGradient(interpolate(linear(), lineProgress(), stop(0, color(c(0x2DD4BF))), stop(1, color(c(0x22D3EE))))))
+        val fill = line("vela-route-line", "vela-route-traffic", c(0x2DD4BF), 10f)
+            .withProperties(lineColor(raw("""["match",["get","level"],1,"#F59E0B",2,"#EF4444",3,"#B91C1C","#2DD4BF"]""")),
+                lineCap(Property.LINE_CAP_BUTT))
         val chevrons = SymbolLayer("vela-route-chevrons", "vela-route").withProperties(
             symbolPlacement(Property.SYMBOL_PLACEMENT_LINE), symbolSpacing(70f), iconImage("route-chevron"),
             iconRotationAlignment(Property.ICON_ROTATION_ALIGNMENT_MAP), iconAllowOverlap(true), iconIgnorePlacement(true),
@@ -892,12 +906,6 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         val ride = line("vela-transit-ride", "vela-transit", c(0x1F6FEB), 7f).withProperties(lineColor(toColor(get("color"))))
         ride.setFilter(eq(get("walk"), literal(0)))
         listOf(walk, rideEdge, ride).forEach { insert(it) }
-        for ((level, col) in listOf(1 to 0xF59E0BL, 2 to 0xEF4444L, 3 to 0xB91C1CL)) {
-            val l = line("vela-route-traffic-$level", "vela-route-traffic", c(col), 10f)
-            l.setFilter(eq(get("level"), literal(level)))
-            insert(l)
-        }
-
         src("vela-rail")
         val railCase = line("vela-rail-case", "vela-rail", if (dark) c(0x000000, 0.9f) else c(0xFFFFFF, 0.9f), 5.5f)
         val rail = line("vela-rail", "vela-rail", Color.GRAY, 3.2f).withProperties(lineColor(toColor(get("color"))))
@@ -983,11 +991,14 @@ class KiteMap(private val model: AppModel, private val context: Context) {
 
         src(INDOOR)
         style.addLayer(FillLayer("$INDOOR-fill", INDOOR).withProperties(
-            fillColor(0xFFE0DFEC.toInt()), fillOpacity(0.92f), fillOutlineColor(0xFF665886.toInt())))
+            fillColor(raw("""["case",["==",["get","picked"],true],"#B1DEDB",["match",["get","kind"],"footprint","#F4F2EF","level","#F4F2EF","corridor","#FFFFFF","toilets","#D9DEF6","#E1EBEA"]]""")),
+            fillOpacity(0.99f), fillOutlineColor(0xFF69807E.toInt())))
         style.addLayer(LineLayer("$INDOOR-lines", INDOOR).withFilter(eq(get("role"), literal("area"))).withProperties(
             lineColor(0xFF706384.toInt()), lineWidth(1.6f)))
         style.addLayer(SymbolLayer("$INDOOR-labels", INDOOR).withFilter(eq(get("role"), literal("label"))).withProperties(
-            textField(get("label")), textFont(overlayFont), textSize(12f), textColor(0xFF352746.toInt()), textHaloColor(Color.WHITE), textHaloWidth(1.3f)))
+            iconImage(get("icon")), iconSize(0.72f), textAnchor(Property.TEXT_ANCHOR_TOP), textOffset(arrayOf(0f, 0.88f)),
+            textOptional(true), textField(get("label")), textFont(overlayFont), textSize(12f), textColor(0xFF263B3A.toInt()),
+            textHaloColor(Color.WHITE), textHaloWidth(1.3f)))
         src(PROFILE_PROBE)
         style.addLayer(CircleLayer(PROFILE_PROBE, PROFILE_PROBE).withProperties(
             circleRadius(8f), circleColor(0xFF7C3AED.toInt()), circleStrokeColor(Color.WHITE), circleStrokeWidth(3f)))
@@ -1284,7 +1295,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         val walking = nav?.route?.mode == TravelMode.WALK
         val range = if (walking) 650 else 5000
         val controls = nav?.roadControls.orEmpty().filter {
-            (nav?.progress?.offsetMeters ?: 0.0) <= 120 && model.settings.showsControl(it.kind) &&
+            (nav?.progress?.offsetMeters ?: 0.0) <= 120 && (if (nav?.route?.mode == TravelMode.WALK) model.settings.showsWalkingControl(it.kind) else model.settings.showsControl(it.kind)) &&
                 it.along in (from - 12)..(from + range) && (walking || it.kind != Overpass.ControlKind.CROSSING)
         }
         val key = "${nav?.route?.id}|${controls.hashCode()}"
@@ -1603,11 +1614,9 @@ class KiteMap(private val model: AppModel, private val context: Context) {
         val to = if (follows) min(total, from + 16_000.0) else total
         val ahead = if (from > 1 || to < total) Geo.slice(r.polyline, from, to, cum) else r.polyline
         setShape(style, "vela-route", if (ahead.size >= 2) listOf(polyline(ahead)) else emptyList())
-        setShape(style, "vela-route-traffic", traffic.mapNotNull { s ->
-            val a = max(s.startMeters, from); val b = min(s.startMeters + s.lengthMeters, to)
-            if (b <= a) return@mapNotNull null
-            val piece = Geo.slice(r.polyline, a, b, cum)
-            if (piece.size >= 2) polyline(piece, mapOf("level" to min(s.level, 3))) else null
+        setShape(style, "vela-route-traffic", RouteTrafficPaint.ranges(from, to, traffic).mapNotNull { range ->
+            val piece = Geo.slice(r.polyline, range.from, range.to, cum)
+            if (piece.size >= 2) polyline(piece, mapOf("level" to range.level)) else null
         })
         // Turn arrow: 50 m of road before the next turn and 40 m into the new road.
         val m = n?.nextManeuver
@@ -1727,7 +1736,7 @@ class KiteMap(private val model: AppModel, private val context: Context) {
     private fun str(f: Feature, k: String): String? = f.getProperty(k)?.takeIf { it.isJsonPrimitive }?.asString
 
     private fun tapped(m: MapLibreMap, at: org.maplibre.android.geometry.LatLng): Boolean {
-        if (model.streetViewMapTapped(at.kite()) || model.positionEndpointPin(at.kite())) return true
+        if (model.selectIndoor(at.kite()) || model.streetViewMapTapped(at.kite()) || model.positionEndpointPin(at.kite())) return true
         if (model.stopSearch != null) {
             val pin = m.queryRenderedFeatures(box(m, at), StopSearch.PINS).firstOrNull()
             model.selectStopPin(pin?.let { str(it, "id") })

@@ -64,12 +64,14 @@ fun BottomSheet(
     /** Room kept clear above the sheet at full height (the directions from/to card). */
     topClearance: Dp = 0.dp,
     opaque: Boolean = false,
+    allowPeek: Boolean = true,
     header: @Composable ColumnScope.() -> Unit,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val dark = LocalDark.current
     val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
+    val effectiveDetent = if (detent == SheetDetent.PEEK && !allowPeek) SheetDetent.HALF else detent
     fun height(d: SheetDetent): Float = with(density) {
         when (d) {
             SheetDetent.PEEK -> peekHeight.toPx()
@@ -79,26 +81,27 @@ fun BottomSheet(
     }
     var drag by remember { mutableFloatStateOf(0f) }
     var dragging by remember { mutableStateOf(false) }
-    val target = height(detent) - drag
+    val target = height(effectiveDetent) - drag
     val animated by animateFloatAsState(target, if (dragging) spring(stiffness = Spring.StiffnessHigh * 4) else
         spring(dampingRatio = 0.85f, stiffness = 380f), label = "sheet")
-    val top = with(density) { containerHeight.toPx() * 0.96f }
-    val current = animated.coerceIn(with(density) { peekHeight.toPx() } * 0.8f, top)
+    val low = minOf(height(if (allowPeek) SheetDetent.PEEK else SheetDetent.HALF), height(SheetDetent.FULL)).coerceAtLeast(0f)
+    val top = maxOf(low, height(SheetDetent.FULL))
+    val current = animated.coerceIn(low, top)
 
     fun settle(velocity: Float) {
-        val end = height(detent) - drag - velocity * 0.18f
-        val best = SheetDetent.entries.minBy { abs(height(it) - end) }
+        val end = height(effectiveDetent) - drag - velocity * 0.18f
+        val best = SheetDetent.entries.filter { allowPeek || it != SheetDetent.PEEK }.minBy { abs(height(it) - end) }
         if (best != detent) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
         dragging = false
         drag = 0f
         onDetent(best)
     }
 
-    val connection = remember(detent) {
+    val connection = remember(effectiveDetent, allowPeek, containerHeight, topClearance, peekHeight) {
         object : NestedScrollConnection {
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
                 // Below full height a drag on the list moves the sheet, not the list.
-                if (detent != SheetDetent.FULL || drag != 0f) {
+                if (effectiveDetent != SheetDetent.FULL || drag != 0f) {
                     dragging = true
                     drag += available.y
                     return Offset(0f, available.y)

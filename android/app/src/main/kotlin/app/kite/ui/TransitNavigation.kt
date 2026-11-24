@@ -32,6 +32,7 @@ fun TransitNavigationOverlay(model: AppModel, journey: TransitGuidance, showMapb
     val leg = journey.leg
     val phase = journey.phase
     val status = model.transitLive[leg?.tripId]
+    val refreshedTrip = model.latestTransit(journey.trip) ?: journey.trip
     var showTrip by remember { mutableStateOf(false) }
     var tripDetent by remember { mutableStateOf(SheetDetent.HALF) }
     var showDepartures by remember(journey.legIndex) { mutableStateOf(false) }
@@ -134,6 +135,8 @@ fun TransitNavigationOverlay(model: AppModel, journey: TransitGuidance, showMapb
                 }
                 TransitGuidance.Phase.COMPLETE -> {}
             }
+            if (phase != TransitGuidance.Phase.COMPLETE)
+                TransitTransferNotes(refreshedTrip, model.transitLive, fromLeg = journey.legIndex)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 if (phase != TransitGuidance.Phase.COMPLETE) {
                     TextButton({ tripDetent = SheetDetent.HALF; showTrip = true }) { Text("Trip") }
@@ -146,7 +149,7 @@ fun TransitNavigationOverlay(model: AppModel, journey: TransitGuidance, showMapb
             }
         }
         if (showTrip) Box(Modifier.align(Alignment.BottomCenter)) {
-            BottomSheet(tripDetent, { tripDetent = it }, full, peekHeight = 76.dp, topClearance = 119.dp,
+            BottomSheet(tripDetent, { tripDetent = it }, full, peekHeight = 76.dp, topClearance = 12.dp, allowPeek = false, opaque = true,
                 header = {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text("Trip", modifier = Modifier.weight(1f).padding(start = 6.dp),
@@ -154,13 +157,13 @@ fun TransitNavigationOverlay(model: AppModel, journey: TransitGuidance, showMapb
                         TextButton({
                             if (journey.overviewing) model.followTransit()
                             else {
-                                tripDetent = SheetDetent.PEEK
+                                tripDetent = SheetDetent.HALF
                                 model.previewTransitJourney()
                             }
                         }) { Text(if (journey.overviewing) "Follow" else "Overview") }
-                        IconButton({ tripDetent = if (tripDetent == SheetDetent.PEEK) SheetDetent.HALF else SheetDetent.PEEK }) {
-                            Icon(if (tripDetent == SheetDetent.PEEK) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                                if (tripDetent == SheetDetent.PEEK) "Expand trip" else "Collapse trip")
+                        IconButton({ tripDetent = if (tripDetent == SheetDetent.FULL) SheetDetent.HALF else SheetDetent.FULL }) {
+                            Icon(if (tripDetent == SheetDetent.FULL) Icons.Filled.ExpandMore else Icons.Filled.ExpandLess,
+                                if (tripDetent == SheetDetent.FULL) "Half height" else "Expand trip")
                         }
                         IconButton({ showTrip = false; model.stopTransitOverview() }) { Icon(Icons.Filled.Close, "Close trip") }
                     }
@@ -172,7 +175,8 @@ fun TransitNavigationOverlay(model: AppModel, journey: TransitGuidance, showMapb
                             StepsList(walking.route, walking.progress?.nextIndex ?: 0)
                             HorizontalDivider()
                         }
-                        TransitSteps(journey.trip, activeLeg = journey.legIndex, live = model.transitLive)
+                        TransitTimeBar(refreshedTrip, model.transitLive)
+                        TransitSteps(refreshedTrip, activeLeg = journey.legIndex, live = model.transitLive)
                     }
                 })
         }
