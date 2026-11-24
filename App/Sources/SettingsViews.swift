@@ -174,6 +174,10 @@ struct SettingsView: View {
                     ForEach(TravelMode.allCases) { Text($0.label).tag($0) }
                 } label: { SettingLabel("Default travel mode", icon: "car.fill", color: 0x2563EB) }
             }
+            Section("Offline maps") {
+                NavigationLink("Download regions") { OfflineRegionsView() }
+                Toggle("Show places in a menu", isOn: $settings.categoryMenu)
+            }
             Section("Routes") {
                 Toggle(isOn: $settings.avoidTolls) { SettingLabel("Avoid tolls", icon: "sterlingsign.circle.fill", color: 0xF59E0B) }
                 Toggle(isOn: $settings.avoidHighways) {

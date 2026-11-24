@@ -61,6 +61,12 @@ final class AppSettings: ObservableObject {
     /** How close the driving map sits: Closer, Normal (as Kite always was) or Wider. */
     @Published var mapZoom: MapZoom { didSet { d.set(mapZoom.rawValue, forKey: "mapZoom") } }
     /** The driving map's 3D, 2D or north-up choice from the map button, kept for the next drive. */
+    @Published var driveNorthUp = UserDefaults.standard.bool(forKey: "driveNorthUp") {
+        didSet { d.set(driveNorthUp, forKey: "driveNorthUp") }
+    }
+    @Published var categoryMenu = UserDefaults.standard.bool(forKey: "categoryMenu") {
+        didSet { d.set(categoryMenu, forKey: "categoryMenu") }
+    }
     @Published var driveLook: MapLook { didSet { d.set(driveLook.rawValue, forKey: "driveLook") } }
     /** Live reports from Waze drivers (police, crashes, hazards…): on the map, and warned about while driving. */
     @Published var waze: Bool { didSet { d.set(waze, forKey: "waze"); if !waze { Task { @MainActor in WazeWeb.shared.shutDown() } } } }

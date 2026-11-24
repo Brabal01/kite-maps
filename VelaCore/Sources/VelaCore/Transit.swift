@@ -1,5 +1,11 @@
 import Foundation
 
+public struct TimedTransitStop: Hashable, Sendable {
+    let location: LatLng
+    let arrival: Date?
+    let departure: Date?
+}
+
 /** One part of a transit trip: a walk, or a ride on one line between two stops. */
 public struct TransitLeg: Hashable, Sendable {
     public var isWalk: Bool
@@ -21,6 +27,35 @@ public struct TransitLeg: Hashable, Sendable {
     /** Minutes late (or early, below zero) when the agency sends live times. */
     public var delayMinutes: Int?
     public var path: [LatLng]
+    public var timedStops: [TimedTransitStop] = []
+
+    public func estimatedPosition(at time: Date) -> LatLng? {
+        guard !isWalk, path.count >= 2, let depart, let arrive,
+              depart < arrive, (depart...arrive).contains(time) else { return nil }
+        let cumulative = Geo.cumulative(path)
+        guard let length = cumulative.last, length > 0 else { return nil }
+        var previous = (time: depart, meters: 0.0)
+        for stop in timedStops {
+            guard let arrival = stop.arrival ?? stop.departure, arrival > previous.time, arrival < arrive else { continue }
+            let remainder = Geo.slice(path, from: previous.meters, to: length, cumulative: cumulative)
+            guard remainder.count >= 2 else { break }
+            let projection = Geo.project(stop.location, on: remainder)
+            guard projection.offset <= 150 else { continue }
+            let meters = min(length, previous.meters + projection.along)
+            if time <= arrival {
+                let fraction = time.timeIntervalSince(previous.time) / arrival.timeIntervalSince(previous.time)
+                return Geo.point(along: path, meters: previous.meters + (meters - previous.meters) * fraction,
+                                 cumulative: cumulative)
+            }
+            let departure = stop.departure.flatMap { $0 > arrival && $0 < arrive ? $0 : nil } ?? arrival
+            if time <= departure { return Geo.point(along: path, meters: meters, cumulative: cumulative) }
+            previous = (departure, meters)
+        }
+        let fraction = time.timeIntervalSince(previous.time) / arrive.timeIntervalSince(previous.time)
+        return Geo.point(along: path, meters: previous.meters + (length - previous.meters) * fraction,
+                         cumulative: cumulative)
+    }
+
 
     public init(isWalk: Bool, mode: String, line: String = "", color: UInt32? = nil, textColor: UInt32? = nil,
                 headsign: String? = nil, fromName: String = "", toName: String = "", depart: Date? = nil,
@@ -257,7 +292,12 @@ public enum Transitous {
         out.color = hex(l["routeColor"])
         out.textColor = hex(l["routeTextColor"])
         out.headsign = (l["headsign"] as? String).flatMap { $0.isEmpty ? nil : $0 }
-        out.stops = ((l["intermediateStops"] as? [Any])?.count ?? 0) + 1
+        let intermediate = l["intermediateStops"] as? [[String: Any]] ?? []
+        out.stops = intermediate.count + 1
+        out.timedStops = intermediate.compactMap { stop in
+            guard stop["cancelled"] as? Bool != true, let location = point(stop) else { return nil }
+            return TimedTransitStop(location: location, arrival: date(stop["arrival"]), departure: date(stop["departure"]))
+        }
         if l["realTime"] as? Bool == true, let s = start, let sched = date(l["scheduledStartTime"]) {
             out.delayMinutes = Int((s.timeIntervalSince(sched) / 60).rounded())
         }

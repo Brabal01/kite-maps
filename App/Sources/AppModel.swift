@@ -107,6 +107,7 @@ final class AppModel: ObservableObject {
     @Published var sort: SortMode = .relevance
     @Published var directions: DirectionsState?
     @Published var nav: Navigator?
+    @Published private(set) var transitGuide: TransitGuidance?
     @Published var showLayers = false
     /** Which page of the dock is open. */
     @Published var tab: AppTab = .map
@@ -697,7 +698,9 @@ final class AppModel: ObservableObject {
             return
         }
         guard let r = directions?.route else { mapTick += 1; return }
-        frame(r.polyline, bottomFraction: 0.42, top: 170 + CGFloat(directions?.stops.count ?? 0) * 42)
+        let alternatives = directions?.current.flatMap(\.polyline) ?? []
+        frame(alternatives.isEmpty ? r.polyline : alternatives,
+              bottomFraction: 0.42, top: 170 + CGFloat(directions?.stops.count ?? 0) * 42)
     }
 
     /** Police risk within about a kilometre of you, from remembered and live Waze police reports. */
@@ -738,7 +741,31 @@ final class AppModel: ObservableObject {
         if let loc = location.last { n.handle(loc); followCamera(n, loc, animated: false) }
     }
 
+    func startTransit(_ trip: TransitTrip) {
+        guard !trip.legs.isEmpty else { return }
+        directions = nil
+        transitGuide = TransitGuidance(trip: trip)
+        location.setNavigating(true, mode: TravelMode.walk.rawValue)
+        frameTransit()
+    }
+
+    func frameTransit() {
+        guard let guide = transitGuide else { return }
+        frame(guide.trip.legs.dropFirst(guide.index).flatMap(\.path), bottomFraction: 0.12, top: 225)
+    }
+
+    func advanceTransit() {
+        guard let guide = transitGuide else { return }
+        if guide.index + 1 < guide.trip.legs.count {
+            transitGuide?.index += 1
+            frameTransit()
+        } else {
+            endNavigation()
+        }
+    }
+
     func endNavigation() {
+        transitGuide = nil
         nav?.stop()
         glide.stop()
         nav = nil
@@ -813,6 +840,10 @@ final class AppModel: ObservableObject {
     }
 
     private func locationChanged(_ loc: CLLocation) {
+        if transitGuide != nil {
+            mapTick += 1
+            return
+        }
         if location.reducedAccuracy || loc.horizontalAccuracy > 200 { areaRisk = nil }
         guard let n = nav else {
             followBrowse(loc, entering: false)
@@ -837,15 +868,31 @@ final class AppModel: ObservableObject {
         let p = n.progress
         // Further out on long stretches, closer in and flatter just before a turn (see NavZoom).
         // Then the zoom setting (Closer, Normal, Wider) and the 3D, 2D or north-up button.
+        let look = settings.driveNorthUp ? MapLook.north : settings.driveLook
         let view = NavZoom.view(speed: loc.speed, toNext: p?.distanceToNext, next: n.nextManeuver?.type, driving: n.route.mode == .drive)
-            .applying(settings.mapZoom, settings.driveLook)
-        glide.look = settings.driveLook
+            .applying(settings.mapZoom, look)
+        glide.look = look
         glide.fix(n, loc, across: view.across, pitch: view.pitch, jump: !animated)
     }
 
-    /** The map button while driving: 3D, then 2D, then north up. Kept for the next drive. */
+    func toggleBrowseNorth() {
+        if browseLook == .north {
+            cycleBrowseLook()
+        } else {
+            browseLook = .north
+            browseFollowing = false
+            resetCamera()
+        }
+    }
+
+    func toggleDriveNorth() {
+        settings.driveNorthUp.toggle()
+        if let n = nav, let loc = location.last { followCamera(n, loc, animated: true) }
+    }
+
+    /** The map button while driving switches camera pitch independently of orientation. */
     func cycleDriveLook() {
-        settings.driveLook = settings.driveLook.next
+        settings.driveLook = settings.driveLook == .tilted ? .flat : .tilted
         guard let n = nav else { return }
         n.following = true
         if let loc = location.last { followCamera(n, loc, animated: true) }

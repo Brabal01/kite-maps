@@ -546,6 +546,12 @@ struct TransitBody: View {
                 }
             }
             if let t = state.pickedTrip {
+                Button { model.startTransit(t) } label: {
+                    Label("Start transit navigation", systemImage: "tram.fill")
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.borderedProminent)
+                .padding(.top, 10)
                 Text("Steps").font(.headline).padding(.top, 6)
                 TransitSteps(trip: t)
             }

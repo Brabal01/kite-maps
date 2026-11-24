@@ -23,6 +23,8 @@ struct ContentView: View {
                 .ignoresSafeArea()
             if let nav = model.nav {
                 NavigationOverlay(model: model, nav: nav)
+            } else if let guide = model.transitGuide {
+                TransitGuidanceView(model: model, guide: guide)
             } else if model.directions != nil {
                 DirectionsOverlay(model: model).inSidePanel(panel)
             } else {
@@ -46,6 +48,14 @@ struct ContentView: View {
                     try? await Task.sleep(nanoseconds: 9_000_000_000)
                     if model.wazeInfo?.id == info.id { withAnimation { model.wazeInfo = nil } }
                 }
+            }
+        }
+        .task(id: model.transitGuide?.trip.id) {
+            guard model.transitGuide != nil else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 15_000_000_000)
+                guard !Task.isCancelled else { break }
+                model.mapTick += 1
             }
         }
         .overlay(alignment: .top) {
@@ -140,6 +150,7 @@ struct BrowseOverlay: View {
     @ObservedObject private var settings = AppSettings.shared
     @StateObject private var voice = VoiceSearch()
     @FocusState private var searchFocused: Bool
+    @State private var showCategories = false
     @Environment(\.colorScheme) private var scheme
     @Environment(\.sidePanel) private var panel
 
@@ -171,6 +182,10 @@ struct BrowseOverlay: View {
                             MapLookButton(look: model.browseLook, heading: model.mapHeading, size: 48) {
                                 withAnimation(.easeOut(duration: 0.2)) { model.cycleBrowseLook() }
                             }
+                            MapFab(icon: "location.north.line", tint: model.browseLook == .north ? Vela.accentText(scheme) : .primary, size: 48) {
+                                model.toggleBrowseNorth()
+                            }
+                            .accessibilityLabel("North up")
                         }
                     }
                     // With a side panel the search box isn't above them: they go to the top right.
@@ -224,6 +239,47 @@ struct BrowseOverlay: View {
 
                 VStack(spacing: 12) {
                     SearchBar(model: model, voice: voice, focused: $searchFocused)
+                    if idle {
+                        if settings.categoryMenu {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Button { withAnimation { showCategories.toggle() } } label: {
+                                    Label("Places", systemImage: showCategories ? "chevron.up" : "list.bullet")
+                                }
+                                .padding(10).glass(Capsule())
+                                if showCategories {
+                                    ScrollView {
+                                        VStack(alignment: .leading, spacing: 0) {
+                                            ForEach(Category.all) { category in
+                                                Button {
+                                                    showCategories = false
+                                                    model.search(category.query, title: category.label)
+                                                } label: {
+                                                    Label(category.label, systemImage: category.icon)
+                                                        .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                                                }
+                                            }
+                                        }
+                                    }
+                                    .frame(width: 200, height: 245).glass(RoundedRectangle(cornerRadius: 18))
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16)
+                        } else {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 7) {
+                                    ForEach(Category.all) { category in
+                                        Button { model.search(category.query, title: category.label) } label: {
+                                            Label(category.label, systemImage: category.icon)
+                                                .font(.subheadline.weight(.semibold))
+                                                .padding(.horizontal, 12).frame(height: 36)
+                                                .glass(Capsule())
+                                        }
+                                    }
+                                }
+                                .padding(.horizontal, 16)
+                            }
+                        }
+                    }
                     if voice.listening { ListeningCard(voice: voice) }
                     // Home, Work and recents are one tap away under "Where to?", so the map itself stays clear.
                     if searchFocused {

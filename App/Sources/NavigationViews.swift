@@ -183,6 +183,10 @@ struct NavigationOverlay: View {
                         let look = settings.driveLook
                         withAnimation(.easeOut(duration: 0.2)) { buttonNote = ButtonNote(title: look.title, detail: look.detail) }
                     }
+                    MapFab(icon: "location.north.line", tint: settings.driveNorthUp ? Vela.accentText(scheme) : .primary, size: 52) {
+                        model.toggleDriveNorth()
+                    }
+                    .accessibilityLabel("North up")
                     MapFab(icon: nav.voiceMode.icon, tint: nav.voiceMode == .alerts ? Vela.accentText(scheme) : .primary, size: 52) {
                         nav.voiceMode = nav.voiceMode.next
                         let v = nav.voiceMode

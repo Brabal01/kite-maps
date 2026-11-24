@@ -310,6 +310,15 @@ struct VelaMapView: UIViewRepresentable {
                 insert(l)
             }
 
+            let transitVehicleSource = MLNShapeSource(identifier: "kite-estimated-vehicle", shape: nil, options: nil)
+            style.addSource(transitVehicleSource)
+            let transitVehicle = MLNCircleStyleLayer(identifier: "kite-estimated-vehicle", source: transitVehicleSource)
+            transitVehicle.circleRadius = NSExpression(forConstantValue: 8)
+            transitVehicle.circleStrokeWidth = NSExpression(forConstantValue: 3)
+            transitVehicle.circleStrokeColor = NSExpression(forConstantValue: UIColor.white)
+            transitVehicle.circleColor = NSExpression(forConstantValue: UIColor(hex: 0x6D28D9))
+            style.addLayer(transitVehicle)
+
             // Traffic lights on the route while driving, small and under the cameras, like Waze.
             let sigSrc = MLNShapeSource(identifier: "vela-signals", shape: nil, options: nil)
             style.addSource(sigSrc)
@@ -561,6 +570,15 @@ struct VelaMapView: UIViewRepresentable {
             for id in ["building", "building-3d"] { style.layer(withIdentifier: id)?.isVisible = !s.satellite && !navigating }
             renderResults(style)
             renderRoutes(style)
+            if let source = style.source(withIdentifier: "kite-estimated-vehicle") as? MLNShapeSource {
+                if let guide = model.transitGuide, let point = guide.leg.estimatedPosition(at: Date()) {
+                    let marker = MLNPointFeature()
+                    marker.coordinate = CLLocationCoordinate2D(latitude: point.lat, longitude: point.lng)
+                    source.shape = marker
+                } else if source.shape != nil {
+                    source.shape = nil
+                }
+            }
             renderPuck(style)
             renderCameras(style)
             renderLiveCams(map, style)
@@ -963,8 +981,9 @@ struct VelaMapView: UIViewRepresentable {
                 main = d.route
                 alts = d.current.filter { $0.id != main?.id }
             }
-            let trip = model.nav == nil ? model.directions?.pickedTrip : nil
-            let key = (model.nav == nil ? "" : "nav") + (trip?.id.uuidString ?? "") + (main?.id.uuidString ?? "") + alts.map(\.id.uuidString).joined() + "\(Int(from / 5))"
+            let guide = model.transitGuide
+            let trip = model.nav == nil ? (guide?.trip ?? model.directions?.pickedTrip) : nil
+            let key = (model.nav == nil ? "" : "nav") + (trip?.id.uuidString ?? "") + (main?.id.uuidString ?? "") + alts.map(\.id.uuidString).joined() + "\(Int(from / 5))/\(guide?.index ?? 0)"
             guard key != lastRouteKey else { return }
             lastRouteKey = key
 
@@ -976,7 +995,7 @@ struct VelaMapView: UIViewRepresentable {
             altSrc?.shape = MLNShapeCollectionFeature(shapes: alts.map { polyline($0.polyline) })
             let transitSrc = style.source(withIdentifier: "vela-transit") as? MLNShapeSource
             transitSrc?.shape = trip.map { t in
-                MLNShapeCollectionFeature(shapes: t.legs.filter { $0.path.count >= 2 }.map { leg in
+                MLNShapeCollectionFeature(shapes: t.legs.dropFirst(guide?.index ?? 0).filter { $0.path.count >= 2 }.map { leg in
                     polyline(leg.path, ["walk": leg.isWalk ? 1 : 0, "color": String(format: "#%06X", leg.color ?? 0x1F6FEB)])
                 })
             }

@@ -3,7 +3,7 @@ name: Kite
 options:
   bundleIdPrefix: app.vela
   deploymentTarget:
-    iOS: "16.0"
+    iOS: "16.2"
 packages:
   MapLibre:
     url: https://github.com/maplibre/maplibre-gl-native-distribution
@@ -17,6 +17,8 @@ targets:
     sources:
       - App/Sources
       - App/Assets.xcassets
+      - path: android/app/src/main/assets/offline-regions.json
+        buildPhase: resources
     dependencies:
       - package: MapLibre
       - package: VelaCore
@@ -24,8 +26,8 @@ targets:
     info:
       path: App/Info.plist
       properties:
-        CFBundleDisplayName: Kite
-        CFBundleShortVersionString: "0.7.16"
+        CFBundleDisplayName: Kite Driving
+        CFBundleShortVersionString: "0.8.1"
         CFBundleVersion: "1"
         UILaunchScreen: {}
         ITSAppUsesNonExemptEncryption: false
@@ -48,9 +50,9 @@ targets:
     settings:
       base:
         # Kept from the Vela days so updates install over the old app and keep saved places.
-        PRODUCT_BUNDLE_IDENTIFIER: app.vela.ios
+        PRODUCT_BUNDLE_IDENTIFIER: app.kite.gordicek.ios
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1,2"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        MARKETING_VERSION: "0.7.16"
+        MARKETING_VERSION: "0.8.1"
         CURRENT_PROJECT_VERSION: "1"
