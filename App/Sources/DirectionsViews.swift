@@ -110,6 +110,7 @@ struct EndpointsCard: View {
     @ObservedObject var model: AppModel
     let state: DirectionsState
     @Environment(\.colorScheme) private var scheme
+    @State private var editor = false
 
     var body: some View {
         HStack(spacing: 10) {
@@ -142,7 +143,13 @@ struct EndpointsCard: View {
                 if state.reversed {
                     originRow
                 } else {
-                    endpoint(icon: "mappin.circle.fill", color: Vela.closed, text: state.destination.name)
+                    Button { model.pickingDestination = true } label: {
+                        endpoint(icon: "mappin.circle.fill", color: Vela.closed, text: state.destination.name)
+                    }.buttonStyle(.plain)
+                }
+                if !state.transit, model.roadPlanPoints.count >= 2 {
+                    Button { editor = true } label: { Label("Edit and save route", systemImage: "line.3.horizontal") }
+                        .font(.subheadline).frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 7)
                 }
                 if !state.transit && state.stops.count < 8 {
                     Divider().padding(.leading, 30)
@@ -173,6 +180,9 @@ struct EndpointsCard: View {
         .padding(.vertical, 8)
         .glass(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .padding(.horizontal, 16)
+        .sheet(isPresented: $editor) {
+            RoadPlanEditor(model: model, ordered: model.roadPlanPoints, mode: state.mode)
+        }
     }
 
     /**
@@ -332,6 +342,9 @@ struct TripHeader: View {
 
     private var optionsMenu: some View {
         Menu {
+            if let route = model.directions?.route {
+                Button { model.openProfile(route) } label: { Label("Route profile", systemImage: "mountain.2") }
+            }
             Toggle("Avoid tolls", isOn: $settings.avoidTolls)
             Toggle(Fmt.yards ? "Avoid motorways" : "Avoid highways", isOn: $settings.avoidHighways)
         } label: {
@@ -429,7 +442,7 @@ struct TripHeader: View {
                         card(r, on: r.id == d.route?.id) { model.selectRoute(i) }
                     }
                     closingLine(d).padding(.top, 2)
-                    if !d.previewOnly { goButton.padding(.top, 2) } else { previewLine(d) }
+                    goButton.padding(.top, 2)
                     HStack(spacing: 8) {
                         ModeTabs(model: model, state: d)
                         optionsMenu
@@ -478,7 +491,7 @@ struct TripHeader: View {
                 }
                 ModeTabs(model: model, state: d)
                 closingLine(d)
-                if !d.transit, !d.previewOnly, d.route != nil { goButton } else if d.route != nil { previewLine(d) }
+                if !d.transit, d.route != nil { goButton }
             }
             .padding(.horizontal, 18)
             .padding(.bottom, 10)
@@ -1055,12 +1068,12 @@ struct StopPicker: View {
     @ObservedObject var model: AppModel
     /** Picking where to start from instead of a stop. */
     var origin = false
+    var destination = false
     @ObservedObject private var settings = AppSettings.shared
     @State private var query = ""
     @State private var found: [Place] = []
     @State private var searching = false
     @Environment(\.dismiss) private var dismiss
-    @FocusState private var focused: Bool
 
     var body: some View {
         NavigationView {
@@ -1075,16 +1088,17 @@ struct StopPicker: View {
                 if !mine.isEmpty && found.isEmpty {
                     Section("Your places") { ForEach(mine, id: \.0.id) { row($0.0, icon: $0.1) } }
                 }
-                if found.isEmpty && !searching && !origin {
+                if found.isEmpty && !searching && !origin && !destination {
                     Section("Along the way") {
                         ForEach([Fmt.yards ? "Petrol stations" : "Gas stations", "Coffee", "Restaurants", "EV charging"], id: \.self) { c in
-                            Button { query = c; run() } label: { Label(c, systemImage: "magnifyingglass") }
+                            Button { query = c } label: { Label(c, systemImage: "magnifyingglass") }
                         }
                     }
                 }
             }
-            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: origin ? "Search for a place to start from" : "Search for a stop")
-            .onSubmit(of: .search) { run() }
+            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always),
+                        prompt: origin ? "Search for a starting point" : destination ? "Search for a destination" : "Search for a stop")
+            .task(id: query) { await search() }
             .kiteList()
             .navigationTitle(origin ? "Start from" : "Add stop")
             .navigationBarTitleDisplayMode(.inline)
@@ -1094,7 +1108,7 @@ struct StopPicker: View {
 
     private func row(_ p: Place, icon: String) -> some View {
         Button {
-            if origin { model.setOrigin(p) } else { model.addStop(p) }
+            if origin { model.setOrigin(p) } else if destination { model.setDestination(p) } else { model.addStop(p) }
             dismiss()
         } label: {
             HStack(spacing: 12) {
@@ -1111,21 +1125,22 @@ struct StopPicker: View {
         }
     }
 
-    private func run() {
-        let q = query.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty else { return }
-        searching = true
+    private func search() async {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         found = []
-        // Look between you and where you're going, so stops fall along the way.
-        let a = model.userLatLng ?? model.viewport.center
-        let b = model.directions?.destination.location ?? a
-        let mid = LatLng((a.lat + b.lat) / 2, (a.lng + b.lng) / 2)
-        let span = max(a.distance(to: b) * 1.2, 5_000)
-        let useGoogle = !settings.noGoogle
-        Task {
-            let r = await PlaceSearch.search(q, center: mid, spanMeters: span, useGoogle: useGoogle)
-            found = Array(r.places.prefix(30))
-            searching = false
-        }
+        searching = q.count >= 2
+        guard searching else { return }
+        do { try await Task.sleep(for: .milliseconds(260)) } catch { return }
+        // Look between the origin and destination when adding a stop.
+        let center = model.userLatLng ?? model.viewport.center
+        let destination = model.directions?.destination.location ?? center
+        let mid = origin || self.destination ? model.viewport.center
+            : LatLng((center.lat + destination.lat) / 2, (center.lng + destination.lng) / 2)
+        let span = origin || self.destination ? min(30_000, max(5_000, model.viewport.span ?? 10_000))
+            : max(center.distance(to: destination) * 1.2, 5_000)
+        let results = await PlaceSearch.search(q, center: mid, spanMeters: span, useGoogle: !settings.noGoogle)
+        guard !Task.isCancelled else { return }
+        found = Array(results.places.prefix(30))
+        searching = false
     }
 }

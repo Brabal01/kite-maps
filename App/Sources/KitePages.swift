@@ -95,6 +95,14 @@ struct SavedPage: View {
     @Environment(\.colorScheme) private var scheme
     @State private var renaming: Place?
     @State private var newName = ""
+    @State private var chosenList: UUID?
+    @State private var addingList = false
+    @State private var listName = ""
+
+    private var filteredPlaces: [Place] {
+        guard let list = settings.savedPlaceLists.first(where: { $0.id == chosenList }) else { return settings.saved }
+        return settings.saved.filter { list.places.contains($0.id) }
+    }
 
     var body: some View {
         GeometryReader { geo in
@@ -118,10 +126,35 @@ struct SavedPage: View {
                                     .background(card)
                             }
                         }
-                        if settings.saved.isEmpty {
+                        if !settings.savedRoadPlans.isEmpty {
+                            Text("Saved routes").font(.headline).padding(.horizontal, 4)
+                            ForEach(settings.savedRoadPlans) { route in
+                                HStack {
+                                    Button { model.openRoadPlan(route) } label: {
+                                        Label(route.name, systemImage: "point.topleft.down.to.point.bottomright.curvepath")
+                                    }.buttonStyle(.plain)
+                                    Spacer()
+                                    ShareLink(item: route.shareText)
+                                    Button(role: .destructive) {
+                                        settings.savedRoadPlans.removeAll { $0.id == route.id }
+                                    } label: { Image(systemName: "trash") }.accessibilityLabel("Delete route")
+                                }.padding(12).background(card)
+                            }
+                        }
+                        HStack {
+                            Picker("List", selection: $chosenList) {
+                                Text("All saved places").tag(UUID?.none)
+                                ForEach(settings.savedPlaceLists) { Text($0.name).tag(Optional($0.id)) }
+                            }
+                            Spacer()
+                            Button { listName = ""; addingList = true } label: {
+                                Label("New list", systemImage: "folder.badge.plus")
+                            }
+                        }
+                        if filteredPlaces.isEmpty {
                             VStack(spacing: 10) {
                                 Image(systemName: "bookmark").font(.system(size: 40, weight: .semibold)).foregroundColor(Vela.muted(scheme))
-                                Text("No saved places yet").font(.title3.weight(.bold))
+                                Text(chosenList == nil ? "No saved places yet" : "No places in this list").font(.title3.weight(.bold))
                                 Text("Open any place and tap Save to keep it here.").font(.body).foregroundColor(Vela.muted(scheme))
                                     .multilineTextAlignment(.center)
                             }
@@ -129,7 +162,7 @@ struct SavedPage: View {
                             .padding(.vertical, 40)
                         } else {
                             VStack(spacing: 0) {
-                                ForEach(Array(settings.saved.enumerated()), id: \.element.id) { i, p in
+                                ForEach(Array(filteredPlaces.enumerated()), id: \.element.id) { i, p in
                                     if i > 0 { Divider().padding(.leading, 78) }
                                     row(p, icon: "bookmark.fill", color: Color(hex: 0xF59E0B), editable: true)
                                 }
@@ -155,6 +188,11 @@ struct SavedPage: View {
                 renaming = nil
             }
             Button("Cancel", role: .cancel) { renaming = nil }
+        }
+        .alert("New list", isPresented: $addingList) {
+            TextField("List name", text: $listName)
+            Button("Create") { settings.createList(listName) }
+            Button("Cancel", role: .cancel) {}
         }
     }
 

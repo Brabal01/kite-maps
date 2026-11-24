@@ -8,6 +8,12 @@ enum ThemeMode: String, CaseIterable, Identifiable {
     var label: String { rawValue.capitalized }
 }
 
+enum MapLighting: String, CaseIterable, Identifiable {
+    case interface, light, dark, time
+    var id: String { rawValue }
+    var title: String { self == .time ? "By time of day" : self == .interface ? "Match interface" : rawValue.capitalized }
+}
+
 enum UnitsMode: String, CaseIterable, Identifiable {
     case auto, metric, imperial, yards
     var id: String { rawValue }
@@ -37,6 +43,9 @@ final class AppSettings: ObservableObject {
     private let d = UserDefaults.standard
 
     @Published var theme: ThemeMode { didSet { d.set(theme.rawValue, forKey: "theme") } }
+    @Published var mapLighting: MapLighting { didSet { d.set(mapLighting.rawValue, forKey: "kite.mapLighting") } }
+    @Published var hikingTrails: Bool { didSet { d.set(hikingTrails, forKey: "kite.hikingTrails") } }
+    @Published var cyclingTrails: Bool { didSet { d.set(cyclingTrails, forKey: "kite.cyclingTrails") } }
     @Published var units: UnitsMode { didSet { d.set(units.rawValue, forKey: "units") } }
     @Published var voice: Bool { didSet { d.set(voice, forKey: "voice") } }
     /** The speaker button was last left on "Alerts only" (cameras and police, no turns). */
@@ -123,6 +132,8 @@ final class AppSettings: ObservableObject {
     @Published var defaultMode: TravelMode { didSet { d.set(defaultMode.rawValue, forKey: "defaultMode") } }
     @Published var saved: [Place] { didSet { save(saved, "saved") } }
     @Published var savedTransit: [SavedTransitPlan] { didSet { save(savedTransit, "kite.savedTransit") } }
+    @Published var savedRoadPlans: [SavedRoadPlan] { didSet { save(savedRoadPlans, "kite.savedRoadPlans") } }
+    @Published var savedPlaceLists: [SavedPlaceList] { didSet { save(savedPlaceLists, "kite.savedPlaceLists") } }
     @Published var learnWalkingPace: Bool { didSet { d.set(learnWalkingPace, forKey: "kite.learnWalkingPace") } }
     @Published var walkingPace: Double { didSet { d.set(walkingPace, forKey: "kite.walkingPace") } }
     @Published var transitExitAlerts: Bool { didSet { d.set(transitExitAlerts, forKey: "kite.transitExitAlerts") } }
@@ -133,10 +144,15 @@ final class AppSettings: ObservableObject {
 
     private init() {
         theme = ThemeMode(rawValue: d.string(forKey: "theme") ?? "") ?? .system
+        mapLighting = MapLighting(rawValue: d.string(forKey: "kite.mapLighting") ?? "") ?? .interface
+        hikingTrails = d.bool(forKey: "kite.hikingTrails")
+        cyclingTrails = d.bool(forKey: "kite.cyclingTrails")
         units = UnitsMode(rawValue: d.string(forKey: "units") ?? "") ?? .auto
         voice = d.object(forKey: "voice") as? Bool ?? true
         voiceAlertsOnly = d.bool(forKey: "voiceAlertsOnly")
         savedTransit = d.data(forKey: "kite.savedTransit").flatMap { try? JSONDecoder().decode([SavedTransitPlan].self, from: $0) } ?? []
+        savedRoadPlans = d.data(forKey: "kite.savedRoadPlans").flatMap { try? JSONDecoder().decode([SavedRoadPlan].self, from: $0) } ?? []
+        savedPlaceLists = d.data(forKey: "kite.savedPlaceLists").flatMap { try? JSONDecoder().decode([SavedPlaceList].self, from: $0) } ?? []
         learnWalkingPace = d.object(forKey: "kite.learnWalkingPace") as? Bool ?? true
         walkingPace = d.double(forKey: "kite.walkingPace")
         transitExitAlerts = d.object(forKey: "kite.transitExitAlerts") as? Bool ?? true
@@ -233,8 +249,33 @@ final class AppSettings: ObservableObject {
 
     func isSaved(_ p: Place) -> Bool { saved.contains { $0.matchesNearby(p) } }
 
+    func isInList(_ place: Place, id: UUID) -> Bool {
+        guard let stored = saved.first(where: { $0.matchesNearby(place) }) else { return false }
+        return savedPlaceLists.first(where: { $0.id == id })?.places.contains(stored.id) == true
+    }
+
+    func toggleList(_ id: UUID, place: Place) {
+        guard let i = savedPlaceLists.firstIndex(where: { $0.id == id }) else { return }
+        let stored = saved.first(where: { $0.matchesNearby(place) })
+        if stored == nil { saved.insert(place, at: 0) }
+        let pin = stored?.id ?? place.id
+        if savedPlaceLists[i].places.contains(pin) { savedPlaceLists[i].places.remove(pin) }
+        else { savedPlaceLists[i].places.insert(pin) }
+    }
+
+    func createList(_ title: String) {
+        let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        savedPlaceLists.append(SavedPlaceList(name: name))
+    }
+
     func toggleSaved(_ p: Place) {
-        if let i = saved.firstIndex(where: { $0.matchesNearby(p) }) { saved.remove(at: i) } else { saved.insert(p, at: 0) }
+        if let i = saved.firstIndex(where: { $0.matchesNearby(p) }) {
+            let removed = saved.remove(at: i)
+            for index in savedPlaceLists.indices { savedPlaceLists[index].places.remove(removed.id) }
+        } else {
+            saved.insert(p, at: 0)
+        }
     }
 
     func renameSaved(_ id: String, to name: String) {

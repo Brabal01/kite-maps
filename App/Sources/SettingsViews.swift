@@ -20,11 +20,19 @@ struct LayersSheet: View {
                 tile("Default", icon: "map", on: !settings.satellite) { settings.satellite = false }
                 tile("Satellite", icon: "globe.americas.fill", on: settings.satellite) { settings.satellite = true }
             }
+            Picker("Map appearance", selection: $settings.mapLighting) {
+                ForEach(MapLighting.allCases) { Text($0.title).tag($0) }
+            }
+            Picker("Interface appearance", selection: $settings.theme) {
+                ForEach(ThemeMode.allCases) { Text($0.label).tag($0) }
+            }
             Text("Map details").font(.subheadline.weight(.semibold)).foregroundColor(.secondary)
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), alignment: .leading, spacing: 14) {
                 tile("Traffic", icon: "car.2.fill", on: settings.traffic) { settings.traffic.toggle() }
                 tile("Transit", icon: "tram.fill", on: settings.transitLines) { settings.transitLines.toggle() }
                 tile("Terrain", icon: "mountain.2.fill", on: settings.terrain) { settings.terrain.toggle() }
+                tile("Hiking", icon: "figure.hiking", on: settings.hikingTrails) { settings.hikingTrails.toggle() }
+                tile("Cycling", icon: "bicycle", on: settings.cyclingTrails) { settings.cyclingTrails.toggle() }
                 tile("Speed cameras", badge: .speed, on: settings.speedCameras) { settings.speedCameras.toggle() }
                 tile("Plate cameras", badge: .plate, on: settings.plateCameras) { settings.plateCameras.toggle() }
                 tile("Surveillance", icon: "video.fill", on: settings.surveillanceCameras) { settings.surveillanceCameras.toggle() }

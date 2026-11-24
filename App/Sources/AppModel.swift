@@ -126,12 +126,20 @@ final class AppModel: ObservableObject {
     @Published var rating4Only = false
     @Published var sort: SortMode = .relevance
     @Published var directions: DirectionsState?
+    @Published var openMapSearch = false
+    @Published var measurement: [LatLng] = []
+    private var submittedSearch: (query: String, title: String?)?
     @Published var transitJourney: TransitJourney?
     @Published var showNearbyDepartures = false
     @Published var availableIndoor: IndoorPlan?
     @Published var activeIndoor: IndoorPlan?
     @Published var indoorFloor = "0"
     @Published var indoorFeature: IndoorPlan.Feature?
+    @Published var profileRoute: Route?
+    @Published var profileProbe: LatLng?
+    @Published var profileSection: [LatLng] = []
+    let routeProfiles = RouteProfileCache()
+    private var profileWasFollowing = false
     private var indoorCache: [String: IndoorPlan] = [:]
     var mapNavigator: Navigator? { nav ?? transitJourney?.walking }
     private var transitWalkingTask: Task<Void, Never>?
@@ -181,6 +189,7 @@ final class AppModel: ObservableObject {
     @Published var avoidAsk: AvoidAsk?
     @Published var avoidBusy = false
     @Published var pickingOrigin = false
+    @Published var pickingDestination = false
     /** The place whose Reviews tab to open (its stars were tapped). */
     @Published var showReviews: String?
     private var cruiseSub: AnyCancellable?
@@ -272,6 +281,7 @@ final class AppModel: ObservableObject {
             return
         }
         query = title ?? q
+        submittedSearch = (q, title)
         settings.addRecent(title ?? q)
         searchTask?.cancel()
         selected = nil
@@ -282,10 +292,16 @@ final class AppModel: ObservableObject {
         rating4Only = false
         sort = .relevance
         let vp = viewport
-        let useGoogle = !settings.noGoogle
+        let osm = openMapSearch || settings.noGoogle
+        let useGoogle = !osm
         let user = userLatLng
         searchTask = Task {
-            var r = await PlaceSearch.search(q, center: vp.center, spanMeters: vp.span, useGoogle: useGoogle)
+            var r = PlaceSearch.Result(places: [])
+            if osm, let category = await OpenMapSearch.search(q, near: vp.center, meters: vp.span ?? 4500) {
+                r.places = category
+            } else {
+                r = await PlaceSearch.search(q, center: vp.center, spanMeters: vp.span, useGoogle: useGoogle)
+            }
             guard !Task.isCancelled else { return }
             // Distances read from you, not from the middle of the map.
             if let user {
@@ -303,9 +319,15 @@ final class AppModel: ObservableObject {
                 select(r.places[0])
             } else {
                 detent = .half
-                frame(r.places.map(\.location))
+                let distance = r.places.map { $0.location.distance(to: vp.center) }.min() ?? 0
+                let radius = max(6_000, min(140_000, (vp.span ?? 12_000) * 1.6), distance * 1.3)
+                frame(r.places.filter { $0.location.distance(to: vp.center) <= radius }.map(\.location))
             }
         }
+    }
+
+    func searchHere() {
+        if let submittedSearch { search(submittedSearch.query, title: submittedSearch.title) }
     }
 
     func typed(_ text: String) {
@@ -313,7 +335,7 @@ final class AppModel: ObservableObject {
         let q = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard q.count >= 2, !MapLinks.looksLikeLink(q) else { suggestions = SuggestParser.Result(); return }
         let vp = viewport
-        let useGoogle = !settings.noGoogle
+        let useGoogle = !settings.noGoogle && !openMapSearch
         let user = userLatLng
         suggestTask = Task {
             try? await Task.sleep(nanoseconds: 250_000_000)
@@ -397,6 +419,7 @@ final class AppModel: ObservableObject {
         resultsTitle = ""
         selected = nil
         searching = false
+        submittedSearch = nil
         notice = nil
     }
 
@@ -616,6 +639,30 @@ final class AppModel: ObservableObject {
         guard directions != nil else { return }
         directions?.origin = p
         reloadRoutes()
+    }
+
+    func setDestination(_ place: Place) {
+        guard let d = directions else { return }
+        directions = DirectionsState(destination: place, mode: d.mode, stops: d.reversed ? Array(d.stops.reversed()) : d.stops,
+                                     transit: d.transit, origin: d.reversed ? d.destination : d.origin)
+        loadAllModes()
+    }
+
+    var roadPlanPoints: [Place] {
+        guard let d = directions else { return [] }
+        let here = userLatLng.map { Place(id: "kite-current", name: "Your location", location: $0, source: "pin") }
+        guard let start = d.reversed ? here : (d.origin ?? here) else { return [] }
+        return d.reversed ? [d.destination] + Array(d.stops.reversed()) + [start] : [start] + d.stops + [d.destination]
+    }
+
+    func openRoadPlan(_ plan: SavedRoadPlan, resolveCurrentPosition: Bool = false) {
+        guard let first = plan.places.first, let last = plan.places.last, plan.places.count >= 2 else { return }
+        let explicit = resolveCurrentPosition && first.id == "kite-current" ? nil : first
+        tab = .map
+        directions = DirectionsState(destination: last, mode: TravelMode(rawValue: plan.mode) ?? .drive,
+                                     stops: Array(plan.places.dropFirst().dropLast()), origin: explicit)
+        detent = .half
+        loadAllModes()
     }
 
     /** The road under a tap on the planned route, to ask whether to avoid it. */
@@ -965,7 +1012,18 @@ final class AppModel: ObservableObject {
     }
 
     func startNavigation() {
-        guard let d = directions, let route = d.route, !d.previewOnly, transitJourney == nil else { return }
+        guard let d = directions, let route = d.route, transitJourney == nil else { return }
+        if d.previewOnly {
+            guard let here = userLatLng, let start = roadPlanPoints.first, let end = roadPlanPoints.last else {
+                location.start()
+                return
+            }
+            let stops = (start.location.distance(to: here) > 70 ? [start] : []) + Array(roadPlanPoints.dropFirst().dropLast())
+            directions = DirectionsState(destination: end, mode: d.mode, stops: stops)
+            autoStart = true
+            loadAllModes()
+            return
+        }
         endCruise()
         routesRequest += 1
         transitRequest += 1
@@ -993,6 +1051,29 @@ final class AppModel: ObservableObject {
         map?.showsUserLocation = false
         if let loc = location.last { n.handle(loc); followCamera(n, loc, animated: false) }
         LiveTurn.shared.start(n)
+        // A small bounded cache warms the graph while normal navigation starts.
+        _ = routeProfiles.load(route)
+    }
+
+    func openProfile(_ route: Route) {
+        profileWasFollowing = nav?.following == true
+        profileRoute = route
+    }
+
+    func closeProfile() {
+        let framed = !profileSection.isEmpty
+        profileProbe = nil
+        profileSection = []
+        if framed && profileWasFollowing { recenterNav() }
+        else if framed && nav == nil { frameRoute() }
+    }
+
+    func inspectProfileSection(_ route: Route, from: Double, to: Double) {
+        let piece = Geo.slice(route.polyline, from: from, to: to)
+        guard piece.count >= 2 else { return }
+        profileSection = piece
+        nav?.following = false
+        frame(piece, bottomFraction: 0.4, top: 100)
     }
 
     func endNavigation() {

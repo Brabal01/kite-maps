@@ -35,6 +35,11 @@ struct VelaMapView: UIViewRepresentable {
         let press = UILongPressGestureRecognizer(target: c, action: #selector(Coordinator.pressed(_:)))
         press.delegate = c
         map.addGestureRecognizer(press)
+        let measure = UILongPressGestureRecognizer(target: c, action: #selector(Coordinator.measure(_:)))
+        measure.numberOfTouchesRequired = 2
+        measure.minimumPressDuration = 0.55
+        measure.delegate = c
+        map.addGestureRecognizer(measure)
         // A long press must never also count as a tap, or the tap closes the pin it just dropped.
         tap.require(toFail: press)
         tap.delegate = c
@@ -109,6 +114,9 @@ struct VelaMapView: UIViewRepresentable {
         private var lastResultsKey = ""
         private var lastRouteKey = ""
         private var lastIndoorKey = ""
+        private var lastMeasurement: [LatLng] = []
+        private var lastProfileProbe: LatLng?
+        private var lastProfileSection: [LatLng] = []
         private var lastMineKey = ""
         private var lastPuckKey = ""
         /** Whether the map is currently stripped down for driving; nil after a style load. */
@@ -164,6 +172,9 @@ struct VelaMapView: UIViewRepresentable {
             repaint(mapView)
             lastResultsKey = ""; lastRouteKey = ""; lastMineKey = ""; lastPuckKey = ""; lastCameraKey = ""; lastSignalsKey = ""; lastWazeKey = ""; lastLiveKey = ""
             lastIndoorKey = ""
+            lastMeasurement = []
+            lastProfileProbe = nil
+            lastProfileSection = []
             render(mapView)
         }
 
@@ -608,6 +619,10 @@ struct VelaMapView: UIViewRepresentable {
             }
             for id in ["building", "building-3d"] { style.layer(withIdentifier: id)?.isVisible = !s.satellite && !driving && model.activeIndoor == nil }
             renderIndoor(style)
+            renderMeasurement(style)
+            renderProfile(style)
+            renderTrails(style, kind: "hiking", visible: s.hikingTrails && !s.offlineBasemap)
+            renderTrails(style, kind: "cycling", visible: s.cyclingTrails && !s.offlineBasemap)
             renderResults(style)
             renderRoutes(style)
             if let source = style.source(withIdentifier: "kite-transit-vehicle") as? MLNShapeSource {
@@ -628,6 +643,76 @@ struct VelaMapView: UIViewRepresentable {
             updateHeat(map)
             renderMine(style)
             if s.transitLines { loadRail(map) }
+        }
+
+        private func renderTrails(_ style: MLNStyle, kind: String, visible: Bool) {
+            let id = "kite-trails-\(kind)"
+            if let layer = style.layer(withIdentifier: id) { layer.isVisible = visible; return }
+            guard visible else { return }
+            let source = MLNRasterTileSource(identifier: id,
+                tileURLTemplates: ["https://tile.waymarkedtrails.org/\(kind)/{z}/{x}/{y}.png"],
+                options: [.tileSize: 256, .maximumZoomLevel: 18,
+                          .attributionHTMLString: "<a href='https://waymarkedtrails.org/'>Waymarked Trails</a> · © OpenStreetMap"])
+            style.addSource(source)
+            let layer = MLNRasterStyleLayer(identifier: id, source: source)
+            if let route = style.layer(withIdentifier: "vela-route-line") { style.insertLayer(layer, below: route) }
+            else { style.addLayer(layer) }
+        }
+
+        private func renderMeasurement(_ style: MLNStyle) {
+            let points = model.measurement
+            guard points != lastMeasurement else { return }
+            lastMeasurement = points
+            let id = "kite-measurement"
+            let source: MLNShapeSource
+            if let existing = style.source(withIdentifier: id) as? MLNShapeSource { source = existing }
+            else {
+                source = MLNShapeSource(identifier: id, shape: nil, options: nil)
+                style.addSource(source)
+                let line = MLNLineStyleLayer(identifier: id, source: source)
+                line.lineColor = NSExpression(forConstantValue: UIColor(hex: 0x126782))
+                line.lineWidth = NSExpression(forConstantValue: 4)
+                line.lineDashPattern = NSExpression(forConstantValue: [1.5, 1.2])
+                style.addLayer(line)
+            }
+            source.shape = points.count >= 2 ? polyline(points) : nil
+        }
+
+        private func renderProfile(_ style: MLNStyle) {
+            let probe = model.profileProbe
+            let section = model.profileSection
+            guard probe != lastProfileProbe || section != lastProfileSection else { return }
+            lastProfileProbe = probe
+            lastProfileSection = section
+            let id = "kite-route-profile"
+            let source: MLNShapeSource
+            if let existing = style.source(withIdentifier: id) as? MLNShapeSource { source = existing }
+            else {
+                source = MLNShapeSource(identifier: id, shape: nil, options: nil)
+                style.addSource(source)
+                let line = MLNLineStyleLayer(identifier: id + "-surface", source: source)
+                line.predicate = NSPredicate(format: "role == 'surface'")
+                line.lineColor = NSExpression(forConstantValue: UIColor.systemOrange)
+                line.lineWidth = NSExpression(forConstantValue: 9)
+                line.lineCap = NSExpression(forConstantValue: "round")
+                style.addLayer(line)
+                let dot = MLNCircleStyleLayer(identifier: id + "-probe", source: source)
+                dot.predicate = NSPredicate(format: "role == 'probe'")
+                dot.circleColor = NSExpression(forConstantValue: UIColor.systemOrange)
+                dot.circleRadius = NSExpression(forConstantValue: 7)
+                dot.circleStrokeWidth = NSExpression(forConstantValue: 2)
+                dot.circleStrokeColor = NSExpression(forConstantValue: UIColor.white)
+                style.addLayer(dot)
+            }
+            var shapes: [MLNShape] = []
+            if section.count >= 2 { shapes.append(polyline(section, ["role": "surface"])) }
+            if let probe {
+                let dot = MLNPointFeature()
+                dot.coordinate = CLLocationCoordinate2D(latitude: probe.lat, longitude: probe.lng)
+                dot.attributes = ["role": "probe"]
+                shapes.append(dot)
+            }
+            source.shape = shapes.isEmpty ? nil : MLNShapeCollectionFeature(shapes: shapes)
         }
 
         private func renderIndoor(_ style: MLNStyle) {
@@ -1257,6 +1342,17 @@ struct VelaMapView: UIViewRepresentable {
         }
 
         // MARK: Gestures
+
+        @objc func measure(_ gesture: UILongPressGestureRecognizer) {
+            guard gesture.state == .began, gesture.numberOfTouches == 2,
+                  let map = gesture.view as? MLNMapView, model.nav == nil, model.transitJourney == nil else { return }
+            model.browseFollowing = false
+            model.measurement = (0..<2).map { touch in
+                let c = map.convert(gesture.location(ofTouch: touch, in: map), toCoordinateFrom: map)
+                return LatLng(c.latitude, c.longitude)
+            }
+            UISelectionFeedbackGenerator().selectionChanged()
+        }
 
         func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
 

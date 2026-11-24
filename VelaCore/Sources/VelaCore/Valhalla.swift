@@ -65,10 +65,10 @@ public enum Valhalla {
     static let limitAttributes = ["edge.speed_limit", "edge.way_id", "edge.names", "edge.length", "edge.begin_shape_index",
                                   "edge.end_shape_index", "edge.lane_count", "edge.roundabout", "shape"]
 
-    private static func fetch(_ shape: [LatLng], attributes: [String] = limitAttributes) async -> Data? {
+    private static func fetch(_ shape: [LatLng], attributes: [String] = limitAttributes, costing: String = "auto") async -> Data? {
         let body: [String: Any] = [
             "shape": shape.map { ["lat": $0.lat, "lon": $0.lng] },
-            "costing": "auto",
+            "costing": costing,
             "shape_match": "map_snap",
             "filters": ["attributes": attributes, "action": "include"],
         ]
@@ -78,6 +78,58 @@ public enum Valhalla {
         r.httpBody = try? JSONSerialization.data(withJSONObject: body)
         guard let (data, resp) = try? await session.data(for: r), (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
         return data
+    }
+
+    public struct SurfaceSection: Sendable, Identifiable {
+        public let from: Double
+        public var to: Double
+        public let surface: String
+        public var id: Double { from }
+    }
+
+    public static func surfaces(on route: Route, limit: Double = 32_000) async -> [SurfaceSection] {
+        let line = route.polyline
+        guard line.count >= 2 else { return [] }
+        let cumulative = Geo.cumulative(line)
+        let total = min(cumulative.last ?? 0, limit)
+        let costing = route.mode == .walk ? "pedestrian" : route.mode == .bike ? "bicycle" : "auto"
+        var sections: [SurfaceSection] = []
+        for start in stride(from: 0.0, to: total, by: 8000) {
+            if Task.isCancelled { break }
+            let piece = Geo.slice(line, from: start, to: min(total, start + 8000), cumulative: cumulative)
+            guard piece.count >= 2,
+                  let data = await fetch(thin(piece), attributes: ["shape", "edge.surface", "edge.begin_shape_index", "edge.end_shape_index"],
+                                         costing: costing),
+                  let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let encoded = root["shape"] as? String, let edges = root["edges"] as? [[String: Any]] else { continue }
+            let matched = Geo.decodePolyline(encoded, precision: 1e6)
+            let matchedDistance = Geo.cumulative(matched)
+            let pieceDistance = Geo.cumulative(piece)
+            for edge in edges {
+                guard let first = edge["begin_shape_index"] as? Int, let last = edge["end_shape_index"] as? Int,
+                      matched.indices.contains(first), matched.indices.contains(last), first < last,
+                      let value = edge["surface"] as? String, value != "unknown" else { continue }
+                let a = Geo.project(matched[first], on: piece, cumulative: pieceDistance)
+                let b = Geo.project(matched[last], on: piece, cumulative: pieceDistance)
+                let middle = Geo.point(along: matched, meters: (matchedDistance[first] + matchedDistance[last]) / 2,
+                                       cumulative: matchedDistance)
+                guard max(a.offset, b.offset, Geo.project(middle, on: piece, cumulative: pieceDistance).offset) < 14 else { continue }
+                let from = max(sections.last?.to ?? 0, start + a.along), to = start + b.along
+                guard to - from > 1 else { continue }
+                let surface: String
+                switch value {
+                case "paved_smooth", "paved", "smooth_paved": surface = "Smooth pavement"
+                case "paved_rough", "rough_paved": surface = "Rough pavement"
+                case "compacted", "gravel", "fine_gravel": surface = "Gravel or compacted"
+                case "dirt", "ground", "path": surface = "Natural ground"
+                default: surface = value.replacingOccurrences(of: "_", with: " ").capitalized
+                }
+                if let previous = sections.last, previous.surface == surface, from - previous.to < 2 {
+                    sections[sections.count - 1].to = to
+                } else { sections.append(SurfaceSection(from: from, to: to, surface: surface)) }
+            }
+        }
+        return sections
     }
 
     /**

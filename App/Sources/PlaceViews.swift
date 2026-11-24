@@ -18,7 +18,18 @@ struct PlaceHeader: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .copyable(place.name, below: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                CircleIconButton(icon: settings.isSaved(place) ? "bookmark.fill" : "bookmark") { settings.toggleSaved(place) }
+                Menu {
+                    Button(settings.isSaved(place) ? "Remove from Saved" : "Save place") { settings.toggleSaved(place) }
+                    ForEach(settings.savedPlaceLists) { list in
+                        Button { settings.toggleList(list.id, place: place) } label: {
+                            Label(list.name, systemImage: settings.isInList(place, id: list.id) ? "checkmark" : "folder")
+                        }
+                    }
+                } label: {
+                    Image(systemName: settings.isSaved(place) ? "bookmark.fill" : "bookmark")
+                        .font(.system(size: 17, weight: .bold)).foregroundStyle(.primary)
+                        .frame(width: 44, height: 44).background(Circle().fill(Color.secondary.opacity(0.18)))
+                }.accessibilityLabel("Save to a list")
                 Menu {
                     if let url = place.shareURL { ShareLink("Google Maps link", item: url) }
                     ShareLink("Place name", item: place.name)

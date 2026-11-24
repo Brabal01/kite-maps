@@ -12,10 +12,20 @@ struct ContentView: View {
     @Environment(\.horizontalSizeClass) private var hClass
     @Environment(\.verticalSizeClass) private var vClass
     @State private var screen: CGSize = .zero
+    @State private var mapTime = Date()
     /** The side panel's width on a big screen held sideways (the open iPhone Duo), 0 on a phone. */
     private var panel: CGFloat { SidePanel.width(for: screen, h: hClass, v: vClass) }
 
-    private var dark: Bool { settings.colorScheme.map { $0 == .dark } ?? (systemScheme == .dark) }
+    private var dark: Bool {
+        switch settings.mapLighting {
+        case .interface: return settings.colorScheme.map { $0 == .dark } ?? (systemScheme == .dark)
+        case .light: return false
+        case .dark: return true
+        case .time:
+            let hour = Calendar.current.component(.hour, from: mapTime)
+            return hour < 7 || hour >= 19
+        }
+    }
 
     var body: some View {
         ZStack {
@@ -94,6 +104,13 @@ struct ContentView: View {
         .kiteType()
         .preferredColorScheme(settings.colorScheme)
         .task { await DemoScript.run(model) }
+        .task(id: settings.mapLighting) {
+            guard settings.mapLighting == .time else { return }
+            while !Task.isCancelled {
+                mapTime = Date()
+                try? await Task.sleep(nanoseconds: 60_000_000_000)
+            }
+        }
         .onReceive(launch.$pending) { kind in
             guard let kind else { return }
             launch.pending = nil
@@ -116,6 +133,9 @@ struct ContentView: View {
         .sheet(isPresented: $model.showNearbyDepartures) {
             NearbyDeparturesView(model: model).kiteType()
         }
+        .sheet(item: $model.profileRoute, onDismiss: model.closeProfile) {
+            RouteProfileView(model: model, route: $0)
+        }
         .fullScreenCover(isPresented: .constant(DemoScript.step?.hasPrefix("svtest") == true)) {
             // Screenshot run only: the viewer on a test pattern, turned right by the step's number.
             GoogleStreetViewScreen(name: "Test pattern", pano: StreetView.Panorama(id: PanoramaViewer.testID, location: LatLng(0, 0)),
@@ -136,6 +156,9 @@ struct ContentView: View {
         }
         .sheet(isPresented: $model.pickingOrigin) {
             StopPicker(model: model, origin: true).kiteType()
+        }
+        .sheet(isPresented: $model.pickingDestination) {
+            StopPicker(model: model, destination: true).kiteType()
         }
         .sheet(item: $model.picking) { kind in
             PlacePicker(model: model, kind: kind).kiteType()
@@ -241,11 +264,20 @@ struct BrowseOverlay: View {
                 }
 
                 VStack(spacing: 12) {
-                    SearchBar(model: model, voice: voice, focused: $searchFocused)
+                    if searchFocused || !hasSheet || model.detent != .full {
+                        SearchBar(model: model, voice: voice, focused: $searchFocused)
+                    }
                     if voice.listening { ListeningCard(voice: voice) }
                     // Home, Work and recents are one tap away under "Where to?", so the map itself stays clear.
                     if searchFocused {
+                        Picker("Search provider", selection: $model.openMapSearch) {
+                            Text("All places").tag(false)
+                            Text("OpenStreetMap").tag(true)
+                        }.pickerStyle(.segmented).padding(.horizontal, 16)
                         SuggestionsPanel(model: model) { searchFocused = false }
+                    } else if model.selected == nil, !model.results.isEmpty, !model.searching, model.detent != .full {
+                        Button { model.searchHere() } label: { Label("Search here", systemImage: "magnifyingglass") }
+                            .buttonStyle(.borderedProminent)
                     }
                     if let n = model.notice, !searchFocused {
                         NoticeBanner(text: n) { model.notice = nil }
@@ -259,6 +291,18 @@ struct BrowseOverlay: View {
                 }
                 .padding(.top, 6)
                 .inSidePanel(panel)
+            }
+            .overlay(alignment: .leading) {
+                if model.measurement.count == 2 {
+                    Button {
+                        model.measurement = []
+                    } label: {
+                        Label(Fmt.distance(model.measurement[0].distance(to: model.measurement[1])), systemImage: "ruler")
+                            .padding(9).background(Vela.ground(scheme), in: Capsule())
+                    }.buttonStyle(.plain)
+                        .accessibilityHint("Tap to clear the measurement")
+                        .padding(.leading, 14)
+                }
             }
             .animation(.spring(response: 0.3, dampingFraction: 0.85), value: hasSheet)
             .animation(.easeOut(duration: 0.2), value: idle)

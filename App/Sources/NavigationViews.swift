@@ -6,6 +6,7 @@ struct NavigationOverlay: View {
     @ObservedObject var model: AppModel
     @ObservedObject var nav: Navigator
     @State private var showSteps = false
+    @State private var profileAfterSteps = false
     @State private var showAlong = false
     @State private var confirmEnd = false
     @Environment(\.colorScheme) private var scheme
@@ -250,7 +251,12 @@ struct NavigationOverlay: View {
         .sheet(isPresented: $showAlong) {
             AlongRouteSheet(nav: nav).kiteType()
         }
-        .sheet(isPresented: $showSteps) {
+        .sheet(isPresented: $showSteps, onDismiss: {
+            if profileAfterSteps {
+                profileAfterSteps = false
+                model.openProfile(nav.route)
+            }
+        }) {
             NavigationView {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
@@ -266,6 +272,10 @@ struct NavigationOverlay: View {
                                 showSteps = false
                                 model.overviewNav()
                             }
+                        }
+                        tripAction("mountain.2", "Route profile") {
+                            profileAfterSteps = true
+                            showSteps = false
                         }
                         StepsList(route: nav.route, from: nav.progress?.nextIndex ?? 0)
                     }
