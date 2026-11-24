@@ -15,11 +15,14 @@ targets:
     type: application
     platform: iOS
     sources:
+      - Shared
       - App/Sources
       - App/Assets.xcassets
       - path: android/app/src/main/assets/offline-regions.json
         buildPhase: resources
     dependencies:
+      - target: NavigationWidget
+        embed: true
       - package: MapLibre
       - package: VelaCore
     scheme: {}
@@ -29,6 +32,7 @@ targets:
         CFBundleDisplayName: Kite Driving
         CFBundleShortVersionString: "0.8.1"
         CFBundleVersion: "1"
+        NSSupportsLiveActivities: true
         UILaunchScreen: {}
         ITSAppUsesNonExemptEncryption: false
         NSLocationWhenInUseUsageDescription: Kite shows where you are on the map, finds places near you and guides you turn by turn.
@@ -56,3 +60,24 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         MARKETING_VERSION: "0.8.1"
         CURRENT_PROJECT_VERSION: "1"
+
+  NavigationWidget:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "16.2"
+    sources:
+      - NavigationWidget
+      - Shared
+    info:
+      path: WidgetInfo.plist
+      properties:
+        CFBundleDisplayName: Kite Driving Navigation
+        CFBundleShortVersionString: "0.8.1"
+        CFBundleVersion: "1"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.kite.gordicek.ios.navigation
+        SWIFT_VERSION: "5.0"
+        SKIP_INSTALL: YES

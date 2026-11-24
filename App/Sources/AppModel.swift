@@ -720,33 +720,66 @@ final class AppModel: ObservableObject {
 
     func startNavigation() {
         guard let d = directions, let route = d.route, !d.reversed else { return }
-        let n = Navigator(route: route, destination: d.destination, stops: d.stops, settings: settings)
+        beginNavigation(route, destination: d.destination, stops: d.stops)
+    }
+
+    private func beginNavigation(_ route: Route, destination: Place, stops: [Place] = []) {
+        let n = Navigator(route: route, destination: destination, stops: stops, settings: settings)
         nav = n
         navSub = n.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
         n.onFinished = { [weak self, weak n] in
             guard let self, let n, self.nav === n else { return }
-            self.endNavigation()
+            if self.transitGuide != nil { self.advanceTransit() }
+            else { self.endNavigation() }
         }
-        // In a tunnel GPS stops: the navigator works out where the car should be, and it's shown like a fix.
         n.onEstimate = { [weak self, weak n] loc in
             guard let self, let n, self.nav === n else { return }
             n.handle(loc, estimated: true)
             self.followCamera(n, loc, animated: true)
             self.mapTick += 1
+            self.refreshActivity()
         }
-        resumeOffer = nil
-        rememberTrip(n)
+        if transitGuide == nil {
+            resumeOffer = nil
+            rememberTrip(n)
+        }
         location.setNavigating(true, mode: route.mode.rawValue)
         map?.showsUserLocation = false
         if let loc = location.last { n.handle(loc); followCamera(n, loc, animated: false) }
+        refreshActivity()
     }
 
     func startTransit(_ trip: TransitTrip) {
         guard !trip.legs.isEmpty else { return }
         directions = nil
         transitGuide = TransitGuidance(trip: trip)
+        startTransitLeg()
+    }
+
+    private func startTransitLeg() {
+        defer { refreshActivity() }
+        guard let guide = transitGuide else { return }
+        let leg = guide.leg
         location.setNavigating(true, mode: TravelMode.walk.rawValue)
+        map?.showsUserLocation = true
         frameTransit()
+        guard leg.isWalk, let target = leg.path.last, let from = userLatLng ?? leg.path.first else { return }
+        if from.distance(to: target) < 25, let fix = location.last,
+           !location.reducedAccuracy, (0...55).contains(fix.horizontalAccuracy),
+           abs(fix.timestamp.timeIntervalSinceNow) < 10 {
+            advanceTransit()
+            return
+        }
+        transitGuide?.loadingWalk = true
+        Task {
+            let result = await Directions.routes(from: from, to: target, mode: .walk, useGoogle: !settings.noGoogle)
+            guard transitGuide?.trip.id == guide.trip.id, transitGuide?.index == guide.index else { return }
+            transitGuide?.loadingWalk = false
+            if let route = result.routes.first {
+                let stop = Place(id: "transit-\(guide.index)", name: leg.toName, location: target, source: "osm")
+                beginNavigation(route, destination: stop)
+            }
+        }
     }
 
     func frameTransit() {
@@ -754,17 +787,29 @@ final class AppModel: ObservableObject {
         frame(guide.trip.legs.dropFirst(guide.index).flatMap(\.path), bottomFraction: 0.12, top: 225)
     }
 
+    func boardTransit() {
+        guard transitGuide?.leg.isWalk == false else { return }
+        transitGuide?.boarded = true
+        refreshActivity()
+    }
+
     func advanceTransit() {
-        guard let guide = transitGuide else { return }
-        if guide.index + 1 < guide.trip.legs.count {
-            transitGuide?.index += 1
-            frameTransit()
-        } else {
-            endNavigation()
-        }
+        guard var guide = transitGuide else { return }
+        guard guide.index + 1 < guide.trip.legs.count else { endNavigation(); return }
+        nav?.stop()
+        glide.stop()
+        nav = nil
+        navSub = nil
+        guide.index += 1
+        guide.boarded = false
+        guide.boarding.reset()
+        guide.loadingWalk = false
+        transitGuide = guide
+        startTransitLeg()
     }
 
     func endNavigation() {
+        JourneyActivity.shared.finish()
         transitGuide = nil
         nav?.stop()
         glide.stop()
@@ -778,6 +823,73 @@ final class AppModel: ObservableObject {
         browseLook = .north
         browseFollowing = false
         resetCamera()
+    }
+
+    func refreshActivity() {
+        if let n = nav {
+            let step = n.nextManeuver
+            let progress = n.progress
+            let time = progress?.remainingSeconds ?? n.route.durationSeconds
+            let distance = progress?.remainingMeters ?? n.route.distanceMeters
+            let summary = "\(Fmt.duration(time)) · \(Fmt.distance(distance)) · \(Fmt.arrival(time))"
+            let state: TripActivity.ContentState
+            var cue: String?
+            if n.arrived {
+                state = .init(instruction: "You have arrived", detail: n.destination.name,
+                              symbol: "flag.checkered", summary: summary)
+                cue = "\(n.route.id)-arrival"
+            } else if n.rerouting || progress?.offRoute == true || n.gpsLost {
+                state = .init(instruction: n.gpsLost ? "GPS signal lost" : "Rerouting",
+                              detail: n.destination.name, symbol: "location.slash", summary: summary)
+            } else {
+                state = .init(instruction: step?.instruction ?? n.destination.name,
+                              detail: progress.map { Fmt.distance($0.distanceToNext) } ?? n.destination.name,
+                              symbol: step.map { maneuverSymbol($0.type) } ?? "location.north.fill",
+                              summary: summary)
+                let lead = n.route.mode == .drive ? min(450, max(90, n.speedMps * 14)) : n.route.mode == .bike ? 75.0 : 35.0
+                if let progress, let index = progress.nextIndex, let step, step.type != .depart,
+                   (0...lead).contains(progress.distanceToNext) {
+                    cue = "\(n.route.id)-\(index)"
+                }
+            }
+            JourneyActivity.shared.show(state, cue: cue)
+        } else if let guide = transitGuide {
+            let leg = guide.leg
+            let action = guide.boarded ? "Get off · \(leg.toName)" : "Board · \(leg.fromName)"
+            let state = TripActivity.ContentState(
+                instruction: leg.isWalk ? leg.toName : action,
+                detail: leg.isWalk ? "Walk" : leg.line.isEmpty ? "Transit" : leg.line,
+                symbol: vehicleSymbol(leg.vehicle), summary: leg.headsign)
+            let cue = leg.isWalk ? nil : "\(guide.trip.id)-\(guide.index)-\(guide.boarded)"
+            JourneyActivity.shared.show(state, cue: cue)
+        }
+    }
+
+    private func updateTransitPosition(_ loc: CLLocation, guide: TransitGuidance) -> Bool {
+        guard !location.reducedAccuracy, (0...55).contains(loc.horizontalAccuracy),
+              abs(loc.timestamp.timeIntervalSinceNow) < 15, let end = guide.leg.path.last else { return false }
+        let leg = guide.leg
+        let here = LatLng(loc.coordinate.latitude, loc.coordinate.longitude)
+        if leg.isWalk {
+            let distance = here.distance(to: end)
+            guard distance <= 32 || (distance <= 65 && (nav?.progress?.remainingMeters ?? .infinity) <= 80) else { return false }
+        } else if !guide.boarded {
+            var detector = guide.boarding
+            let sample = BoardingDetector.Sample(time: loc.timestamp, location: here, accuracy: loc.horizontalAccuracy,
+                                                 speed: loc.speed, course: loc.course)
+            let decision = detector.observe(sample, line: leg.path, departure: leg.depart)
+            transitGuide?.boarding = detector
+            if decision == .boarded { boardTransit() }
+            return false
+        } else {
+            guard here.distance(to: end) <= 55 else { return false }
+            if leg.path.count >= 2 {
+                let match = Geo.project(here, on: leg.path)
+                guard Geo.length(leg.path) - match.along < 130 else { return false }
+            }
+        }
+        advanceTransit()
+        return true
     }
 
     /**
@@ -840,9 +952,10 @@ final class AppModel: ObservableObject {
     }
 
     private func locationChanged(_ loc: CLLocation) {
-        if transitGuide != nil {
+        defer { refreshActivity() }
+        if let guide = transitGuide {
             mapTick += 1
-            return
+            if updateTransitPosition(loc, guide: guide) || nav == nil { return }
         }
         if location.reducedAccuracy || loc.horizontalAccuracy > 200 { areaRisk = nil }
         guard let n = nav else {
@@ -850,9 +963,10 @@ final class AppModel: ObservableObject {
             return
         }
         n.handle(loc)
+        guard nav === n else { return }
         followCamera(n, loc, animated: true)
         mapTick += 1
-        tripCheck(n)
+        if transitGuide == nil { tripCheck(n) }
     }
 
     /** Keeps the saved trip fresh while driving, and on arriving forgets it. */

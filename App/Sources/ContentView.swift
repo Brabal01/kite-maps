@@ -9,6 +9,7 @@ struct ContentView: View {
     @ObservedObject private var launch = LaunchAction.shared
     @ObservedObject private var settings = AppSettings.shared
     @Environment(\.colorScheme) private var systemScheme
+    @Environment(\.scenePhase) private var scenePhase
     @Environment(\.horizontalSizeClass) private var hClass
     @Environment(\.verticalSizeClass) private var vClass
     @State private var screen: CGSize = .zero
@@ -50,12 +51,16 @@ struct ContentView: View {
                 }
             }
         }
+        .onChange(of: scenePhase) { phase in
+            if phase == .active { model.refreshActivity() }
+        }
         .task(id: model.transitGuide?.trip.id) {
             guard model.transitGuide != nil else { return }
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 15_000_000_000)
                 guard !Task.isCancelled else { break }
                 model.mapTick += 1
+                model.refreshActivity()
             }
         }
         .overlay(alignment: .bottomLeading) {

@@ -4,6 +4,9 @@ import VelaCore
 struct TransitGuidance {
     let trip: TransitTrip
     var index = 0
+    var boarded = false
+    var boarding = BoardingDetector()
+    var loadingWalk = false
     var leg: TransitLeg { trip.legs[index] }
 }
 
@@ -24,7 +27,9 @@ struct TransitGuidanceView: View {
                 }
                 if let headsign = leg.headsign { Text(headsign).font(.headline) }
                 if !leg.isWalk {
-                    stop(leg.fromName, time: leg.depart, symbol: "arrow.up.circle")
+                    if !guide.boarded {
+                        stop(leg.fromName, time: leg.depart, symbol: "arrow.up.circle")
+                    }
                     Label("Vehicle position is estimated from stop times", systemImage: "circle.fill")
                         .font(.caption).foregroundStyle(.secondary)
                 }
@@ -41,8 +46,13 @@ struct TransitGuidanceView: View {
             .padding(16)
             .glass(RoundedRectangle(cornerRadius: 20))
             Spacer()
-            Button { model.advanceTransit() } label: {
-                Label(leg.isWalk ? "Reached the next stop" : "I've got off", systemImage: "arrow.right")
+            if guide.loadingWalk { ProgressView("Loading walking guidance…") }
+            Button {
+                if leg.isWalk || guide.boarded { model.advanceTransit() }
+                else { model.boardTransit() }
+            } label: {
+                Label(leg.isWalk ? "Reached the next stop" : guide.boarded ? "I've got off" : "I'm on board",
+                      systemImage: "arrow.right")
                     .frame(maxWidth: .infinity, minHeight: 44)
             }
             .buttonStyle(.borderedProminent)
