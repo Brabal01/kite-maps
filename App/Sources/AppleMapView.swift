@@ -1,6 +1,7 @@
 import MapKit
 import MapLibre
 import SwiftUI
+import UIKit.UIGestureRecognizerSubclass
 import VelaCore
 
 struct KiteAppleMapView: UIViewRepresentable {
@@ -58,6 +59,7 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
     private var satellite: Bool?
     private var terrain = false
     private var showsNativeTraffic: Bool?
+    private var showsNativePOI: Bool?
     private var pendingRouteFit: (rect: MKMapRect, padding: UIEdgeInsets)?
     private var measurementPoints: [MKPointAnnotation] = []
     private var measurementLine: MKGeodesicPolyline?
@@ -103,6 +105,13 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
         measure.delegate = self
         native.addGestureRecognizer(measure)
         measureGesture = measure
+
+        let measureTap = MapMeasurementTap(target: self, action: #selector(measureTapped(_:)))
+        measureTap.delegate = self
+        native.addGestureRecognizer(measureTap)
+        for case let tap as UITapGestureRecognizer in allGestures(in: native) where tap.numberOfTouchesRequired == 2 {
+            tap.require(toFail: measureTap)
+        }
 
         let press = UILongPressGestureRecognizer(target: self, action: #selector(pressed(_:)))
         let tap = UITapGestureRecognizer(target: self, action: #selector(tapped(_:)))
@@ -274,27 +283,35 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
         let preset: MapPreset = navigating && settings.mapPreset != .minimal ? .navigation : settings.mapPreset
         let profile = MapPresetCatalog.profile(for: preset)
         let showTraffic = settings.traffic
-        if satellite != settings.satellite || terrain != settings.terrain || showsNativeTraffic != showTraffic {
+        let hasAppleSearchPins = coordinator?.model.results.contains { $0.source == "apple" } == true
+        let showsPOI = profile.showPOI && settings.showApplePOI && !hasAppleSearchPins
+        let showBuildings = !settings.satellite && profile.showBuildings && (!navigating || settings.navBuildings)
+        let didChangeBuildings = native.showsBuildings != showBuildings
+        if didChangeBuildings { native.showsBuildings = showBuildings }
+
+        let configuredTraffic = (native.preferredConfiguration as? MKStandardMapConfiguration)?.showsTraffic
+            ?? (native.preferredConfiguration as? MKHybridMapConfiguration)?.showsTraffic
+        if satellite != settings.satellite || terrain != settings.terrain || showsNativeTraffic != showTraffic
+            || showsNativePOI != showsPOI || didChangeBuildings || configuredTraffic != showTraffic {
             satellite = settings.satellite
             terrain = settings.terrain
             showsNativeTraffic = showTraffic
+            showsNativePOI = showsPOI
+            let poiFilter: MKPointOfInterestFilter = showsPOI ? .includingAll : .excludingAll
             let elevation: MKMapConfiguration.ElevationStyle = terrain ? .realistic : .flat
             if settings.satellite {
                 let config = MKHybridMapConfiguration(elevationStyle: elevation)
                 config.showsTraffic = showTraffic
+                config.pointOfInterestFilter = poiFilter
                 native.preferredConfiguration = config
             } else {
                 let config = MKStandardMapConfiguration(elevationStyle: elevation, emphasisStyle: .default)
                 config.showsTraffic = showTraffic
+                config.pointOfInterestFilter = poiFilter
                 native.preferredConfiguration = config
             }
         }
-        let hasAppleSearchPins = coordinator?.model.results.contains { $0.source == "apple" } == true
-        let showsPOI = profile.showPOI && settings.showApplePOI && !hasAppleSearchPins
-        native.pointOfInterestFilter = showsPOI ? .includingAll : .excludingAll
         native.selectableMapFeatures = showsPOI ? [.pointsOfInterest, .physicalFeatures, .territories] : [.physicalFeatures, .territories]
-        let showBuildings = !settings.satellite && profile.showBuildings && (!navigating || settings.navBuildings)
-        if native.showsBuildings != showBuildings { native.showsBuildings = showBuildings }
         let showHeat = settings.wazeOn && settings.wazeHeatmap && settings.wazePolice
         if showHeat && heatLayer == nil {
             let layer = AppleHeatTiles()
@@ -653,6 +670,14 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
         native.addAnnotation(label)
     }
 
+    @objc private func measureTapped(_ recognizer: MapMeasurementTap) {
+        guard coordinator?.model.hasActiveJourney == false else { return }
+        let points = recognizer.points.map { native.convert($0, toCoordinateFrom: native) }
+        guard points.count == 2, points.allSatisfy(CLLocationCoordinate2DIsValid) else { return }
+        choosingMeasurementEndpoint = false
+        setMeasurementPoints(points)
+    }
+
     @objc private func measureHeld(_ recognizer: UILongPressGestureRecognizer) {
         guard recognizer.state == .began || recognizer.state == .changed,
               recognizer.numberOfTouches == 2,
@@ -701,6 +726,10 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
         if let (index, distance) = nearest, distance <= 20, directions.current[index].id != chosen.id {
             model.selectRoute(index)
         }
+    }
+
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        !(gestureRecognizer is MapMeasurementTap) || coordinator?.model.hasActiveJourney == false
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
@@ -757,5 +786,62 @@ private final class AppleHeatTiles: MKTileOverlay {
         URLSession.shared.dataTask(with: HighwayHeat.url(tile)) { data, _, error in
             result(data.flatMap { HighwayHeat.colour($0, zoom: tile.z)?.pngData() }, error)
         }.resume()
+    }
+}
+
+// UIKit may discard touch locations before a tap action runs. Keep both coordinates until reset.
+private final class MapMeasurementTap: UIGestureRecognizer {
+    private var initialLocations: [UITouch: CGPoint] = [:]
+    private var activeTouches: Set<UITouch> = []
+    private var startedAt: TimeInterval?
+    private(set) var points: [CGPoint] = []
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard let first = touches.map(\.timestamp).min() else { return }
+        let start = startedAt ?? first
+        startedAt = start
+        guard initialLocations.count + touches.count <= 2, first - start <= 0.15,
+              activeTouches.count == initialLocations.count else {
+            state = .failed
+            return
+        }
+        for touch in touches { initialLocations[touch] = touch.location(in: view) }
+        activeTouches.formUnion(touches)
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        if !stayedStill(touches) { state = .failed }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard initialLocations.count == 2, stayedStill(touches),
+              let start = startedAt, touches.allSatisfy({ $0.timestamp - start < 0.35 }) else {
+            state = .failed
+            return
+        }
+        points.append(contentsOf: touches.map { $0.location(in: view) })
+        activeTouches.subtract(touches)
+        guard activeTouches.isEmpty else { return }
+        state = hypot(points[0].x - points[1].x, points[0].y - points[1].y) >= 22 ? .recognized : .failed
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+        state = .failed
+    }
+
+    override func reset() {
+        super.reset()
+        initialLocations.removeAll()
+        activeTouches.removeAll()
+        startedAt = nil
+        points.removeAll()
+    }
+
+    private func stayedStill(_ touches: Set<UITouch>) -> Bool {
+        touches.allSatisfy { touch in
+            guard let start = initialLocations[touch] else { return false }
+            let point = touch.location(in: view)
+            return hypot(point.x - start.x, point.y - start.y) <= 10
+        }
     }
 }
