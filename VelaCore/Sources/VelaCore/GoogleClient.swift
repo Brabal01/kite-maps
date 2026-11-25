@@ -105,6 +105,47 @@ public actor GoogleClient {
         return try await get(url, referer: "https://www.google.com/", xhr: true)
     }
 
+    public func placeReviews(featureID: String) async -> [PlaceReview] {
+        guard let body = GooglePlaceMedia.reviewsRequest(featureID) else { return [] }
+        let feed = GooglePlaceMedia.reviewFeed((try? await placeMediaBatch(rpc: "qv9Egd", body: body)) ?? "")
+        if Task.isCancelled || feed.count >= 8 || feed.contains(where: { !$0.photos.isEmpty }) { return feed }
+        let legacy = await legacyPlaceReviews(featureID: featureID)
+        let result = GooglePlaceMedia.mergedReviews(feed, legacy)
+        guard result.isEmpty, !Task.isCancelled else { return result }
+        return await reviews(featureId: featureID)?.map {
+            PlaceReview(author: $0.author, rating: $0.rating, time: $0.when, text: $0.text, photos: [])
+        } ?? []
+    }
+
+    public func placeGallery(featureID: String) async -> [String] {
+        guard let body = GooglePlaceMedia.galleryRequest(featureID),
+              let response = try? await placeMediaBatch(rpc: "hspqX", body: body) else { return [] }
+        return GooglePlaceMedia.gallery(response)
+    }
+
+    private func legacyPlaceReviews(featureID: String) async -> [PlaceReview] {
+        guard let parameter = GooglePlaceMedia.legacyParameter(featureID),
+              let url = URL(string: "https://www.google.com/maps/preview/review/listentitiesreviews?authuser=0&hl=en&gl=us&pb=" + enc(parameter)),
+              let response = try? await fetch(url) else { return [] }
+        return GooglePlaceMedia.legacyReviews(response)
+    }
+
+    private func placeMediaBatch(rpc: String, body: String) async throws -> String {
+        try await warm()
+        try Task.checkCancellation()
+        let url = URL(string: "https://www.google.com/maps/_/MapsWizUi/data/batchexecute?rpcids=\(rpc)&source-path=%2Fmaps&hl=en&gl=us&rt=c")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.httpBody = Data(("f.req=" + enc(body)).utf8)
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("https://www.google.com", forHTTPHeaderField: "Origin")
+        request.setValue("https://www.google.com/maps/", forHTTPHeaderField: "Referer")
+        request.setValue("1", forHTTPHeaderField: "X-Same-Domain")
+        request.setValue("CAE=", forHTTPHeaderField: "x-maps-diversion-context-bin")
+        return try await responseBody(request)
+    }
+
     private func warm() async throws {
         if warmed { return }
         // Only counts once Google answered: opened with no signal, try again on the next search.
@@ -124,7 +165,11 @@ public actor GoogleClient {
         r.setValue(xhr ? "cors" : "navigate", forHTTPHeaderField: "Sec-Fetch-Mode")
         r.setValue(xhr ? "same-origin" : "none", forHTTPHeaderField: "Sec-Fetch-Site")
         if let referer { r.setValue(referer, forHTTPHeaderField: "Referer") }
-        let (data, resp) = try await session.data(for: r)
+        return try await responseBody(r)
+    }
+
+    private func responseBody(_ request: URLRequest) async throws -> String {
+        let (data, resp) = try await session.data(for: request)
         if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             throw VelaError.http(http.statusCode)
         }
