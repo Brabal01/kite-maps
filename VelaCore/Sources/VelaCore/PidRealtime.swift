@@ -42,7 +42,7 @@ public enum PidRealtime {
                 actual.depart = time
                 actual.calls[0] = TransitCall(id: first.id, name: first.name, location: first.location,
                     arrival: first.arrival, departure: time, platform: first.platform,
-                    arrivalDelay: first.arrivalDelay, departureDelay: minutes)
+                    arrivalDelay: first.arrivalDelay, departureDelay: minutes, cancelled: first.cancelled)
             }
         }
         actual.cancelled = actual.cancelled || vehicle?.cancelled == true

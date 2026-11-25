@@ -12,6 +12,7 @@ public struct TransitCall: Hashable, Sendable {
     public let platform: String?
     public let arrivalDelay: Int?
     public let departureDelay: Int?
+    public var cancelled = false
 }
 
 /** One part of a transit trip: a walk, or a ride on one line between two stops. */
@@ -258,7 +259,8 @@ public enum Transitous {
         }
         let cumulative = Geo.cumulative(current.path)
         guard current.path.count >= 2 else { return nil }
-        for (a, b) in zip(current.calls, current.calls.dropFirst()) {
+        let calls = current.calls.filter { !$0.cancelled }
+        for (a, b) in zip(calls, calls.dropFirst()) {
             guard let start = a.departure, let end = b.arrival, end > start, (start...end).contains(now),
                   a.departureDelay != nil || b.arrivalDelay != nil else { continue }
             let from = Geo.project(a.location, on: current.path, cumulative: cumulative)
@@ -379,6 +381,7 @@ public enum Transitous {
         let live = l["realTime"] as? Bool == true
         let rows = [from] + intermediate + [to]
         out.calls = rows.compactMap { call($0, live: live) }
+        out.cancelled = out.cancelled || out.calls.first?.cancelled == true || out.calls.last?.cancelled == true
         let notices = ([l] + rows).flatMap { $0["alerts"] as? [[String: Any]] ?? [] }
         out.alerts = Array(Set(notices.compactMap { ($0["alertHeaderText"] ?? $0["headerText"] ?? $0["descriptionText"]) as? String })).sorted()
         if [.tram, .metro, .train].contains(out.vehicle) {
@@ -407,7 +410,8 @@ public enum Transitous {
         return TransitCall(id: row["stopId"] as? String, name: row["name"] as? String ?? "", location: at,
                            arrival: a, departure: d, platform: platform(row),
                            arrivalDelay: delay(a, row["scheduledArrival"], live: live, reason: row["arrivalTimestampReason"]),
-                           departureDelay: delay(d, row["scheduledDeparture"], live: live, reason: row["departureTimestampReason"]))
+                           departureDelay: delay(d, row["scheduledDeparture"], live: live, reason: row["departureTimestampReason"]),
+                           cancelled: row["cancelled"] as? Bool == true)
     }
 
     private static func platform(_ row: [String: Any]) -> String? {
