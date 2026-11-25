@@ -1,0 +1,18 @@
+--------- beginning of main
+11-25 00:26:25.082 19549 19606 I Mbgl    : {TextureViewRend}[General]: GPU Identifier: Android Emulator OpenGL ES Translator (ANGLE (Google, Vulkan 1.2.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver-5.0.0))
+11-25 00:26:26.084 19549 19606 W Mbgl    : {Worker 2}[General]: Invalid geometry in line layer
+11-25 00:34:52.375 20663 20720 I Mbgl    : {TextureViewRend}[General]: GPU Identifier: Android Emulator OpenGL ES Translator (ANGLE (Google, Vulkan 1.2.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver-5.0.0))
+11-25 00:34:55.200 20663 20720 W Mbgl    : {Worker 3}[General]: Invalid geometry in line layer
+11-25 00:35:08.840 20906 20949 I Mbgl    : {TextureViewRend}[General]: GPU Identifier: Android Emulator OpenGL ES Translator (ANGLE (Google, Vulkan 1.2.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver-5.0.0))
+11-25 00:35:09.871 20906 20949 W Mbgl    : {Worker 3}[General]: Invalid geometry in line layer
+11-25 00:35:40.265 21144 21197 I Mbgl    : {TextureViewRend}[General]: GPU Identifier: Android Emulator OpenGL ES Translator (ANGLE (Google, Vulkan 1.2.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver-5.0.0))
+11-25 00:35:41.034 21144 21197 W Mbgl    : {Worker 4}[General]: Invalid geometry in line layer
+11-25 00:36:25.019 21451 21505 I Mbgl    : {TextureViewRend}[General]: GPU Identifier: Android Emulator OpenGL ES Translator (ANGLE (Google, Vulkan 1.2.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver-5.0.0))
+11-25 00:36:29.325 21451 21505 W Mbgl    : {Worker 3}[General]: Invalid geometry in line layer
+11-25 00:37:11.679 21766 21823 I Mbgl    : {TextureViewRend}[General]: GPU Identifier: Android Emulator OpenGL ES Translator (ANGLE (Google, Vulkan 1.2.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver-5.0.0))
+11-25 00:37:12.568 21766 21823 W Mbgl    : {Worker 3}[General]: Invalid geometry in line layer
+11-25 00:38:55.522 22032 22101 I Mbgl    : {TextureViewRend}[General]: GPU Identifier: Android Emulator OpenGL ES Translator (ANGLE (Google, Vulkan 1.2.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver-5.0.0))
+11-25 00:38:57.006 22032 22101 W Mbgl    : {Worker 1}[General]: Invalid geometry in line layer
+11-25 00:39:41.329 22353 22417 I Mbgl    : {TextureViewRend}[General]: GPU Identifier: Android Emulator OpenGL ES Translator (ANGLE (Google, Vulkan 1.2.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver-5.0.0))
+11-25 00:39:42.115 22353 22417 W Mbgl    : {Worker 3}[General]: Invalid geometry in line layer
+glyphs from the runner: 200 81170 bytes
