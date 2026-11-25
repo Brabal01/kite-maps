@@ -11,6 +11,12 @@ final class TransitJourney: ObservableObject {
     @Published var walking: Navigator?
     @Published var walkingUnavailable = false
     @Published private(set) var nextStop: TransitCall?
+    @Published private(set) var nextStopEstimated = false
+    var lastConfirmedStop: TransitCall? {
+        guard let stopIndex = ride.map({ $0.nextIndex - 1 }), let leg,
+              leg.calls.indices.contains(stopIndex) else { return nil }
+        return leg.calls.prefix(through: stopIndex).last { !$0.cancelled }
+    }
     @Published private(set) var vehicle: Transitous.VehiclePosition?
     @Published private(set) var exitWarning = false
     @Published var following = true
@@ -18,12 +24,10 @@ final class TransitJourney: ObservableObject {
     var leg: TransitLeg? { trip.legs.indices.contains(index) ? trip.legs[index] : nil }
 
     private var nearCount = 0
-    private var seenAtStop = false
-    private var movingCount = 0
-    private var progress = 0.0
-    private var lastMatched: Date?
-    private var cumulative: [Double] = []
-    private var callDistances: [Double] = []
+    private var boarding: TransitBoarding?
+    private var ride: TransitRide?
+    private var boardedAt: Date?
+    private var lastWalkFix: Date?
     private var paceSample: CLLocation?
 
     init(trip: TransitTrip, destination: Place) {
@@ -35,25 +39,23 @@ final class TransitJourney: ObservableObject {
     private func prepare() {
         phase = leg.map { $0.isWalk ? .walk : .board } ?? .complete
         nextStop = nil
+        nextStopEstimated = false
         vehicle = nil
         exitWarning = false
         walkingUnavailable = false
         following = true
         nearCount = 0
-        seenAtStop = false
-        movingCount = 0
-        progress = 0
-        lastMatched = nil
+        ride = nil
+        boardedAt = nil
+        lastWalkFix = nil
         paceSample = nil
-        cacheGeometry()
+        prepareBoarding()
     }
 
-    private func cacheGeometry() {
-        guard let leg else { cumulative = []; callDistances = []; return }
-        cumulative = Geo.cumulative(leg.path)
-        callDistances = leg.path.count >= 2 ? leg.calls.map {
-            Geo.project($0.location, on: leg.path, cumulative: cumulative).along
-        } : []
+    private func prepareBoarding() {
+        boarding = nil
+        guard phase == .board, let leg, let stop = leg.calls.first?.location ?? leg.path.first else { return }
+        boarding = TransitBoarding(path: leg.path, stop: stop)
     }
 
     func advance() {
@@ -64,38 +66,62 @@ final class TransitJourney: ObservableObject {
     }
 
     func board() {
-        guard phase == .board else { return }
+        guard phase == .board, let leg, !leg.cancelled else { return }
+        ride = TransitRide(leg: leg)
+        boardedAt = Date()
         phase = .ride
-        nextStop = leg?.calls.dropFirst().first
-        lastMatched = nil
-        nearCount = 0
+        nextStop = leg.calls.dropFirst().first { !$0.cancelled }
     }
 
     func updateLive(_ updated: TransitTrip?, vehicle: Transitous.VehiclePosition?, at index: Int) {
-        guard self.index == index else { return }
-        if let updated, updated.legs.map(\.isWalk) == trip.legs.map(\.isWalk) {
-            if leg?.path != updated.legs[index].path {
+        guard self.index == index, let previous = leg else { return }
+        if let updated, updated.legs.map(\.isWalk) == trip.legs.map(\.isWalk),
+           updated.legs.indices.contains(index) {
+            let current = updated.legs[index]
+            // Keep the booked stop order and the GPS projection through timetable updates.
+            let sameStops = current.calls.count == previous.calls.count &&
+                zip(previous.calls, current.calls).allSatisfy { old, new in
+                    old.location.distance(to: new.location) <= 130 &&
+                        ((old.id != nil && old.id == new.id) || old.name == new.name)
+                }
+            if current.line == previous.line, sameStops || previous.calls.isEmpty {
                 trip = updated
-                cacheGeometry()
-            } else { trip = updated }
+                if phase == .board, current.path != previous.path ||
+                    current.calls.first?.location != previous.calls.first?.location {
+                    prepareBoarding()
+                }
+                if phase == .ride, previous.calls.isEmpty, !current.calls.isEmpty {
+                    ride = TransitRide(leg: current)
+                }
+            }
         }
-        self.vehicle = vehicle
-        guard phase == .ride, lastMatched.map({ Date().timeIntervalSince($0) > 25 }) ?? true,
-              leg?.cancelled == false else { return }
-        let next = leg?.calls.dropFirst().first { $0.arrival.map { $0 >= Date() } == true }
-        if let next { nextStop = next }
-        if let next, next == leg?.calls.last, let at = next.arrival, at.timeIntervalSinceNow <= 75 {
+        self.vehicle = leg?.cancelled == true ? nil : vehicle
+        guard phase == .ride, let leg, let ride, let boardedAt else { return }
+        let now = Date()
+        if now.timeIntervalSince(ride.lastPositionAt ?? boardedAt) <= 25 {
+            nextStop = leg.calls.dropFirst(ride.nextIndex).first { !$0.cancelled }
+            return
+        }
+        guard !leg.cancelled else { return }
+        let next = ride.scheduledNext(in: leg.calls, at: now)
+        nextStop = next
+        nextStopEstimated = next != nil
+        if let next, next == leg.calls.last, let arrival = next.arrival ?? leg.arrive,
+           (0...75).contains(arrival.timeIntervalSince(now)) {
             warnExit(scheduled: true)
         }
     }
 
     /// True when guidance can advance to the next leg. Poor or old fixes never change a phase.
     func observe(_ fix: CLLocation, settings: AppSettings) -> Bool {
-        guard let leg, fix.horizontalAccuracy >= 0, fix.horizontalAccuracy <= 50,
-              abs(fix.timestamp.timeIntervalSinceNow) <= 15 else { return false }
+        let age = Date().timeIntervalSince(fix.timestamp)
+        guard let leg, (0...15).contains(age), CLLocationCoordinate2DIsValid(fix.coordinate) else { return false }
         let at = LatLng(fix.coordinate.latitude, fix.coordinate.longitude)
         switch phase {
         case .walk:
+            guard (0...50).contains(fix.horizontalAccuracy),
+                  lastWalkFix.map({ fix.timestamp > $0 }) ?? true else { return false }
+            lastWalkFix = fix.timestamp
             samplePace(fix, settings: settings)
             walking?.handle(fix)
             let goal = trip.legs.dropFirst(index + 1).first?.calls.first?.location ?? leg.path.last
@@ -103,37 +129,26 @@ final class TransitJourney: ObservableObject {
             nearCount = close ? nearCount + 1 : 0
             return nearCount >= 2
         case .board:
-            guard let stop = leg.calls.first?.location ?? leg.path.first else { return false }
-            if at.distance(to: stop) <= 55 { seenAtStop = true }
-            guard seenAtStop, let departure = leg.depart, abs(fix.timestamp.timeIntervalSince(departure)) < 12 * 60,
-                  leg.path.count >= 2 else { return false }
-            let projected = Geo.project(at, on: leg.path, cumulative: cumulative)
-            movingCount = fix.speed >= 3 && projected.along >= 60 && projected.offset <= 30 ? movingCount + 1 : 0
-            if movingCount >= 2 { board() }
+            guard !leg.cancelled else { return false }
+            if boarding?.observe(at, accuracy: fix.horizontalAccuracy, speed: fix.speed, course: fix.course,
+                                 at: fix.timestamp, departure: leg.calls.first?.departure ?? leg.depart) == true {
+                board()
+            }
         case .ride:
-            if leg.path.count >= 2 {
-                let projected = Geo.project(at, on: leg.path, cumulative: cumulative)
-                if projected.offset <= 55 && projected.along + 100 >= progress {
-                    progress = max(progress, projected.along)
-                    lastMatched = fix.timestamp
-                    if let upcoming = callDistances.indices.dropFirst().first(where: { callDistances[$0] >= progress + 12 }) {
-                        nextStop = leg.calls[upcoming]
-                        if upcoming == leg.calls.count - 1 && callDistances[upcoming] - progress < 300 { warnExit(scheduled: false) }
-                    }
-                }
-            }
-            if let exit = leg.calls.last?.location ?? leg.path.last {
-                let close = exit.distance(to: at) < 35 && (fix.speed < 4)
-                nearCount = close ? nearCount + 1 : 0
-                return nearCount >= 2 && (callDistances.last.map { progress >= $0 - 120 } ?? true)
-            }
+            guard let update = ride?.observe(at, accuracy: fix.horizontalAccuracy, speed: fix.speed, at: fix.timestamp),
+                  let nextIndex = ride?.nextIndex, leg.calls.indices.contains(nextIndex) else { return false }
+            nextStop = leg.calls.dropFirst(nextIndex).first { !$0.cancelled }
+            nextStopEstimated = false
+            if update.exitApproach { warnExit(scheduled: false) }
+            return update.readyToExit
         case .complete: break
         }
         return false
     }
 
     private func samplePace(_ fix: CLLocation, settings: AppSettings) {
-        guard settings.learnWalkingPace, fix.horizontalAccuracy <= 18, (0.65...2.2).contains(fix.speed) else {
+        guard settings.learnWalkingPace, Date().timeIntervalSince(fix.timestamp) <= 5,
+              fix.horizontalAccuracy <= 18, (0.65...2.2).contains(fix.speed) else {
             paceSample = nil
             return
         }

@@ -228,7 +228,16 @@ struct TransitJourneyView: View {
             if journey.leg?.cancelled == true { Text("Service cancelled").foregroundStyle(.red) }
             else { Button("I'm on board") { model.boardTransit() }.buttonStyle(.borderedProminent) }
         case .ride:
-            if let next = journey.nextStop { Text("Next · \(next.name)").font(.title3.bold()) }
+            if let confirmed = journey.lastConfirmedStop {
+                Text("Last confirmed · \(confirmed.name)").font(.caption).foregroundStyle(.secondary)
+            }
+            if let next = journey.nextStop {
+                Text("Next · \(next.name)").font(.title3.bold())
+                if journey.nextStopEstimated {
+                    Text("Estimated from stop times").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            if journey.leg?.cancelled == true { Text("Service cancelled").foregroundStyle(.red) }
             if let exit = journey.leg?.toName { Text("Get off at \(exit)") }
             if let vehicle = journey.vehicle {
                 Text(vehicle.isGPS ? "GPS vehicle position" : "Vehicle position estimated from live times")
