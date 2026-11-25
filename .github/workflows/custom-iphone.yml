@@ -19,6 +19,10 @@ on:
       - iphone-custom-v33-reliability-ux
       - iphone-custom-v34-reborn-apple-publit
 
+concurrency:
+  group: custom-iphone-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
