@@ -177,8 +177,8 @@ struct ContentView: View {
             }
             .kiteType()
         }
-        .sheet(isPresented: $model.addingStop) {
-            StopPicker(model: model).kiteType()
+        .sheet(isPresented: $model.addingStop, onDismiss: { model.closeStopSearch() }) {
+            RouteStopsSheet(model: model).kiteType()
         }
         .sheet(isPresented: $model.pickingOrigin) {
             StopPicker(model: model, origin: true).kiteType()
@@ -851,7 +851,7 @@ enum DemoScript {
             model.showReviews = place.id
             return
         }
-        if step == "go" {
+        if step == "go" || step == "route-stops" {
             // A simulated test drive: straight into navigation to `-demoTo lat,lng`, in miles and yards, nothing made up on screen.
             guard let k = args.firstIndex(of: "-demoTo"), k + 1 < args.count else { return }
             let c = args[k + 1].split(separator: ",").compactMap { Double($0) }
@@ -862,7 +862,8 @@ enum DemoScript {
             await wait(2)
             model.openDirections(to: to)
             for _ in 0..<40 where model.directions?.route == nil { await wait(1) }
-            model.startNavigation()
+            if step == "route-stops" { model.addingStop = true }
+            else { model.startNavigation() }
             return
         }
         if step == "roundabout" {

@@ -162,6 +162,20 @@ final class AppModel: ObservableObject {
     @Published var liveCamRoute: [LiveCam] = []
     /** The "Add stop" search sheet. */
     @Published var addingStop = false
+    @Published var displayedStopResults: [RouteStopCandidate] = []
+    @Published var selectedStopResult: RouteStopCandidate?
+    @Published var onlyOpenStopResults = false
+    private var stopSearchWasFollowing: Bool?
+    var stopsStillAhead: [RouteStopCandidate] {
+        guard let along = nav?.progress?.alongMeters else { return displayedStopResults }
+        return displayedStopResults.filter { ($0.routeMeters ?? along) > along }
+    }
+    var visibleStopResults: [RouteStopCandidate] {
+        stopsStillAhead.filter { stop in
+            !onlyOpenStopResults || (!stop.place.permanentlyClosed && (stop.place.openNow == true
+                || stop.place.hours == ["24/7"]))
+        }
+    }
     @Published var showSaved = false
     /** The sheet for choosing home or work by searching for it. */
     @Published var picking: PickKind?
@@ -812,10 +826,30 @@ final class AppModel: ObservableObject {
         frameRoute()
     }
 
-    func addStop(_ p: Place) {
-        guard directions != nil, (directions?.stops.count ?? 0) < 8 else { return }
-        directions?.stops.append(p)
+    func addStop(_ p: Place, routeMeters: Double? = nil) {
+        guard let plan = directions, plan.stops.count < 8 else { return }
+        var index = plan.stops.count
+        if let at = routeMeters, let route = plan.route {
+            let ordered = plan.reversed ? Array(plan.stops.reversed()) : plan.stops
+            let insertion = RouteStopSearch.insertionIndex(for: at, among: ordered, on: route.polyline)
+            index = plan.reversed ? ordered.count - insertion : insertion
+        }
+        directions?.stops.insert(p, at: index)
         reloadRoutes()
+    }
+
+    func openStopSearch() {
+        if stopSearchWasFollowing == nil { stopSearchWasFollowing = nav?.following ?? false }
+    }
+
+    func closeStopSearch() {
+        let restore = stopSearchWasFollowing == true
+        stopSearchWasFollowing = nil
+        displayedStopResults = []
+        selectedStopResult = nil
+        onlyOpenStopResults = false
+        if restore, nav != nil { recenterNav() }
+        else if nav == nil, routePointRole == nil { frameRoute() }
     }
 
     func removeStop(_ i: Int) {

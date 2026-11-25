@@ -309,8 +309,8 @@ struct NavigationOverlay: View {
         .sheet(isPresented: $showParking) {
             DestinationParkingView(nav: nav)
         }
-        .sheet(isPresented: $showAlong) {
-            AlongRouteSheet(nav: nav).kiteType()
+        .sheet(isPresented: $showAlong, onDismiss: { model.closeStopSearch() }) {
+            RouteStopsSheet(model: model).kiteType()
         }
         .sheet(isPresented: $showSteps, onDismiss: {
             if profileAfterSteps {
@@ -1432,121 +1432,6 @@ struct CameraBadge: View {
         Image(uiImage: kind == .speed ? MapIcons.speedCamera() : MapIcons.plateCamera())
             .resizable()
             .frame(width: size, height: size)
-    }
-}
-
-/** Find a stop ahead without leaving navigation: gas, food, coffee… near the road still to drive. */
-struct AlongRouteSheet: View {
-    @ObservedObject var nav: Navigator
-    @ObservedObject private var settings = AppSettings.shared
-    @Environment(\.dismiss) private var dismiss
-    @State private var found: [(place: Place, ahead: Double)] = []
-    @State private var searching = false
-    @State private var picked: String?
-    /** How much longer the drive gets with each place as a stop, in seconds (GitHub #60). */
-    @State private var detour: [String: Double] = [:]
-
-    private let kinds: [(String, String, String)] = [
-        (Fmt.yards ? "Petrol" : "Gas", "fuelpump.fill", Fmt.yards ? "petrol station" : "gas station"), ("EV charging", "bolt.car.fill", "ev charging station"),
-        ("Coffee", "cup.and.saucer.fill", "coffee"), ("Food", "fork.knife", "restaurants"),
-        (Fmt.yards ? "Supermarket" : "Groceries", "cart.fill", Fmt.yards ? "supermarket" : "grocery store"),
-        (Fmt.yards ? "Toilets" : "Restrooms", "toilet.fill", Fmt.yards ? "public toilets" : "public restroom"),
-        ("Parking", "parkingsign", "parking"), ("Pharmacy", "cross.case.fill", "pharmacy"),
-    ]
-
-    var body: some View {
-        NavigationView {
-            List {
-                Section {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 8)], spacing: 8) {
-                        ForEach(kinds, id: \.0) { k in
-                            Button { run(k.2, label: k.0) } label: {
-                                Label(k.0, systemImage: k.1)
-                                    .font(.subheadline.weight(.semibold))
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(.horizontal, 12).frame(height: 40)
-                                    .background(RoundedRectangle(cornerRadius: 10).fill(picked == k.0 ? Vela.routeBlue.opacity(0.22) : Color.secondary.opacity(0.12)))
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
-                }
-                if searching {
-                    HStack { ProgressView(); Text("Looking along your route…").foregroundColor(.secondary) }
-                } else if picked != nil && found.isEmpty {
-                    Text("Nothing found close to the road ahead.").foregroundColor(.secondary)
-                }
-                if !found.isEmpty {
-                    Section("Ahead on your route") {
-                        ForEach(found, id: \.place.id) { f in
-                            Button {
-                                nav.addStop(f.place)
-                                dismiss()
-                            } label: {
-                                HStack(spacing: 12) {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(f.place.name).foregroundColor(.primary).lineLimit(1)
-                                        HStack(spacing: 6) {
-                                            if let r = f.place.rating { Text(String(format: "%.1f ★", r)) }
-                                            if let st = f.place.statusText { Text(st).lineLimit(1) }
-                                        }
-                                        .font(.caption).foregroundColor(.secondary)
-                                    }
-                                    Spacer()
-                                    VStack(alignment: .trailing, spacing: 2) {
-                                        if let extra = detour[f.place.id] {
-                                            Text(DetourText.short(extra)).font(.subheadline.weight(.bold)).foregroundColor(DetourText.color(extra))
-                                        }
-                                        Text("in \(Fmt.distance(f.ahead))").font(.caption.weight(.medium)).foregroundColor(.secondary)
-                                        Text("Add stop").font(.caption.weight(.semibold)).foregroundColor(Vela.routeBlue)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            .navigationTitle("Search along route")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
-        }
-    }
-
-    private func run(_ query: String, label: String) {
-        picked = label
-        searching = true
-        found = []
-        let line = nav.route.polyline
-        let cum = Geo.cumulative(line)
-        let here = nav.progress?.alongMeters ?? 0
-        let total = cum.last ?? 0
-        // The next stretch of road, up to 40 km: search around its middle, wide enough to cover it.
-        let end = min(total, here + 40_000)
-        let mid = Geo.point(along: line, meters: (here + end) / 2, cumulative: cum)
-        let span = max(end - here, 3_000)
-        let useGoogle = !settings.noGoogle
-        Task {
-            let r = await PlaceSearch.search(query, center: mid, spanMeters: span, useGoogle: useGoogle)
-            var out: [(Place, Double)] = []
-            for p in r.places {
-                let at = Geo.project(p.location, on: line, cumulative: cum)
-                // Close to the road (a short detour) and still ahead of you.
-                guard at.offset < 800, at.along > here + 100 else { continue }
-                out.append((p, at.along - here))
-            }
-            found = out.sorted { $0.1 < $1.1 }.prefix(20).map { (place: $0.0, ahead: $0.1) }
-            searching = false
-            // "+3 min": to the place and back to the route a little further on, against staying on it.
-            detour = [:]
-            let list = found
-            guard !list.isEmpty else { return }
-            let me = Geo.point(along: line, meters: here, cumulative: cum)
-            let rejoin = list.map { Geo.point(along: line, meters: min(here + $0.ahead + 1_500, total), cumulative: cum) }
-            if let extra = await OSRM.detours(from: me, places: list.map(\.place.location), rejoin: rejoin), picked == label {
-                for (f, e) in zip(list, extra) { if let e { detour[f.place.id] = e } }
-            }
-        }
     }
 }
 

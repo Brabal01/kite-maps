@@ -444,10 +444,19 @@ final class Navigator: ObservableObject {
     }
 
     /** A stop picked on the way (search along the route): go there first, then on. */
-    func addStop(_ p: Place) {
-        stops.insert(p, at: 0)
+    func canAddStop(_ p: Place) -> Bool {
+        !stopped && !rerouting && lastFix != nil && stops.count < 8
+            && !destination.matchesNearby(p) && !stops.contains(where: p.matchesNearby)
+    }
+
+    func addStop(_ p: Place, routeMeters: Double? = nil) {
+        guard canAddStop(p), let fix = lastFix else { return }
+        let index = routeMeters.map { at in
+            RouteStopSearch.insertionIndex(for: at, among: stops, on: route.polyline)
+        } ?? 0
+        stops.insert(p, at: index)
         speak("Adding a stop at \(p.name).")
-        if let fix = lastFix { reroute(from: fix, quiet: true, adding: p) }
+        reroute(from: fix, quiet: true, adding: p)
     }
 
     func removeNextStop() {

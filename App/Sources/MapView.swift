@@ -1259,16 +1259,19 @@ struct VelaMapView: UIViewRepresentable {
 
         private func renderResults(_ style: MLNStyle) {
             let showList = model.directions == nil && model.nav == nil
-            let list = showList ? model.visibleResults : []
+            let resultsAhead = model.visibleStopResults
+            let selectedStop = resultsAhead.first { $0.id == model.selectedStopResult?.id }?.place
+            let stopResults = resultsAhead.map(\.place)
+            let list = stopResults.isEmpty ? (showList ? model.visibleResults : []) : stopResults
             let target = model.nav?.destination ?? model.directions?.destination ?? model.selected
             let stops: [Place] = model.nav?.stops ?? model.directions?.stops ?? []
             let ids: String = list.map(\.id).joined(separator: ",")
             let stopIds: String = stops.map(\.id).joined(separator: ",")
-            let key = "\(ids)|\(target?.id ?? "")|\(model.directions?.reversed ?? false)|\(model.nav == nil)|\(stopIds)"
+            let key = "\(ids)|\(target?.id ?? "")|\(model.directions?.reversed ?? false)|\(model.nav == nil)|\(stopIds)|\(selectedStop?.id ?? "")"
             guard key != lastResultsKey else { return }
             lastResultsKey = key
             let features: [MLNPointFeature] = list.enumerated().compactMap { i, p in
-                guard p.id != target?.id else { return nil }
+                guard p.id != target?.id, p.id != selectedStop?.id else { return nil }
                 let f = MLNPointFeature()
                 f.coordinate = CLLocationCoordinate2D(latitude: p.location.lat, longitude: p.location.lng)
                 let rating = p.rating.map { String(format: "%.1f", $0) }
@@ -1283,6 +1286,12 @@ struct VelaMapView: UIViewRepresentable {
             (style.source(withIdentifier: "vela-results") as? MLNShapeSource)?.shape = MLNShapeCollectionFeature(shapes: features)
 
             var sel: [MLNPointFeature] = []
+            if let selectedStop {
+                let pin = MLNPointFeature()
+                pin.coordinate = CLLocationCoordinate2D(latitude: selectedStop.location.lat, longitude: selectedStop.location.lng)
+                pin.attributes = ["id": selectedStop.id, "icon": "pin-selected", "anchor": "bottom", "label": selectedStop.name]
+                sel.append(pin)
+            }
             if let t = target {
                 let f = MLNPointFeature()
                 f.coordinate = CLLocationCoordinate2D(latitude: t.location.lat, longitude: t.location.lng)
@@ -1462,9 +1471,20 @@ struct VelaMapView: UIViewRepresentable {
                 model.acceptRoutePoint(role, at: LatLng(c.latitude, c.longitude))
                 return
             }
-            guard model.nav == nil else { return }
             let pt = g.location(in: map)
             let box = CGRect(x: pt.x - 22, y: pt.y - 22, width: 44, height: 44)
+            if !model.displayedStopResults.isEmpty {
+                let pins = map.visibleFeatures(in: box, styleLayerIdentifiers: ["vela-results", "vela-selected"])
+                for pin in pins {
+                    guard let id = pin.attribute(forKey: "id") as? String,
+                          let stop = model.visibleStopResults.first(where: { $0.id == id }) else { continue }
+                    model.selectedStopResult = stop
+                    UISelectionFeedbackGenerator().selectionChanged()
+                    return
+                }
+                return
+            }
+            guard model.nav == nil else { return }
             Task { @MainActor in
                 if self.model.activeIndoor != nil {
                     let point = map.convert(pt, toCoordinateFrom: map)
