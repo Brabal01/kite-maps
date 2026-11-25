@@ -561,43 +561,21 @@ public enum Directions {
                               avoidHighways: Bool = false, avoidTolls: Bool = false,
                               useGoogle: Bool = true, via: [LatLng] = [], heading: Double? = nil,
                               alternatives: Bool = false, fast: Bool = false) async -> Result {
-        if fast && !alternatives && !avoidTolls && !avoidHighways {
-            let points = [a] + via + [b]
-            let quick: [Route] = await withTaskGroup(of: [Route].self) { group in
-                group.addTask {
-                    (try? await OSRM.route(from: a, to: b, mode: mode, via: via, heading: heading)) ?? []
-                }
-                if mode == .drive && useGoogle {
-                    group.addTask {
-                        (try? await GoogleClient.shared.directions(from: a, to: b, mode: mode,
-                                                                   avoidHighways: false, avoidTolls: false, via: via)) ?? []
-                    }
-                } else if mode != .drive {
-                    group.addTask { await Valhalla.activeRoutes(points, mode: mode, alternatives: false) }
-                }
-                for await reply in group {
-                    let usable = reply.filter {
-                        $0.stepsComplete && !$0.maneuvers.isEmpty && reaches($0.polyline, from: a, to: b)
-                            && (mode == .drive || Valhalla.fitsActiveRoute($0.polyline, points: points))
-                    }.filter { route in
-                        heading.map { !startsBehind(route.polyline, heading: $0) } ?? true
-                    }
-                    if let route = usable.min(by: { $0.durationSeconds < $1.durationSeconds }) {
-                        group.cancelAll()
-                        return [route]
-                    }
-                }
-                return [Route]()
+        if fast && !alternatives && (mode != .drive || (!avoidTolls && !avoidHighways)) {
+            let lookup: @Sendable () async -> Route? = {
+                await fastRoute(from: a, to: b, mode: mode, useGoogle: useGoogle, via: via, heading: heading)
+            }
+            let quick: Route?
+            if mode == .walk {
+                quick = (await deadline(5, lookup)) ?? nil
+            } else {
+                quick = await lookup()
             }
             if Task.isCancelled { return Result(routes: []) }
-            if !quick.isEmpty {
-                return Result(routes: quick.map { route in
-                    var route = route
-                    StepMerge.tidy(&route.maneuvers)
-                    if mode == .walk { route.typicalSeconds = route.distanceMeters * 3.6 / Valhalla.walkingSpeed }
-                    return Roundabouts.settle(route)
-                })
-            }
+            if let quick { return Result(routes: [prepared(quick)]) }
+            // The walking race already tried all enabled providers. Wait for another confirmed
+            // fix instead of repeating the same requests after the walking deadline.
+            if mode == .walk { return Result(routes: [], error: "No route found.") }
         }
         if mode != .drive {
             let points = [a] + via + [b]
@@ -605,6 +583,13 @@ public enum Directions {
             async let open = mode == .walk || alternatives
                 ? ((try? await OSRM.route(from: a, to: b, mode: mode, via: via, alternatives: alternatives)) ?? [])
                 : []
+            if useGoogle {
+                let google = await deadline(4) { await googleActiveRoutes(from: a, to: b, mode: mode, via: via) } ?? []
+                if !google.isEmpty {
+                    return Result(routes: google.prefix(alternatives ? 3 : 1).map(prepared))
+                }
+            }
+            if Task.isCancelled { return Result(routes: []) }
             var candidates = await preferred
             candidates += await open
             if candidates.isEmpty && mode == .bike && !alternatives && !Task.isCancelled {
@@ -746,6 +731,92 @@ public enum Directions {
         }
         return Result(routes: [], error: err ?? "No route found.")
     }
+
+    private enum FastReply: Sendable {
+        case google([Route])
+        case open([Route])
+        case openMayWin
+    }
+
+    private static func fastRoute(from a: LatLng, to b: LatLng, mode: TravelMode,
+                                  useGoogle: Bool, via: [LatLng], heading: Double?) async -> Route? {
+        let points = [a] + via + [b]
+        return await withTaskGroup(of: FastReply.self) { group in
+            group.addTask {
+                .open((try? await OSRM.route(from: a, to: b, mode: mode, via: via, heading: heading)) ?? [])
+            }
+            if mode != .drive {
+                group.addTask { .open(await Valhalla.activeRoutes(points, mode: mode, alternatives: false)) }
+            }
+            if useGoogle {
+                group.addTask {
+                    let routes = try? await GoogleClient.shared.directions(from: a, to: b, mode: mode,
+                                                                          avoidHighways: false, avoidTolls: false, via: via)
+                    return .google(routes ?? [])
+                }
+                // Providers run in parallel. A quick open result gets held only briefly for
+                // Google, so a missing or slow Google response cannot stall walking reroutes.
+                group.addTask {
+                    try? await Task.sleep(nanoseconds: mode == .walk ? 750_000_000 : 1_250_000_000)
+                    return .openMayWin
+                }
+            }
+            var waitForGoogle = useGoogle
+            var openRoute: Route?
+            for await reply in group {
+                if Task.isCancelled { break }
+                switch reply {
+                case .google(let routes):
+                    if let route = fastestUsable(routes, points: points, mode: mode, heading: heading) {
+                        group.cancelAll()
+                        return route
+                    }
+                    waitForGoogle = false
+                case .open(let routes):
+                    if openRoute == nil {
+                        openRoute = fastestUsable(routes, points: points, mode: mode, heading: heading)
+                    }
+                case .openMayWin:
+                    waitForGoogle = false
+                }
+                if !waitForGoogle, let openRoute {
+                    group.cancelAll()
+                    return openRoute
+                }
+            }
+            return nil
+        }
+    }
+
+    private static func fastestUsable(_ routes: [Route], points: [LatLng], mode: TravelMode,
+                                      heading: Double?) -> Route? {
+        routes.filter { route in
+            guard route.stepsComplete, !route.maneuvers.isEmpty,
+                  let start = points.first, let end = points.last,
+                  reaches(route.polyline, from: start, to: end),
+                  mode == .drive || Valhalla.fitsActiveRoute(route.polyline, points: points) else { return false }
+            return heading.map { !startsBehind(route.polyline, heading: $0) } ?? true
+        }.min(by: { $0.durationSeconds < $1.durationSeconds })
+    }
+
+    private static func googleActiveRoutes(from a: LatLng, to b: LatLng, mode: TravelMode, via: [LatLng]) async -> [Route] {
+        let routes = (try? await GoogleClient.shared.directions(from: a, to: b, mode: mode,
+                                                               avoidHighways: false, avoidTolls: false, via: via)) ?? []
+        let points = [a] + via + [b]
+        return routes.filter {
+            $0.stepsComplete && !$0.maneuvers.isEmpty && Valhalla.fitsActiveRoute($0.polyline, points: points)
+        }
+    }
+
+    private static func prepared(_ route: Route) -> Route {
+        var result = route
+        StepMerge.tidy(&result.maneuvers)
+        if result.mode == .walk {
+            result.typicalSeconds = result.distanceMeters * 3.6 / Valhalla.walkingSpeed
+        }
+        return Roundabouts.settle(result)
+    }
+
 }
 
 /** [op]'s answer, or nil if it takes longer than [seconds]. */

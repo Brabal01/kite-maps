@@ -2,8 +2,8 @@ import XCTest
 @testable import VelaCore
 
 final class RouteTrackerV26Tests: XCTestCase {
-    private func route(_ line: [LatLng], seconds: Double = 100) -> Route {
-        Route(mode: .drive, polyline: line, distanceMeters: Geo.length(line), typicalSeconds: seconds,
+    private func route(_ line: [LatLng], seconds: Double = 100, mode: TravelMode = .drive) -> Route {
+        Route(mode: mode, polyline: line, distanceMeters: Geo.length(line), typicalSeconds: seconds,
               maneuvers: [], source: "test")
     }
 
@@ -76,6 +76,43 @@ final class RouteTrackerV26Tests: XCTestCase {
                                                   joinedRoute: true, nearDestination: false,
                                                   secondsSinceLast: 10,
                                                   departureEvidence: p.departureEvidence))
+    }
+
+    func testWalkReroutesAfterTwoAccurateFixesAboutTwentyMetersOffPath() {
+        let line = [LatLng(0, 0), LatLng(0.01, 0)]
+        let tracker = RouteTracker(route: route(line, mode: .walk))
+        let now = Date()
+        _ = tracker.update(LatLng(0.005, 0), accuracy: 6, speed: 1, now: now)
+        let first = tracker.update(LatLng(0.005, 0.00018), accuracy: 6, speed: 1,
+                                   now: now.addingTimeInterval(1))
+        XCTAssertFalse(first.offRoute)
+        let second = tracker.update(LatLng(0.00501, 0.00018), accuracy: 6, speed: 1,
+                                    now: now.addingTimeInterval(2))
+        XCTAssertTrue(second.offRoute)
+        XCTAssertTrue(ReroutePolicy.shouldReroute(offsetMeters: second.offsetMeters, accuracy: 6,
+                                                  speed: 1, offRouteFixes: second.offRouteFixes,
+                                                  joinedRoute: true, nearDestination: false,
+                                                  secondsSinceLast: 2.1,
+                                                  departureEvidence: second.departureEvidence, mode: .walk))
+        XCTAssertFalse(ReroutePolicy.shouldReroute(offsetMeters: second.offsetMeters, accuracy: 6,
+                                                   speed: 1, offRouteFixes: second.offRouteFixes,
+                                                   joinedRoute: true, nearDestination: false,
+                                                   secondsSinceLast: 2.1,
+                                                   departureEvidence: second.departureEvidence))
+    }
+
+    func testWalkingIgnoresSingleJumpAndRequiresThreeLessAccurateFixes() {
+        let line = [LatLng(0, 0), LatLng(0.01, 0)]
+        let tracker = RouteTracker(route: route(line, mode: .walk))
+        let now = Date()
+        let point = LatLng(0.005, 0.0007)
+        XCTAssertFalse(tracker.update(point, accuracy: 6, now: now).offRoute)
+        XCTAssertFalse(tracker.update(point, accuracy: 42, now: now.addingTimeInterval(1)).offRoute)
+        for i in 2...4 {
+            let progress = tracker.update(point, accuracy: 28, now: now.addingTimeInterval(Double(i)))
+            XCTAssertEqual(progress.offRouteFixes, i - 1)
+            XCTAssertEqual(progress.offRoute, i == 4)
+        }
     }
 
     func testDeadReckoningNeverClaimsArrival() {

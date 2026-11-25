@@ -101,16 +101,15 @@ public final class RouteTracker {
         var offset = best.offset
         var confidence = best.confidence
 
-        let floor = route.mode == .drive ? 24.0 : route.mode == .bike ? 18.0 : 14.0
-        let limit = max(floor, accuracy * 1.6 + min(max(speed, 0) * 0.35, 12))
+        let limit = ReroutePolicy.corridor(mode: route.mode, accuracy: accuracy, speed: speed)
 
         // Consecutive measured fixes outside the corridor. The counter is deliberately not capped
         // at 3: a weak-but-usable fix needs one more confirmation than a precise one, and the old
         // cap made that impossible.
         if measured {
-            if accuracy > 60 {
+            if accuracy > (route.mode == .walk ? 35 : 60) {
                 offCount = 0 // A very poor fix is no evidence at all.
-            } else if offset > max(limit * 2, 35) {
+            } else if route.mode != .walk, offset > max(limit * 2, 35) {
                 offCount = accuracy <= 25 ? max(offCount, 3) : min(6, offCount + 1)
             } else if offset > limit {
                 offCount = min(6, offCount + 1)
@@ -173,7 +172,8 @@ public final class RouteTracker {
             distanceToNext: max(0, toNext),
             remainingMeters: remaining,
             remainingSeconds: route.remainingSeconds(from: along),
-            offRoute: offCount >= 3 || wrongWayCount >= 4,
+            offRoute: offCount >= (route.mode == .walk ? ReroutePolicy.requiredFixes(mode: .walk, accuracy: accuracy) : 3)
+                || wrongWayCount >= 4,
             // Only on the road to it, and only from a real fix: an estimated position must not end
             // navigation while GPS is missing.
             arrived: !isEstimated && remaining < 25 && offset < limit,
