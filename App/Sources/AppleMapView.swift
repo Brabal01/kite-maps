@@ -276,7 +276,10 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
                 native.preferredConfiguration = config
             }
         }
-        native.pointOfInterestFilter = profile.showPOI ? .includingAll : .excludingAll
+        let hasAppleSearchPins = coordinator?.model.results.contains { $0.source == "apple" } == true
+        let showsPOI = profile.showPOI && settings.showApplePOI && !hasAppleSearchPins
+        native.pointOfInterestFilter = showsPOI ? .includingAll : .excludingAll
+        native.selectableMapFeatures = showsPOI ? [.pointsOfInterest, .physicalFeatures, .territories] : [.physicalFeatures, .territories]
         let showBuildings = !settings.satellite && profile.showBuildings && (!navigating || settings.navBuildings)
         if native.showsBuildings != showBuildings { native.showsBuildings = showBuildings }
         let showHeat = settings.wazeOn && settings.wazeHeatmap && settings.wazePolice
