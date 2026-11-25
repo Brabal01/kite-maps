@@ -37,4 +37,41 @@ final class TransitComparisonTests: XCTestCase {
         XCTAssertEqual(TransitComparison.rankedIndices(trips, by: .recommended, walkingSpeedKmh: 5), [1, 0])
         XCTAssertEqual(TransitComparison.rankedIndices(trips, by: .safestTransfers, walkingSpeedKmh: 5), [1, 0])
     }
+    func testViaPlansForwardAfterTheDwellTime() async throws {
+        let points = [LatLng(49.59, 17.25), LatLng(49.6, 17.27), LatLng(49.61, 17.29)]
+        var requests: [Date] = []
+        let options = try await Transitous.composeVia(points, time: start, arriveBy: false, dwellSeconds: 300) {
+            from, to, time, backward in
+            XCTAssertFalse(backward)
+            XCTAssertEqual(from, points[requests.count])
+            XCTAssertEqual(to, points[requests.count + 1])
+            requests.append(time)
+            let offset = time.timeIntervalSince(self.start)
+            return [self.trip([self.leg(offset, offset + 600)])]
+                .map { var candidate = $0; candidate.depart = time; return candidate }
+        }
+        XCTAssertEqual(requests, [start, start.addingTimeInterval(900)])
+        XCTAssertEqual(options.first?.waypointLegs, [0])
+        XCTAssertEqual(options.first?.durationSeconds, 1_500)
+    }
+
+    func testViaArriveByPlansBackwardBeforeTheDwellTime() async throws {
+        let points = [LatLng(49.59, 17.25), LatLng(49.6, 17.27), LatLng(49.61, 17.29)]
+        let arrival = start.addingTimeInterval(2_000)
+        var requests: [Date] = []
+        let options = try await Transitous.composeVia(points, time: arrival, arriveBy: true, dwellSeconds: 300) {
+            from, to, time, backward in
+            XCTAssertTrue(backward)
+            XCTAssertEqual(from, points[1 - requests.count])
+            XCTAssertEqual(to, points[2 - requests.count])
+            requests.append(time)
+            let offset = time.timeIntervalSince(self.start)
+            var candidate = self.trip([self.leg(offset - 600, offset)])
+            candidate.depart = time.addingTimeInterval(-600)
+            return [candidate]
+        }
+        XCTAssertEqual(requests, [arrival, arrival.addingTimeInterval(-900)])
+        XCTAssertEqual(options.first?.waypointLegs, [0])
+        XCTAssertEqual(options.first?.arrive, arrival)
+    }
 }
