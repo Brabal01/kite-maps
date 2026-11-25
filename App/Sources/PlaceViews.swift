@@ -147,7 +147,9 @@ struct PlaceBody: View {
                     .pickerStyle(.segmented)
                 }
                 if tab == 0 { overview } else { about }
-                Text(L10n.text(place.source == "google" ? "Place details from Google Maps" : "Map data © OpenStreetMap contributors"))
+                let source = place.source == "apple" ? "Place details from Apple Maps"
+                    : place.source == "google" ? "Place details from Google Maps" : "Map data © OpenStreetMap contributors"
+                Text(L10n.text(source))
                     .font(.caption).foregroundColor(.secondary)
             }
             .padding(.horizontal, 16)
