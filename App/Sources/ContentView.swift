@@ -342,6 +342,9 @@ struct BrowseOverlay: View {
                 VStack(spacing: 10) {
                     SearchBar(model: model, voice: voice, focused: $searchFocused)
                     if idle && !voice.listening {
+                        placesMenu
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16)
                         QuickActionBar(model: model, settings: settings) {
                             searchFocused = true
                         }
@@ -386,6 +389,30 @@ struct BrowseOverlay: View {
             try? await Task.sleep(nanoseconds: 8_000_000_000)
             searchFocused = true
         }
+    }
+
+    private var placesMenu: some View {
+        Menu {
+            Toggle(L10n.text("Apple Maps places"), isOn: $settings.showApplePOI)
+            if settings.showApplePOI {
+                Section {
+                    ForEach(Category.all) { category in
+                        Button {
+                            model.searchApplePlaces(category)
+                        } label: {
+                            Label(L10n.text(category.label), systemImage: category.icon)
+                        }
+                    }
+                }
+            }
+        } label: {
+            Label(L10n.text("Places"), systemImage: "mappin.and.ellipse")
+                .font(.subheadline.weight(.semibold))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .glass(Capsule())
+        }
+        .accessibilityIdentifier("map-places-menu")
     }
 
     @ViewBuilder
@@ -702,12 +729,6 @@ struct SuggestionsPanel: View {
                                     }
                                 }
                         }
-                    }
-                    // Recents first, like every maps app: most searches are for somewhere you've been.
-                    Text("Nearby").font(.subheadline.weight(.semibold)).foregroundColor(.secondary)
-                        .padding(.horizontal, 18).padding(.top, 14).padding(.bottom, 4)
-                    ForEach(Category.all) { c in
-                        row(icon: c.icon, text: c.label) { done(); model.search(c.query, title: c.label) }
                     }
                 }
             }
