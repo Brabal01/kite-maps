@@ -71,7 +71,7 @@ jobs:
           if-no-files-found: ignore
       - name: Capture simulator smoke screenshots
         if: github.ref_name == 'ios/android-parity'
-        timeout-minutes: 12
+        timeout-minutes: 14
         run: |
           set -euxo pipefail
           read -r device name <<< "$(xcrun simctl list devices available -j | python3 -c 'import json,sys; devices=json.load(sys.stdin)["devices"]; phone=next(d for r in sorted(devices, reverse=True) if ".iOS-" in r for d in devices[r] if d["name"].startswith("iPhone")); print(phone["udid"], phone["name"])')"
@@ -98,6 +98,9 @@ jobs:
           xcrun simctl launch --terminate-running-process "$device" app.vela.ios -demo place-reviews
           sleep 35
           screenshot screenshots/olomouc-reviews.png
+          xcrun simctl launch --terminate-running-process "$device" app.vela.ios -demo route-stops -demoTo 49.6122,17.2896
+          sleep 48
+          screenshot screenshots/olomouc-stop-search.png
           xcrun simctl openurl "$device" 'kite://place?lat=49.5881&lng=17.2582&name=Santovka'
           sleep 5
           screenshot screenshots/olomouc-deeplink-prompt.png
