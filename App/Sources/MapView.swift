@@ -1108,10 +1108,10 @@ struct VelaMapView: UIViewRepresentable {
 
         private func renderResults() {
             let showList = model.directions == nil && model.nav == nil && model.transitJourney == nil && !model.justDrive
-            let list = showList ? model.visibleResults : []
+            let list = showList ? model.visibleResults + model.transitMapStops : []
             let target = model.transitJourney?.destination ?? model.nav?.destination ?? model.directions?.toPlace ?? model.selected
             let stops: [Place] = model.transitJourney?.stops ?? model.nav?.stops ?? model.directions?.stops ?? []
-            let ids: String = list.map(\.id).joined(separator: ",")
+            let ids: String = list.map { "\($0.id):\($0.placeId ?? "")" }.joined(separator: ",")
             let entrance = model.nav?.destinationEntrance
             let entranceKey = entrance.map { "\($0.lat),\($0.lng)" } ?? ""
             let stopIds: String = stops.map(\.id).joined(separator: ",")
@@ -1129,6 +1129,7 @@ struct VelaMapView: UIViewRepresentable {
                     "icon": MapIcons.iconName(for: p),
                     "label": [p.name, rating].compactMap { $0 }.joined(separator: "\n"),
                     "rank": i,
+                    "transitStop": p.source == "transitous",
                 ]
                 return f
             }
@@ -1420,9 +1421,7 @@ struct VelaMapView: UIViewRepresentable {
                     return
                 }
                 let pins = map.visibleFeatures(in: box, styleLayerIdentifiers: ["vela-results"])
-                if let id = pins.first?.attribute(forKey: "id") as? String,
-                   let place = self.model.results.first(where: { $0.id == id }) {
-                    self.model.select(place)
+                if let id = pins.first?.attribute(forKey: "id") as? String, self.model.selectMapResult(id) {
                     return
                 }
                 let styleIDs = Set(map.style?.layers.compactMap { layer -> String? in
@@ -1476,7 +1475,7 @@ struct VelaMapView: UIViewRepresentable {
             case "vela-mine":
                 if let id, let place = model.myPlace(id) { model.select(place) }
             case "vela-results":
-                if let place = model.results.first(where: { $0.id == id }) { model.select(place) }
+                if let id { model.selectMapResult(id) }
             default: break
             }
         }
@@ -1529,6 +1528,7 @@ struct VelaMapView: UIViewRepresentable {
             loadRail(map)
             noteHeading(map)
             model.rememberBrowseCamera(map)
+            model.refreshTransitStops()
         }
 
         nonisolated func mapViewRegionIsChanging(_ mapView: MLNMapView) {

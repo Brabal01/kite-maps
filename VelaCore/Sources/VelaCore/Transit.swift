@@ -261,6 +261,138 @@ public enum Transitous {
         return parse(data)
     }
 
+    public struct MapStop: Hashable, Sendable {
+        public let id: String
+        public let stationID: String
+        public let name: String
+        public let location: LatLng
+    }
+
+    public static func mapStops(south: Double, west: Double, north: Double, east: Double,
+                                zoom: Int) async throws -> [MapStop] {
+        let data = try await mapData("map/stops", [
+            URLQueryItem(name: "min", value: "\(south),\(west)"),
+            URLQueryItem(name: "max", value: "\(north),\(east)"),
+            URLQueryItem(name: "zoom", value: String(zoom))
+        ])
+        return try parseMapStops(data)
+    }
+
+    static func parseMapStops(_ data: Data) throws -> [MapStop] {
+        guard let list = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            throw URLError(.cannotParseResponse)
+        }
+        var seen = Set<String>()
+        return list.compactMap { stop in
+            guard let id = string(stop["stopId"]), let name = string(stop["name"]),
+                  let location = point(stop), (-90...90).contains(location.lat),
+                  (-180...180).contains(location.lng), seen.insert(id).inserted else { return nil }
+            return MapStop(id: id, stationID: string(stop["parentId"]) ?? id, name: name, location: location)
+        }
+    }
+
+    public static func departures(stopID: String) async throws -> [Departure] {
+        let data = try await mapData("stoptimes", [
+            URLQueryItem(name: "stopId", value: stopID),
+            URLQueryItem(name: "n", value: "30"),
+            URLQueryItem(name: "withAlerts", value: "true")
+        ])
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let list = root["stopTimes"] as? [[String: Any]] else { throw URLError(.cannotParseResponse) }
+        return stopTimes(list, stopName: "").sorted { $0.time < $1.time }
+    }
+
+    public struct TripDetail: Sendable {
+        public struct Stop: Sendable {
+            public let call: TransitCall
+            public let location: LatLng
+        }
+
+        public var trip: TransitTrip
+        public let legIndex: Int
+        public let stops: [Stop]
+        public let geometry: [LatLng]
+        public let cancelled: Bool
+        public var leg: TransitLeg { trip.legs[legIndex] }
+        public var calls: [TransitCall] {
+            ([leg.boardStop] + leg.intermediateStops.map(Optional.some) + [leg.exitStop]).compactMap { $0 }
+        }
+
+        public func position(at time: Date) -> (location: LatLng, isGPS: Bool)? {
+            guard !cancelled else { return nil }
+            if let vehicle = leg.liveVehicle, let updated = vehicle.updated,
+               (0...120).contains(time.timeIntervalSince(updated)),
+               (-90...90).contains(vehicle.location.lat), (-180...180).contains(vehicle.location.lng) {
+                return (vehicle.location, true)
+            }
+            return estimatedPosition(at: time).map { ($0, false) }
+        }
+
+        /// Interpolate between known stop events on the provider's shape.
+        public func estimatedPosition(at time: Date) -> LatLng? {
+            guard !cancelled, geometry.count >= 2, stops.count >= 2 else { return nil }
+            let calls = self.calls
+            // Keep calls and coordinates aligned even when the optional GTFS-RT feed updates times.
+            guard calls.count == stops.count else { return nil }
+            let cumulative = Geo.cumulative(geometry)
+            for i in 1..<stops.count {
+                guard !calls[i - 1].skipped, !calls[i].skipped,
+                      let depart = calls[i - 1].departure,
+                      let arrival = calls[i].arrival, arrival > depart,
+                      (depart...arrival).contains(time) else { continue }
+                let a = Geo.project(stops[i - 1].location, on: geometry, cumulative: cumulative)
+                let b = Geo.project(stops[i].location, on: geometry, cumulative: cumulative)
+                guard a.offset < 100, b.offset < 100, b.along > a.along else { return nil }
+                let fraction = time.timeIntervalSince(depart) / arrival.timeIntervalSince(depart)
+                return Geo.point(along: geometry, meters: a.along + fraction * (b.along - a.along),
+                                 cumulative: cumulative)
+            }
+            return nil
+        }
+    }
+
+    public static func tripDetail(tripID: String) async throws -> TripDetail {
+        let data = try await mapData("trip", [URLQueryItem(name: "tripId", value: tripID)])
+        guard let detail = parseTripDetail(data, tripID: tripID) else { throw URLError(.cannotParseResponse) }
+        return detail
+    }
+
+    static func parseTripDetail(_ data: Data, tripID: String) -> TripDetail? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              var trip = itinerary(root),
+              let legs = root["legs"] as? [[String: Any]],
+              let index = trip.legs.firstIndex(where: { !$0.isWalk && $0.tripId == tripID })
+                ?? trip.legs.firstIndex(where: { !$0.isWalk && $0.tripId == nil }) else { return nil }
+        trip.legs[index].tripId = tripID
+        let raw = legs[index]
+        let rows = [raw["from"] as? [String: Any] ?? [:]]
+            + (raw["intermediateStops"] as? [[String: Any]] ?? [])
+            + [raw["to"] as? [String: Any] ?? [:]]
+        let stops: [TripDetail.Stop] = rows.compactMap { row in
+            guard let call = call(row), let location = point(row), (-90...90).contains(location.lat),
+                  (-180...180).contains(location.lng) else { return nil }
+            return TripDetail.Stop(call: call, location: location)
+        }
+        var geometry = path(raw)
+        if let first = stops.first?.location, let last = stops.last?.location,
+           let start = geometry.first, let end = geometry.last,
+           start.distance(to: first) > 300 || end.distance(to: last) > 300 {
+            // Reuse the itinerary's alternate polyline precision if it has real intermediate vertices.
+            geometry = trip.legs[index].path.count > 2 ? trip.legs[index].path : []
+        }
+        return TripDetail(trip: trip, legIndex: index, stops: stops, geometry: geometry,
+                          cancelled: raw["cancelled"] as? Bool == true)
+    }
+
+    private static func mapData(_ endpoint: String, _ query: [URLQueryItem]) async throws -> Data {
+        guard var url = URLComponents(string: "\(base)/api/v6/\(endpoint)") else { throw URLError(.badURL) }
+        url.queryItems = query
+        guard let requestURL = url.url else { throw URLError(.badURL) }
+        let (data, response) = try await session.data(from: requestURL)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+        return data
+    }
+
     /** One upcoming departure at a stop. */
     public struct Departure: Hashable, Sendable {
         public var line: String
@@ -278,6 +410,7 @@ public enum Transitous {
         public var routeId: String? = nil
         public var agencyId: String? = nil
         public var isCancelled = false
+        public var tripID: String? = nil
         public var platform: String? {
             let value = track ?? scheduledTrack
             return value.flatMap { $0.isEmpty ? nil : $0 }
@@ -326,12 +459,22 @@ public enum Transitous {
     public static func parseStopTimes(_ data: Data, stopName: String = "") -> [Departure] {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let list = root["stopTimes"] as? [[String: Any]] else { return [] }
-        return list.compactMap { st in
+        return stopTimes(list, stopName: stopName)
+    }
+
+    private static func stopTimes(_ list: [[String: Any]], stopName: String) -> [Departure] {
+        list.compactMap { st in
             let place = st["place"] as? [String: Any] ?? [:]
             let cancelled = st["tripCancelled"] as? Bool == true || place["cancelled"] as? Bool == true
             guard let time = date(place["departure"]) ?? date(place["scheduledDeparture"]) else { return nil }
+            let isRealtime: Bool
+            if let source = string(place["departureTimestampReason"]) {
+                isRealtime = ["OBSERVED", "PROPAGATED", "PREDICTED"].contains(source)
+            } else {
+                isRealtime = st["realTime"] as? Bool == true
+            }
             var delay: Int?
-            if st["realTime"] as? Bool == true, let sched = date(place["scheduledDeparture"]) {
+            if isRealtime, let sched = date(place["scheduledDeparture"]) {
                 delay = Int((time.timeIntervalSince(sched) / 60).rounded())
             }
             let line = [st["routeShortName"], st["displayName"], st["routeLongName"]]
@@ -348,8 +491,9 @@ public enum Transitous {
                              track: st["track"] as? String ?? place["track"] as? String,
                              scheduledTrack: st["scheduledTrack"] as? String ?? place["scheduledTrack"] as? String,
                              stopCode: st["stopCode"] as? String ?? place["stopCode"] as? String,
-                             isRealtime: st["realTime"] as? Bool == true,
-                             routeId: st["routeId"] as? String, agencyId: st["agencyId"] as? String, isCancelled: cancelled)
+                             isRealtime: isRealtime,
+                             routeId: st["routeId"] as? String, agencyId: st["agencyId"] as? String, isCancelled: cancelled,
+                             tripID: string(st["tripId"]))
         }
     }
 

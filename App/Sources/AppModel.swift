@@ -134,6 +134,11 @@ final class AppModel: ObservableObject {
     @Published var results: [Place] = []
     @Published var resultsTitle = ""
     @Published var selected: Place?
+    @Published private(set) var showsTransitStops = false
+    @Published private(set) var transitMapStops: [Place] = []
+    @Published private(set) var transitMapMessage: String?
+    private var transitStopsTask: Task<Void, Never>?
+    private var transitStopsKey: [Int]?
     @Published var searching = false
     /** Bumped by the Routes page (or a shortcut) to open the search field on the map. */
     @Published var focusSearchRequest = 0
@@ -502,6 +507,82 @@ final class AppModel: ObservableObject {
         let b = map.visibleCoordinateBounds
         let span = LatLng(b.sw.latitude, b.sw.longitude).distance(to: LatLng(b.ne.latitude, b.ne.longitude)) / 1.4
         return (LatLng(c.latitude, c.longitude), span.isFinite && span > 0 ? span : nil)
+    }
+
+    func toggleTransitStops() {
+        showsTransitStops.toggle()
+        if showsTransitStops {
+            refreshTransitStops()
+        } else {
+            transitStopsTask?.cancel()
+            transitStopsKey = nil
+            transitMapStops = []
+            transitMapMessage = nil
+            if selected?.source == "transitous" { closePlace() }
+        }
+    }
+
+    func refreshTransitStops() {
+        guard showsTransitStops, tab == .map, !hasActiveJourney, directions == nil,
+              let map, map.bounds.width > 0 else { return }
+        let bounds = map.visibleCoordinateBounds
+        guard map.zoomLevel.isFinite else { return }
+        let zoom = Int(map.zoomLevel.rounded(.down))
+        guard zoom >= 12 else {
+            transitStopsTask?.cancel()
+            transitStopsKey = nil
+            if !transitMapStops.isEmpty { transitMapStops = [] }
+            let message = "Zoom in to see transit stops."
+            if transitMapMessage != message { transitMapMessage = message }
+            return
+        }
+        let corners = [bounds.sw.latitude, bounds.sw.longitude, bounds.ne.latitude, bounds.ne.longitude]
+        guard corners.allSatisfy(\.isFinite) else { return }
+        let key = corners.map { Int(($0 * 1000).rounded()) } + [zoom]
+        guard transitStopsKey != key else { return }
+        transitStopsKey = key
+        transitStopsTask?.cancel()
+        let center = LatLng(map.centerCoordinate.latitude, map.centerCoordinate.longitude)
+        if transitMapMessage != nil { transitMapMessage = nil }
+        transitStopsTask = Task {
+            do {
+                try await Task.sleep(nanoseconds: 400_000_000)
+                let stops = try await Transitous.mapStops(south: corners[0], west: corners[1],
+                                                         north: corners[2], east: corners[3], zoom: zoom)
+                guard !Task.isCancelled else { return }
+                let sorted = stops.map { (stop: $0, distance: $0.location.distance(to: center)) }
+                    .sorted { $0.distance < $1.distance }
+                var stations = Set<String>()
+                let platforms = zoom >= 16
+                let display = sorted.filter { platforms || stations.insert($0.stop.stationID).inserted }
+                transitMapStops = display.prefix(100).map { item in
+                    let stop = item.stop
+                    var place = Place(id: "transitous:\(stop.id)", name: stop.name,
+                                      location: stop.location, source: "transitous")
+                    place.category = "transit station"
+                    place.placeId = platforms ? stop.id : stop.stationID
+                    return place
+                }
+                transitMapMessage = transitMapStops.isEmpty ? "No transit stops in this area." : nil
+            } catch {
+                guard !Task.isCancelled else { return }
+                transitMapStops = []
+                transitMapMessage = "Couldn't load transit stops."
+            }
+        }
+    }
+
+    @discardableResult
+    func selectMapResult(_ id: String) -> Bool {
+        if let stop = transitMapStops.first(where: { $0.id == id }) {
+            selected = stop
+            detent = .half
+        } else if let result = results.first(where: { $0.id == id }) {
+            select(result)
+        } else {
+            return false
+        }
+        return true
     }
 
     func search(_ text: String? = nil, title: String? = nil) {

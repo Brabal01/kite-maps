@@ -1,3 +1,4 @@
+import MapKit
 import SwiftUI
 import UIKit
 import VelaCore
@@ -394,17 +395,22 @@ private extension SavedView {
 /** Next departures at a stop from Transitous, refreshed every 30 seconds while it's open. */
 struct DepartureBoard: View {
     let place: Place
-    @State private var board: (stop: String, departures: [Transitous.Departure])?
+    @State private var board: [Transitous.Departure]?
     @State private var selectedPlatform: String?
+    @State private var selectedTrip: DepartureSelection?
     @State private var refreshedAt: Date?
-    @State private var isRefreshCurrent = false
-    @State private var loaded = false
+    @State private var failed = false
+
+    private struct DepartureSelection: Identifiable {
+        let id: String
+        let departure: Transitous.Departure
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             Text("Departures").font(.headline)
-            if let b = board {
-                let platforms = Array(Set(b.departures.compactMap(\.platform)))
+            if let board {
+                let platforms = Array(Set(board.compactMap(\.platform)))
                     .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
                 if !platforms.isEmpty {
                     Picker(L10n.text("Filter by platform"), selection: $selectedPlatform) {
@@ -415,82 +421,350 @@ struct DepartureBoard: View {
                     }
                     .pickerStyle(.menu)
                 }
-                let shown = b.departures.filter { selectedPlatform == nil || $0.platform == selectedPlatform }
-                ForEach(Array(shown.prefix(12).enumerated()), id: \.offset) { _, d in
-                    HStack(spacing: 10) {
-                        LineChip(leg: TransitLeg(isWalk: false, mode: d.mode, line: d.line, color: d.color, textColor: d.textColor, lineIdentity: d.identity))
-                        Text(d.headsign).font(.subheadline).lineLimit(1)
-                        Spacer()
-                        VStack(alignment: .trailing, spacing: 1) {
-                            if d.isCancelled {
-                                Text(L10n.text("Cancelled departure"))
-                                    .font(.subheadline.weight(.semibold)).foregroundColor(Vela.closed)
+                let shown = board.filter { selectedPlatform == nil || $0.platform == selectedPlatform }
+                if shown.isEmpty {
+                    Text("No departures found here.").font(.subheadline).foregroundColor(.secondary)
+                }
+                TimelineView(.periodic(from: .now, by: 30)) { context in
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(Array(shown.prefix(20).enumerated()), id: \.offset) { _, departure in
+                            if let id = departure.tripID {
+                                Button { selectedTrip = DepartureSelection(id: id, departure: departure) } label: {
+                                    row(departure, now: context.date, isLink: true)
+                                }
+                                .buttonStyle(.plain)
                             } else {
-                                Text(countdown(d.time)).font(.subheadline.weight(.semibold))
-                                    .foregroundColor(d.isRealtime && isRefreshCurrent ? Vela.open : .primary)
-                            }
-                            if let late = d.delayMinutes, late != 0, !d.isCancelled {
-                                Text(late > 0 ? "\(late) min late" : "\(-late) min early").font(.caption2)
-                                    .foregroundColor(late > 0 ? Vela.closed : Vela.open)
+                                row(departure, now: context.date, isLink: false)
                             }
                         }
-                    }
-                    if let platform = d.platform {
-                        HStack(spacing: 8) {
-                            if d.isRealtime, let scheduled = d.scheduledTrack, scheduled != platform {
-                                Label(L10n.format("Platform change: %@ → %@", scheduled, platform),
-                                      systemImage: "arrow.left.arrow.right")
-                                    .foregroundColor(Vela.closed)
-                            } else {
-                                Label(L10n.format("Platform %@", platform), systemImage: "signpost.right")
-                            }
-                            if let code = d.stopCode, code != platform {
-                                Text(L10n.format("Stop code %@", code))
-                            }
-                            Spacer()
-                            Text(L10n.text(d.isRealtime ? (isRefreshCurrent ? "Live" : "Live data stale") : "Scheduled"))
-                                .foregroundColor(d.isRealtime && isRefreshCurrent ? Vela.open : .secondary)
-                        }
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                        .padding(.leading, 44)
                     }
                 }
                 if let refreshedAt {
                     Text(L10n.format("Transitous · updated %@", refreshedAt.formatted(date: .omitted, time: .shortened)))
                         .font(.caption).foregroundColor(.secondary)
                 }
-            } else if loaded {
-                Text("No departures found here.").font(.subheadline).foregroundColor(.secondary)
-            } else {
+            }
+            if failed {
+                Text(L10n.text("Couldn't refresh departures.")).font(.subheadline).foregroundColor(.secondary)
+            } else if board == nil {
                 HStack { ProgressView(); Text("Loading departures…").foregroundColor(.secondary) }
             }
         }
-        .task(id: place.id) {
+        .task(id: place.placeId ?? place.id) {
             while !Task.isCancelled {
-                let b = await Transitous.departures(near: place.location)
-                if Task.isCancelled { return }
-                isRefreshCurrent = b != nil
-                if let b {
-                    board = b
+                do {
+                    let departures: [Transitous.Departure]
+                    if place.source == "transitous", let id = place.placeId {
+                        departures = try await Transitous.departures(stopID: id)
+                    } else {
+                        departures = await Transitous.departures(near: place.location)?.departures ?? []
+                    }
+                    try Task.checkCancellation()
+                    board = departures
+                    failed = false
                     refreshedAt = Date()
-                    if let platform = selectedPlatform, !b.departures.contains(where: { $0.platform == platform }) {
+                    if let platform = selectedPlatform, !departures.contains(where: { $0.platform == platform }) {
                         selectedPlatform = nil
                     }
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    failed = true
                 }
-                loaded = true
+                try? await Task.sleep(nanoseconds: 30_000_000_000)
+            }
+        }
+        .sheet(item: $selectedTrip) { selection in
+            TransitDepartureDetail(tripID: selection.id, departure: selection.departure)
+        }
+    }
+
+    private func row(_ d: Transitous.Departure, now: Date, isLink: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 10) {
+                LineChip(leg: TransitLeg(isWalk: false, mode: d.mode, line: d.line, color: d.color,
+                                         textColor: d.textColor, lineIdentity: d.identity))
+                Text(d.headsign).font(.subheadline)
+                Spacer()
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(d.time, format: .dateTime.hour().minute())
+                        .font(.subheadline.weight(.semibold)).monospacedDigit()
+                    if d.isCancelled {
+                        Text(L10n.text("Cancelled departure")).font(.caption).foregroundColor(Vela.closed)
+                    } else if failed || d.time < now.addingTimeInterval(-60) {
+                        Text(L10n.text("Last known")).font(.caption).foregroundColor(.secondary)
+                    } else {
+                        let minutes = max(0, Int(ceil(d.time.timeIntervalSince(now) / 60)))
+                        Text(minutes == 0 ? L10n.text("Now") : "\(minutes) min")
+                            .font(.caption).foregroundColor(d.isRealtime ? Vela.open : .secondary)
+                    }
+                }
+                if isLink {
+                    Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundColor(.secondary)
+                }
+            }
+            HStack(spacing: 8) {
+                if let platform = d.platform {
+                    if d.isRealtime, let scheduled = d.scheduledTrack, scheduled != platform {
+                        Label(L10n.format("Platform change: %@ → %@", scheduled, platform), systemImage: "arrow.left.arrow.right")
+                            .foregroundColor(Vela.closed)
+                    } else {
+                        Label(L10n.format("Platform %@", platform), systemImage: "signpost.right")
+                    }
+                }
+                if let code = d.stopCode, code != d.platform {
+                    Text(L10n.format("Stop code %@", code))
+                }
+                if d.isRealtime && !d.isCancelled, let delay = d.delayMinutes, delay != 0, !failed {
+                    Text(L10n.format(delay > 0 ? "%@ min late" : "%@ min early", String(abs(delay))))
+                        .foregroundColor(delay > 0 ? Vela.closed : Vela.open)
+                }
+                Spacer(minLength: 0)
+                Text(L10n.text(d.isRealtime ? (failed ? "Live data stale" : "Live") : "Scheduled"))
+                    .foregroundColor(d.isRealtime && !failed ? Vela.open : .secondary)
+            }
+            .font(.caption2)
+            .foregroundColor(.secondary)
+        }
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
+    }
+}
+
+private struct TransitDepartureDetail: View {
+    let tripID: String
+    let departure: Transitous.Departure
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var settings = AppSettings.shared
+    @State private var detail: Transitous.TripDetail?
+    @State private var failed = false
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack {
+                        LineChip(leg: TransitLeg(isWalk: false, mode: departure.mode, line: departure.line,
+                                                 lineIdentity: departure.identity))
+                        Text(detail?.leg.headsign ?? departure.headsign).font(.title3.weight(.semibold))
+                    }
+                    if let detail {
+                        if detail.cancelled || departure.isCancelled {
+                            Label(L10n.text("Cancelled departure"), systemImage: "exclamationmark.circle")
+                                .foregroundColor(Vela.closed)
+                        }
+                        if failed {
+                            Text(L10n.text("Couldn't refresh this trip.")).foregroundColor(.secondary)
+                        }
+                        TimelineView(.periodic(from: .now, by: 5)) { context in
+                            progress(detail, now: context.date)
+                        }
+                        Text(L10n.text("Trip stops")).font(.headline)
+                        let stops = detail.calls
+                        ForEach(stops.indices, id: \.self) { index in stopRow(stops[index]) }
+                        ForEach(detail.leg.serviceAlerts, id: \.self) { alert in
+                            Label(alert, systemImage: "exclamationmark.triangle")
+                                .font(.footnote).foregroundColor(.secondary)
+                        }
+                        Text("Transitous").font(.caption).foregroundColor(.secondary)
+                    } else if failed {
+                        Label(L10n.text("Couldn't refresh this trip."), systemImage: "wifi.exclamationmark")
+                    } else {
+                        ProgressView(L10n.text("Loading trip…"))
+                    }
+                }
+                .padding(16)
+            }
+            .navigationTitle(L10n.text("Trip details"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(L10n.text("Close")) { dismiss() }
+                }
+            }
+        }
+        .task(id: settings.gtfsRealtimeURL) {
+            while !Task.isCancelled {
+                do {
+                    async let feed = TransitRealtime.fetch(settings.gtfsRealtimeURL)
+                    var latest = try await Transitous.tripDetail(tripID: tripID)
+                    if let realtime = await feed {
+                        latest.trip = TransitRealtime.apply(realtime, to: [latest.trip]).first ?? latest.trip
+                    }
+                    try Task.checkCancellation()
+                    detail = latest
+                    failed = false
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    failed = true
+                }
                 try? await Task.sleep(nanoseconds: 30_000_000_000)
             }
         }
     }
 
-    private func countdown(_ t: Date) -> String {
-        let mins = Int((t.timeIntervalSinceNow / 60).rounded())
-        if mins <= 0 { return L10n.text("Now") }
-        if mins < 60 { return "\(mins) min" }
-        let f = DateFormatter()
-        f.timeStyle = .short
-        return f.string(from: t)
+    private func stopRow(_ call: TransitCall) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(call.name).font(.subheadline.weight(.medium))
+                if let platform = call.track {
+                    Text(L10n.format("Platform %@", platform)).font(.caption).foregroundColor(.secondary)
+                }
+            }
+            Spacer()
+            if call.skipped {
+                Text(L10n.text("Stop skipped")).font(.caption).foregroundColor(Vela.closed)
+            } else if let time = call.departure ?? call.arrival {
+                Text(time, format: .dateTime.hour().minute()).monospacedDigit()
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func progress(_ detail: Transitous.TripDetail, now: Date) -> some View {
+        let position = departure.isCancelled || failed ? nil : detail.position(at: now)
+        return VStack(alignment: .leading, spacing: 6) {
+            if !detail.geometry.isEmpty || !detail.stops.isEmpty || position != nil {
+                TripDetailMap(detail: detail, vehicle: position?.location, isGPS: position?.isGPS == true)
+                    .frame(height: 235)
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+            }
+            if let position {
+                Label(L10n.text(position.isGPS ? "Live GPS position" : "Estimated vehicle position"),
+                      systemImage: position.isGPS ? "location.fill" : "clock")
+                    .foregroundColor(position.isGPS ? .blue : .orange)
+            } else {
+                Text(L10n.text("Vehicle position unavailable")).foregroundColor(.secondary)
+            }
+            if !detail.cancelled, !departure.isCancelled, !failed,
+               let next = detail.calls.first(where: { !$0.skipped && ($0.arrival ?? $0.departure ?? .distantPast) > now }) {
+                Text(L10n.format("Next stop: %@", next.name)).fontWeight(.semibold)
+            }
+            Text(L10n.text(detail.leg.isRealtime ? (failed ? "Live data stale" : "Live") : "Scheduled"))
+                .foregroundColor(.secondary)
+        }
+        .font(.subheadline)
+    }
+
+}
+
+private struct TripDetailMap: UIViewRepresentable {
+    let detail: Transitous.TripDetail
+    let vehicle: LatLng?
+    let isGPS: Bool
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> MKMapView {
+        let map = MKMapView()
+        map.delegate = context.coordinator
+        map.pointOfInterestFilter = .excludingAll
+        map.isPitchEnabled = false
+        map.isRotateEnabled = false
+        return map
+    }
+
+    func updateUIView(_ map: MKMapView, context: Context) {
+        let coordinator = context.coordinator
+        let shape = detail.geometry
+        let locations = detail.stops.map(\.location)
+        if coordinator.shape != shape || coordinator.stopLocations != locations {
+            coordinator.shape = shape
+            coordinator.stopLocations = locations
+            coordinator.color = UIColor(hex: detail.leg.displayColor)
+            map.removeOverlays(map.overlays)
+            map.removeAnnotations(coordinator.stopPins)
+            if shape.count >= 2 {
+                map.addOverlay(MKPolyline(coordinates: shape.map(Self.coordinate), count: shape.count))
+            }
+            coordinator.stopPins = detail.stops.map { stop in
+                let pin = MKPointAnnotation()
+                pin.title = stop.call.name
+                pin.coordinate = Self.coordinate(stop.location)
+                return pin
+            }
+            map.addAnnotations(coordinator.stopPins)
+            if !coordinator.fitted {
+                let fitPoints = shape + locations
+                if let first = fitPoints.first {
+                    let rect = fitPoints.dropFirst().reduce(Self.mapRect(first)) { $0.union(Self.mapRect($1)) }
+                    let fit = rect.insetBy(dx: -max(1800, rect.width * 0.10), dy: -max(1800, rect.height * 0.10))
+                    map.setVisibleMapRect(fit, edgePadding: UIEdgeInsets(top: 24, left: 24, bottom: 36, right: 24),
+                                          animated: false)
+                    coordinator.fitted = true
+                }
+            }
+        }
+
+        let pin = coordinator.vehiclePin
+        if let vehicle {
+            pin.title = L10n.text(isGPS ? "Live GPS position" : "Estimated vehicle position")
+            coordinator.vehicleSymbol = detail.leg.transitMode.symbol
+            coordinator.isGPS = isGPS
+            pin.coordinate = Self.coordinate(vehicle)
+            if !map.annotations.contains(where: { $0 === pin }) {
+                map.addAnnotation(pin)
+            }
+            if let marker = map.view(for: pin) as? MKMarkerAnnotationView {
+                coordinator.styleVehicle(marker)
+            }
+            if !coordinator.fitted {
+                map.setRegion(MKCoordinateRegion(center: pin.coordinate, latitudinalMeters: 1200, longitudinalMeters: 1200),
+                              animated: false)
+                coordinator.fitted = true
+            }
+        } else {
+            map.removeAnnotation(pin)
+        }
+    }
+
+    private static func coordinate(_ p: LatLng) -> CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: p.lat, longitude: p.lng)
+    }
+
+    private static func mapRect(_ p: LatLng) -> MKMapRect {
+        MKMapRect(origin: MKMapPoint(coordinate(p)), size: MKMapSize(width: 1, height: 1))
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, MKMapViewDelegate {
+        var shape: [LatLng] = []
+        var stopLocations: [LatLng] = []
+        var stopPins: [MKPointAnnotation] = []
+        var color: UIColor = .systemBlue
+        let vehiclePin = MKPointAnnotation()
+        var vehicleSymbol = "tram.fill"
+        var isGPS = false
+        var fitted = false
+
+        func mapView(_ mapView: MKMapView, rendererFor overlay: any MKOverlay) -> MKOverlayRenderer {
+            guard let polyline = overlay as? MKPolyline else { return MKOverlayRenderer(overlay: overlay) }
+            let renderer = MKPolylineRenderer(polyline: polyline)
+            renderer.strokeColor = color
+            renderer.lineWidth = 5
+            renderer.lineCap = .round
+            renderer.lineJoin = .round
+            return renderer
+        }
+
+        func mapView(_ mapView: MKMapView, viewFor annotation: any MKAnnotation) -> MKAnnotationView? {
+            guard let point = annotation as? MKPointAnnotation else { return nil }
+            let marker = MKMarkerAnnotationView(annotation: point, reuseIdentifier: nil)
+            marker.canShowCallout = true
+            if point === vehiclePin {
+                styleVehicle(marker)
+            } else {
+                marker.markerTintColor = color
+                marker.glyphImage = UIImage(systemName: "circle.fill")
+                marker.displayPriority = .defaultLow
+            }
+            return marker
+        }
+
+        func styleVehicle(_ marker: MKMarkerAnnotationView) {
+            marker.markerTintColor = isGPS ? .systemBlue : .systemOrange
+            marker.glyphImage = UIImage(systemName: vehicleSymbol)
+            marker.displayPriority = .required
+        }
     }
 }
 

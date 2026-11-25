@@ -276,32 +276,7 @@ struct BrowseOverlay: View {
             // Room the dock takes at the bottom, from the screen's edge.
             let dockTop = KiteDock.height + KiteDock.bottomGap(geo.safeAreaInsets.bottom)
             ZStack(alignment: .top) {
-                // Map buttons: layers and the compass on the right, under the top cards.
                 VStack {
-                    HStack(alignment: .top) {
-                        Spacer()
-                        VStack(spacing: 10) {
-                            MapFab(icon: "square.3.layers.3d", size: 48) { model.showLayers = true }
-                                .accessibilityLabel("Map layers")
-                                .contextMenu {
-                                    if let apple = model.map as? AppleMapSurface {
-                                        Button { apple.beginDistanceMeasurement() } label: {
-                                            Label(L10n.text("Measure distance"), systemImage: "ruler")
-                                        }
-                                        Button { apple.clearDistanceMeasurement() } label: {
-                                            Label(L10n.text("Clear measurement"), systemImage: "xmark")
-                                        }
-                                    }
-                                }
-                            // 3D, 2D or north up, always there. On north up with the map turned by hand,
-                            // the needle shows which way north is and a tap faces north again.
-                            MapLookButton(look: model.browseLook, heading: model.mapHeading, size: 48) {
-                                withAnimation(.easeOut(duration: 0.2)) { model.cycleBrowseLook() }
-                            }
-                        }
-                    }
-                    // With a side panel the search box isn't above them: they go to the top right.
-                    .padding(.top, panel > 0 ? 10 : idle ? (model.resumeOffer != nil ? 266 : 166) : 76)
                     Spacer()
                     if sheetH < full * 0.6 || panel > 0 {
                         HStack(alignment: .bottom) {
@@ -351,14 +326,19 @@ struct BrowseOverlay: View {
 
                 VStack(spacing: 10) {
                     SearchBar(model: model, voice: voice, focused: $searchFocused)
-                    if idle && !voice.listening {
-                        placesMenu
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 16)
-                        QuickActionBar(model: model, settings: settings) {
-                            searchFocused = true
+                    if !searchFocused && !voice.listening {
+                        HStack(spacing: 8) {
+                            transitButton
+                            mapOptions
+                            Spacer(minLength: 0)
                         }
-                        .transition(.opacity)
+                        .padding(.horizontal, 16)
+                        if !hasSheet, let message = model.transitMapMessage {
+                            Text(L10n.text(message))
+                                .font(.footnote)
+                                .padding(8)
+                                .glass(Capsule())
+                        }
                     }
                     if voice.listening { ListeningCard(voice: voice) }
                     // Home, Work and recents are one tap away under "Where to?", so the map itself stays clear.
@@ -401,33 +381,68 @@ struct BrowseOverlay: View {
         }
     }
 
-    private var placesMenu: some View {
-        Menu {
-            Toggle(L10n.text("Apple Maps places"), isOn: $settings.showApplePOI)
-            if settings.showApplePOI {
-                Section {
-                    ForEach(Category.all) { category in
-                        Button {
-                            model.searchApplePlaces(category)
-                        } label: {
-                            Label(L10n.text(category.label), systemImage: category.icon)
-                        }
-                    }
-                }
-            }
-        } label: {
-            Label(L10n.text("Places"), systemImage: "mappin.and.ellipse")
+    private var transitButton: some View {
+        Button { model.toggleTransitStops() } label: {
+            Label(L10n.text("Transit"), systemImage: model.showsTransitStops ? "tram.fill" : "tram")
                 .font(.subheadline.weight(.semibold))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+                .foregroundColor(model.showsTransitStops ? KiteColor.accentText : KiteColor.ink)
+                .padding(.horizontal, 13)
+                .frame(minHeight: 44)
                 .glass(Capsule())
         }
-        .accessibilityIdentifier("map-places-menu")
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(model.showsTransitStops ? .isSelected : [])
+        .accessibilityIdentifier("map-transit-stops")
+    }
+
+    private var mapOptions: some View {
+        Menu {
+            Section {
+                Button { model.showLayers = true } label: {
+                    Label(L10n.text("Map layers"), systemImage: "square.3.layers.3d")
+                }
+                Button { withAnimation { model.cycleBrowseLook() } } label: {
+                    Label(L10n.format("Map view: %@", L10n.text(model.browseLook.title)), systemImage: "view.3d")
+                }
+                if let apple = model.map as? AppleMapSurface {
+                    Button { apple.beginDistanceMeasurement() } label: {
+                        Label(L10n.text("Measure distance"), systemImage: "ruler")
+                    }
+                    Button { apple.clearDistanceMeasurement() } label: {
+                        Label(L10n.text("Clear measurement"), systemImage: "xmark")
+                    }
+                }
+                Toggle(L10n.text("Apple Maps places"), isOn: $settings.showApplePOI)
+            }
+            QuickActionMenu(model: model, settings: settings) { searchFocused = true }
+        } label: {
+            Image(systemName: "square.3.layers.3d")
+                .font(.subheadline.weight(.semibold))
+                .foregroundColor(KiteColor.ink)
+                .frame(width: 44, height: 44)
+                .glass(Circle())
+        }
+        .accessibilityLabel("Map layers")
     }
 
     @ViewBuilder
     private func sheet(full: CGFloat) -> some View {
-        if let place = model.selected {
+        if let place = model.selected, place.source == "transitous" {
+            BottomSheet(detent: $model.detent, containerHeight: full, peekHeight: 230) {
+                HStack {
+                    Label(place.name, systemImage: "tram.fill").font(.headline)
+                    Spacer()
+                    Button { model.closePlace() } label: {
+                        Image(systemName: "xmark").frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel("Close")
+                }
+                .padding(.horizontal, 16)
+            } content: {
+                DepartureBoard(place: place).padding(.horizontal, 16)
+            }
+            .id(place.id)
+        } else if let place = model.selected {
             BottomSheet(detent: $model.detent, containerHeight: full, peekHeight: 230) {
                 PlaceHeader(model: model, place: place)
             } content: {
@@ -554,57 +569,20 @@ struct SearchBar: View {
     }
 }
 
-/**
- The shortcuts under the search field: Home, Work, Parking and whatever else the
- user kept. They are contextual (a parking shortcut turns into "I parked here"
- once Kite knows where the car is) and never duplicate the map's own buttons.
- */
-struct QuickActionBar: View {
+struct QuickActionMenu: View {
     @ObservedObject var model: AppModel
     @ObservedObject var settings: AppSettings
     let onSearch: () -> Void
-    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: KiteSpace.xs) {
-                ForEach(settings.quickActions) { kind in
-                    Button { run(kind) } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: kind.icon)
-                                .font(.system(size: 14, weight: .bold))
-                            Text(L10n.text(detailTitle(kind)))
-                                .font(KiteText.label(14))
-                                .lineLimit(1)
-                        }
-                        .foregroundColor(KiteColor.ink)
-                        .padding(.horizontal, 13)
-                        .frame(height: 38)
-                        .background(
-                            Capsule()
-                                .fill(KiteColor.surface.opacity(scheme == .dark ? 0.88 : 0.94))
-                                .overlay(Capsule().strokeBorder(KiteColor.stroke, lineWidth: 1))
-                                .shadow(color: KiteElevation.low.color, radius: 5, y: 2)
-                        )
-                        .contentShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .contextMenu {
-                        Button(role: .destructive) {
-                            guard settings.quickActions.count > 1 else { return }
-                            settings.quickActions.removeAll { $0 == kind }
-                        } label: {
-                            Label("Hide shortcut", systemImage: "eye.slash")
-                        }
-                        Button { model.tab = .settings } label: {
-                            Label("Edit shortcuts", systemImage: "slider.horizontal.3")
-                        }
-                    }
-                    .accessibilityLabel(L10n.text(kind.title))
+        Section {
+            ForEach([QuickActionKind.home, .work] + settings.quickActions.filter {
+                $0 != .home && $0 != .work && $0 != .transit
+            }) { kind in
+                Button { run(kind) } label: {
+                    Label(L10n.text(detailTitle(kind)), systemImage: kind.icon)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 2)
         }
     }
 
@@ -628,7 +606,7 @@ struct QuickActionBar: View {
         case .parking:
             if let p = settings.parking { model.select(p) } else { model.saveParking() }
         case .transit:
-            search(Fmt.yards ? "bus stop" : "transit station", "Transit")
+            model.toggleTransitStops()
         case .fuel:
             search(Fmt.yards ? "petrol station" : "gas stations", "Fuel")
         case .food:

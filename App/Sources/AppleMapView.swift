@@ -292,10 +292,10 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
             showsNativeBuildings = showBuildings
         }
 
-        let configuredTraffic = (native.preferredConfiguration as? MKStandardMapConfiguration)?.showsTraffic
-            ?? (native.preferredConfiguration as? MKHybridMapConfiguration)?.showsTraffic
+        // Region updates also call apply. Let MapKit finish changing its zoom without
+        // replacing its configuration when it is between map detail levels.
         if satellite != settings.satellite || terrain != settings.terrain || showsNativeTraffic != showTraffic
-            || showsNativePOI != showsPOI || configuredTraffic != showTraffic {
+            || showsNativePOI != showsPOI {
             satellite = settings.satellite
             terrain = settings.terrain
             showsNativeTraffic = showTraffic
@@ -550,6 +550,10 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
             }
             if let bearing = attrs["bearing"] as? Double {
                 rotate(view, bearing: bearing, heading: direction, scale: 0.65)
+            }
+            if attrs["transitStop"] as? Bool == true, zoomLevel < 15 {
+                view.clusteringIdentifier = "kite-transit-stops"
+                view.displayPriority = .defaultHigh
             }
             if (pin.source == "vela-waze-group" || pin.source == "vela-livecams"
                 || (pin.source == "vela-cameras" && (attrs["big"] as? Int) != 1)) && zoomLevel < 14 {
