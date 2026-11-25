@@ -418,7 +418,11 @@ struct TripHeader: View {
                     }
                     PlanningStatusBanner(model: model, compact: true)
                     closingLine(d)
-                    if d.startsFromLocation { goButton }
+                    if d.startsFromLocation {
+                        goButton
+                    } else if d.toPlace != nil {
+                        PillButton(title: "Route from my location", icon: "location.fill") { model.replanFromCurrentLocation() }
+                    }
                 }
                 .padding(.horizontal, 14)
                 .padding(.bottom, 10)
