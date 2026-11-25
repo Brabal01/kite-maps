@@ -43,6 +43,9 @@ Referenční Android je `097c9c62943ba00ac62f568a7a7258a5fbc499ab`. Práce na iO
 - [Snímky emulátoru pro přesný Android commit](https://github.com/Gordicek/kite-maps/tree/e8b63828a4187a478c9974408ca116290041b7d0) ukazují Layers, mapu, navigaci i MHD v Readingu. Android je pořídil v [referenčním běhu CI](https://github.com/Gordicek/kite-maps/actions/runs/45490072268). iOS smoke test používá souřadnice v Olomouci, takže snímky ukazují rozložení a stav obrazovky při jiné scéně.
 - Na iOS Simulatoru otevři `xcrun simctl openurl booted 'kite://place?lat=49.6&lng=17.25&name=Olomouc'`. Potom opakuj s akcí `directions`, chybějícím parametrem a při aktivní jízdě. Platný odkaz zobrazí místo nebo plán podle akce a aktivní cesta zůstane v popředí.
 - [Build s deeplinky](https://github.com/Brabal01/kite-maps/actions/runs/45509695968) prošel pro iPhone Simulator, arm64 zařízení a lokální projekt s Mapbox. IPA má 7 926 013 bajtů a obsahuje arm64 widget. Snímek potvrzuje registraci schématu a zobrazení systémového potvrzení. Po stisku Open a během aktivní jízdy je potřeba samostatný průchod.
+- [Build s recenzemi a zastávkami](https://github.com/Brabal01/kite-maps/actions/runs/45559445998) z `1cbb5fe` prošel pro simulátor, arm64 zařízení a lokální Mapbox Standard. Archiv IPA má 8 082 358 bajtů, obsahuje arm64 widget a jeho rozbalená data mají 24 226 132 bajtů. SHA-256 IPA je `66a7164462e3cfbe8ba07392ca66579145f95e89583589f6666738bd586e9bca`. Velikost instalace a cache na iPhonu vyžaduje měření na zařízení.
+- V plánovači otevři trasu mezi `49.5703,17.2092` a `49.6122,17.2896`, vyber Add stop, napiš Kaufland a potvrď hledání. Zkus Show on map, tap na zvýrazněný pin, All results a Add stop. Na iOS 16.4 a novějším je mapa interaktivní při polovičním panelu. Na starším podporovaném iOS funguje výběr ze seznamu a karta Show on map. [SwiftUI background interaction](https://developer.apple.com/documentation/swiftui/presentationbackgroundinteraction/enabled%28upthrough%3A%29)
+- `swift run --package-path VelaCore vela-probe drive 4` simuluje odbočení mimo trasu Millbrook → University of Southampton. Živý provider vrátil trasu 6,42 km a během průchodu nastal jeden přepočet. Jádro ohlásilo příjezd v čase simulace 478 s.
 
 ## Ověření poskytovatelů
 
@@ -62,3 +65,11 @@ Referenční Android je `097c9c62943ba00ac62f568a7a7258a5fbc499ab`. Práce na iO
 `xcodegen generate --spec project-mapbox.yml` přidá Maps SDK for iOS 11.26.0. Po sestavení zapni Mapbox Standard a použij vlastní veřejný token v Settings → Map & display → Mapbox. Konfigurace zůstává u MapLibre při vypnuté síti, vypnutém Mapboxu, offline mapě, chybě načtení Standardu a během používání některých překryvů MapLibre. V tuto chvíli jde o interiér, měření, turistické a cyklo vrstvy a profil trasy. Návrat na Standard používá tutéž kameru a aktivní navigaci.
 
 [SDK má licenci Mapbox](https://github.com/mapbox/mapbox-maps-ios/blob/v11.26.0/LICENSE.md), zatímco tento fork obsahuje GPLv3 zdrojový kód. V repozitáři jsem nedohledal výslovnou výjimku pro distribuci kombinovaného iOS buildu. CI ověřuje kompilaci lokální konfigurace a ukládá její log. Distribuční IPA se sestavuje z `project.yml` s MapLibre. Mapbox Directions funguje odděleně od rendereru.
+
+## Záznam z kontroly manifestu
+
+| Android manifest | Cesta v iOS a stav |
+| --- | --- |
+| `TransitReminderReceiver`, oprávnění přesného alarmu a zpracování bootu | Uložená MHD používá lokální notifikace a doručení přenechává systému. Otevření připomínky je svázané s ID uložené cesty. Test po restartu a při zrušeném spoji zůstává otevřený. [UserNotifications](https://developer.apple.com/documentation/usernotifications/scheduling-a-notification-locally-from-your-app) |
+| `POST_PROMOTED_NOTIFICATIONS`, navigační služba a PiP | Silniční a MHD Live Activities jsou v přibaleném widgetu. Chování při zamknutí, návratu do aplikace a souběžných upozorněních čeká na ověření na iPhonu. |
+| `QuickMapTile` | App Intents pokrývají domov, práci a auto. Dlaždice v Ovládacím centru iOS má podporovaný protějšek ve WidgetKit Controls a zůstává k implementaci. [WidgetKit Controls](https://developer.apple.com/documentation/widgetkit/creating-controls-to-perform-actions-across-the-system) |
