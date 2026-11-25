@@ -1,6 +1,7 @@
 import Combine
 import CoreLocation
 import Foundation
+import MapKit
 import MapLibre
 import SwiftUI
 import UIKit
@@ -33,7 +34,16 @@ struct Category: Identifiable, Hashable {
     var id: String { label }
 
     /** British words where units are British: petrol, supermarkets, chemists, cash machines. */
-    static var all: [Category] { Fmt.yards ? british : american }
+    static var all: [Category] { (Fmt.yards ? british : american) + additional }
+
+    private static let additional = [
+        Category(label: "Shops", icon: "bag.fill", query: "shops"),
+        Category(label: "Hospitals", icon: "cross.fill", query: "hospitals"),
+        Category(label: "Toilets", icon: "toilet.fill", query: "public toilets"),
+        Category(label: "Tourist attractions", icon: "binoculars.fill", query: "tourist attractions"),
+        Category(label: "Transit stops", icon: "bus.fill", query: "transit stops"),
+        Category(label: "Other places", icon: "mappin.and.ellipse", query: "points of interest"),
+    ]
 
     static let british = [
         Category(label: "Restaurants", icon: "fork.knife", query: "restaurants"),
@@ -57,6 +67,7 @@ struct Category: Identifiable, Hashable {
         Category(label: "Parking", icon: "parkingsign", query: "parking"),
         Category(label: "Pharmacies", icon: "cross.case.fill", query: "pharmacy"),
         Category(label: "ATMs", icon: "banknote.fill", query: "atm"),
+        Category(label: "EV charging", icon: "bolt.car.fill", query: "ev charging station"),
     ]
 }
 
@@ -534,6 +545,63 @@ final class AppModel: ObservableObject {
                 detent = .half
                 frame(PlaceSearch.mapFocus(query: q, places: r.places, category: title != nil))
             }
+        }
+    }
+
+    func searchApplePlaces(_ category: Category) {
+        guard settings.showApplePOI, !hasActiveJourney else { return }
+        searchTask?.cancel()
+        suggestTask?.cancel()
+        selected = nil
+        results = []
+        notice = nil
+        searching = true
+        openNowOnly = false
+        rating4Only = false
+        sort = .relevance
+        let region = viewport
+        let request = MKLocalSearch.Request()
+        let localized = L10n.text(category.label)
+        request.naturalLanguageQuery = localized == category.label ? category.query : localized
+        request.resultTypes = .pointOfInterest
+        let diameter = min(30_000, max(1_000, region.span ?? 6_000))
+        request.region = MKCoordinateRegion(
+            center: CLLocationCoordinate2D(latitude: region.center.lat, longitude: region.center.lng),
+            latitudinalMeters: diameter, longitudinalMeters: diameter
+        )
+        let search = MKLocalSearch(request: request)
+        let user = userLatLng
+        searchTask = Task {
+            do {
+                let response = try await withTaskCancellationHandler {
+                    try await search.start()
+                } onCancel: {
+                    search.cancel()
+                }
+                guard !Task.isCancelled else { return }
+                var seen = Set<String>()
+                results = response.mapItems.compactMap { item in
+                    guard let name = item.name, !name.isEmpty else { return nil }
+                    let point = item.placemark.coordinate
+                    guard CLLocationCoordinate2DIsValid(point) else { return nil }
+                    let id = "apple:\(name.lowercased()):\(point.latitude):\(point.longitude)"
+                    guard seen.insert(id).inserted else { return nil }
+                    var place = Place(id: id, name: name, location: LatLng(point.latitude, point.longitude), source: "apple")
+                    place.category = localized
+                    place.address = item.placemark.title
+                    place.phone = item.phoneNumber
+                    place.website = item.url?.absoluteString
+                    place.distanceMeters = user?.distance(to: place.location)
+                    return place
+                }
+                resultsTitle = localized
+                detent = .half
+                if results.isEmpty { notice = L10n.text("No nearby places found.") }
+            } catch {
+                guard !Task.isCancelled else { return }
+                notice = L10n.text("Apple Maps places are temporarily unavailable.")
+            }
+            searching = false
         }
     }
 
@@ -1678,6 +1746,16 @@ final class AppModel: ObservableObject {
     }
 
     // MARK: Navigation
+
+    func replanFromCurrentLocation() {
+        guard var state = directions, let destination = state.toPlace, !state.startsFromLocation else { return }
+        state.destination = destination
+        state.origin = nil
+        if state.reversed { state.stops.reverse() }
+        state.reversed = false
+        state.exclusion = nil
+        startPlanning(state)
+    }
 
     func startNavigation() {
         guard let d = directions, let route = d.route, d.startsFromLocation, let destination = d.toPlace else { return }
