@@ -89,15 +89,18 @@ jobs:
           mkdir -p screenshots
           xcrun simctl location "$device" set 49.592,17.252
           xcrun simctl launch "$device" app.vela.ios -demo browse
-          sleep 12
+          sleep 20
           screenshot screenshots/olomouc-first-fix.png
-          xcrun simctl openurl "$device" 'kite://place?lat=49.5881&lng=17.2582&name=Santovka'
-          sleep 5
-          screenshot screenshots/olomouc-deeplink.png
           xcrun simctl location "$device" set 49.595,17.259
           xcrun simctl launch --terminate-running-process "$device" app.vela.ios -demo go -demoTo 49.613,17.235
           sleep 46
           screenshot screenshots/olomouc-go.png
+          xcrun simctl launch --terminate-running-process "$device" app.vela.ios -demo place-reviews
+          sleep 35
+          screenshot screenshots/olomouc-reviews.png
+          xcrun simctl openurl "$device" 'kite://place?lat=49.5881&lng=17.2582&name=Santovka'
+          sleep 5
+          screenshot screenshots/olomouc-deeplink-prompt.png
       - name: Upload simulator screenshots
         if: github.ref_name == 'ios/android-parity'
         uses: actions/upload-artifact@v4
