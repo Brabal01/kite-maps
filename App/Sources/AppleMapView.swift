@@ -59,6 +59,11 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
     private var terrain = false
     private var showsNativeTraffic: Bool?
     private var pendingRouteFit: (rect: MKMapRect, padding: UIEdgeInsets)?
+    private var measurementPoints: [MKPointAnnotation] = []
+    private var measurementLine: MKGeodesicPolyline?
+    private var measurementLabel: MKPointAnnotation?
+    private var choosingMeasurementEndpoint = false
+    private weak var measureGesture: UILongPressGestureRecognizer?
     private static let images: [String: UIImage] = {
         var result: [String: UIImage] = [:]
         MapIcons.registerImages { result[$1] = $0 }
@@ -90,6 +95,14 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
         pinch.cancelsTouchesInView = false
         pinch.delegate = self
         native.addGestureRecognizer(pinch)
+
+        let measure = UILongPressGestureRecognizer(target: self, action: #selector(measureHeld(_:)))
+        measure.numberOfTouchesRequired = 2
+        measure.minimumPressDuration = 0.35
+        measure.allowableMovement = 12
+        measure.delegate = self
+        native.addGestureRecognizer(measure)
+        measureGesture = measure
 
         let press = UILongPressGestureRecognizer(target: self, action: #selector(pressed(_:)))
         let tap = UITapGestureRecognizer(target: self, action: #selector(tapped(_:)))
@@ -381,6 +394,13 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
     }
 
     func mapView(_ mapView: MKMapView, rendererFor overlay: any MKOverlay) -> MKOverlayRenderer {
+        if let measure = overlay as? MKGeodesicPolyline, measure === measurementLine {
+            let renderer = MKPolylineRenderer(polyline: measure)
+            renderer.strokeColor = UIColor.systemTeal
+            renderer.lineWidth = 4
+            renderer.lineDashPattern = [6, 4]
+            return renderer
+        }
         if let tile = overlay as? AppleHeatTiles { return MKTileOverlayRenderer(tileOverlay: tile) }
         guard let line = overlay as? MKPolyline, let paint = paints[ObjectIdentifier(line)] else {
             return MKOverlayRenderer(overlay: overlay)
@@ -442,6 +462,24 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
     }
 
     func mapView(_ mapView: MKMapView, viewFor annotation: any MKAnnotation) -> MKAnnotationView? {
+        if let point = annotation as? MKPointAnnotation {
+            if point === measurementLabel {
+                let view = MKAnnotationView(annotation: point, reuseIdentifier: nil)
+                let label = point.title ?? ""
+                view.image = pill(label, background: UIColor(hex: 0x0F172A), foreground: .white)
+                view.accessibilityLabel = label
+                view.displayPriority = .required
+                return view
+            }
+            if measurementPoints.contains(where: { $0 === point }) {
+                let view = MKMarkerAnnotationView(annotation: point, reuseIdentifier: nil)
+                view.glyphText = point.title
+                view.markerTintColor = .systemTeal
+                view.isDraggable = true
+                view.displayPriority = .required
+                return view
+            }
+        }
         if let cluster = annotation as? MKClusterAnnotation {
             let view = MKAnnotationView(annotation: cluster, reuseIdentifier: nil)
             view.image = pill(String(cluster.memberAnnotations.count), background: UIColor(hex: 0x0F172A), foreground: .white)
@@ -541,8 +579,9 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
     }
 
     func mapView(_ mapView: MKMapView, didSelect annotation: any MKAnnotation) {
+        if let point = annotation as? MKPointAnnotation, measurementPoints.contains(where: { $0 === point }) { return }
         mapView.deselectAnnotation(annotation, animated: false)
-        guard let coordinator, coordinator.canTapPlace else { return }
+        guard !choosingMeasurementEndpoint, let coordinator, coordinator.canTapPlace else { return }
         if let pin = annotation as? FeaturePin {
             coordinator.selectOverlay(pin.feature, source: pin.source)
         } else if let cluster = annotation as? MKClusterAnnotation {
@@ -560,6 +599,78 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
         coordinator?.userMovedCamera(panOrRotate: false)
     }
 
+    func beginDistanceMeasurement() {
+        clearDistanceMeasurement()
+        choosingMeasurementEndpoint = true
+        setMeasurementPoints([native.centerCoordinate])
+    }
+
+    func clearDistanceMeasurement() {
+        choosingMeasurementEndpoint = false
+        native.removeAnnotations(measurementPoints)
+        measurementPoints = []
+        updateMeasurementLine()
+    }
+
+    private func setMeasurementPoints(_ coordinates: [CLLocationCoordinate2D]) {
+        for (index, coordinate) in coordinates.enumerated() {
+            if measurementPoints.indices.contains(index) {
+                measurementPoints[index].coordinate = coordinate
+            } else {
+                let point = MKPointAnnotation()
+                point.coordinate = coordinate
+                point.title = index == 0 ? "A" : "B"
+                measurementPoints.append(point)
+                native.addAnnotation(point)
+            }
+        }
+        updateMeasurementLine()
+    }
+
+    private func updateMeasurementLine() {
+        if let measurementLine { native.removeOverlay(measurementLine) }
+        if let measurementLabel { native.removeAnnotation(measurementLabel) }
+        measurementLine = nil
+        measurementLabel = nil
+        guard measurementPoints.count == 2 else { return }
+        let a = measurementPoints[0].coordinate
+        let b = measurementPoints[1].coordinate
+        let from = CLLocation(latitude: a.latitude, longitude: a.longitude)
+        let to = CLLocation(latitude: b.latitude, longitude: b.longitude)
+        let meters = from.distance(from: to)
+        let coordinates = [a, b]
+        let line = MKGeodesicPolyline(coordinates: coordinates, count: coordinates.count)
+        measurementLine = line
+        native.addOverlay(line, level: .aboveLabels)
+
+        let label = MKPointAnnotation()
+        let midpoint = line.coordinate
+        label.coordinate = midpoint
+        let locale = AppSettings.shared.language.locale
+        label.title = meters < 1_000 ? String(format: "%.0f m", locale: locale, meters)
+            : String(format: "%.2f km", locale: locale, meters / 1_000)
+        measurementLabel = label
+        native.addAnnotation(label)
+    }
+
+    @objc private func measureHeld(_ recognizer: UILongPressGestureRecognizer) {
+        guard recognizer.state == .began || recognizer.state == .changed,
+              recognizer.numberOfTouches == 2,
+              coordinator?.model.hasActiveJourney == false else { return }
+        choosingMeasurementEndpoint = false
+        let points = (0..<2).map { native.convert(recognizer.location(ofTouch: $0, in: native), toCoordinateFrom: native) }
+        guard points.allSatisfy(CLLocationCoordinate2DIsValid) else { return }
+        setMeasurementPoints(points)
+    }
+
+    func mapView(_ mapView: MKMapView, annotationView view: MKAnnotationView,
+                 didChange newState: MKAnnotationView.DragState, fromOldState oldState: MKAnnotationView.DragState) {
+        if newState == .ending || newState == .canceling {
+            view.dragState = .none
+            updateMeasurementLine()
+        }
+    }
+
     @objc private func pressed(_ recognizer: UILongPressGestureRecognizer) {
         guard recognizer.state == .began else { return }
         coordinator?.dropAt(native.convert(recognizer.location(in: native), toCoordinateFrom: native))
@@ -569,6 +680,13 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
         guard let coordinator, coordinator.canTapPlace else { return }
         let model = coordinator.model
         let screen = recognizer.location(in: native)
+        if choosingMeasurementEndpoint, let start = measurementPoints.first {
+            let endpoint = native.convert(screen, toCoordinateFrom: native)
+            guard CLLocationCoordinate2DIsValid(endpoint) else { return }
+            choosingMeasurementEndpoint = false
+            setMeasurementPoints([start.coordinate, endpoint])
+            return
+        }
         guard let directions = model.directions, let chosen = directions.route, !model.hasActiveJourney else { return }
         let coordinate = native.convert(screen, toCoordinateFrom: native)
         let tap = LatLng(coordinate.latitude, coordinate.longitude)
@@ -586,7 +704,9 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
-                           shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool { true }
+                           shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        gestureRecognizer !== measureGesture && otherGestureRecognizer !== measureGesture
+    }
 
     private func allGestures(in view: UIView) -> [UIGestureRecognizer] {
         (view.gestureRecognizers ?? []) + view.subviews.flatMap { allGestures(in: $0) }
