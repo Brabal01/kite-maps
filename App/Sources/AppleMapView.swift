@@ -57,6 +57,8 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
     private var navigating = false
     private var satellite: Bool?
     private var terrain = false
+    private var showsNativeTraffic: Bool?
+    private var pendingRouteFit: (rect: MKMapRect, padding: UIEdgeInsets)?
     private static let images: [String: UIImage] = {
         var result: [String: UIImage] = [:]
         MapIcons.registerImages { result[$1] = $0 }
@@ -112,7 +114,10 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        if let pending = pendingCamera, bounds.width > 0, bounds.height > 0 {
+        if let fit = pendingRouteFit, bounds.width > 0, bounds.height > 0 {
+            pendingRouteFit = nil
+            fitRoute(in: fit.rect, padding: fit.padding)
+        } else if let pending = pendingCamera, bounds.width > 0, bounds.height > 0 {
             pendingCamera = nil
             camera = pending
             queueRegionUpdate()
@@ -186,9 +191,35 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
         return max(20, width * scale * Double(max(bounds.height, 320) / max(bounds.width, 320)) * 1.15)
     }
 
+    func frameRoute(_ bounds: MLNCoordinateBounds, padding: UIEdgeInsets) {
+        let sw = MKMapPoint(bounds.sw), ne = MKMapPoint(bounds.ne)
+        let rect = MKMapRect(x: min(sw.x, ne.x), y: min(sw.y, ne.y),
+                             width: max(1, abs(ne.x - sw.x)), height: max(1, abs(ne.y - sw.y)))
+        pendingCamera = nil
+        guard native.bounds.width > 0, native.bounds.height > 0 else {
+            pendingRouteFit = (rect, padding)
+            return
+        }
+        pendingRouteFit = nil
+        fitRoute(in: rect, padding: padding)
+    }
+
+    private func fitRoute(in rect: MKMapRect, padding: UIEdgeInsets) {
+        let maxTop = max(0, native.bounds.height - padding.bottom - 44)
+        let maxLeft = max(0, native.bounds.width - padding.right - 44)
+        let insets = UIEdgeInsets(top: min(padding.top, maxTop), left: min(padding.left, maxLeft),
+                                 bottom: padding.bottom, right: padding.right)
+        let camera = native.camera
+        camera.heading = 0
+        camera.pitch = 0
+        native.setCamera(camera, animated: false)
+        native.setVisibleMapRect(rect, edgePadding: insets, animated: true)
+    }
+
     func setCamera(_ camera: MLNMapCamera, withDuration duration: TimeInterval,
                    animationTimingFunction: CAMediaTimingFunction?, edgePadding: UIEdgeInsets,
                    completionHandler: (() -> Void)?) {
+        pendingRouteFit = nil
         guard bounds.width > 0, bounds.height > 0 else {
             pendingCamera = camera
             completionHandler?()
@@ -227,23 +258,27 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
         self.navigating = navigating
         let interfaceStyle: UIUserInterfaceStyle = dark ? .dark : .light
         if overrideUserInterfaceStyle != interfaceStyle { overrideUserInterfaceStyle = interfaceStyle }
-        if satellite != settings.satellite || terrain != settings.terrain {
-            satellite = settings.satellite
-            terrain = settings.terrain
-            let elevation: MKMapConfiguration.ElevationStyle = terrain ? .realistic : .flat
-            if settings.satellite {
-                native.preferredConfiguration = MKHybridMapConfiguration(elevationStyle: elevation)
-            } else {
-                native.preferredConfiguration = MKStandardMapConfiguration(elevationStyle: elevation, emphasisStyle: .muted)
-            }
-        }
         let preset: MapPreset = navigating && settings.mapPreset != .minimal ? .navigation : settings.mapPreset
         let profile = MapPresetCatalog.profile(for: preset)
+        let showTraffic = settings.traffic
+        if satellite != settings.satellite || terrain != settings.terrain || showsNativeTraffic != showTraffic {
+            satellite = settings.satellite
+            terrain = settings.terrain
+            showsNativeTraffic = showTraffic
+            let elevation: MKMapConfiguration.ElevationStyle = terrain ? .realistic : .flat
+            if settings.satellite {
+                let config = MKHybridMapConfiguration(elevationStyle: elevation)
+                config.showsTraffic = showTraffic
+                native.preferredConfiguration = config
+            } else {
+                let config = MKStandardMapConfiguration(elevationStyle: elevation, emphasisStyle: .default)
+                config.showsTraffic = showTraffic
+                native.preferredConfiguration = config
+            }
+        }
         native.pointOfInterestFilter = profile.showPOI ? .includingAll : .excludingAll
         let showBuildings = !settings.satellite && profile.showBuildings && (!navigating || settings.navBuildings)
         if native.showsBuildings != showBuildings { native.showsBuildings = showBuildings }
-        let showTraffic = settings.traffic && settings.welcomed && profile.showTraffic
-        if native.showsTraffic != showTraffic { native.showsTraffic = showTraffic }
         let showHeat = settings.wazeOn && settings.wazeHeatmap && settings.wazePolice
         if showHeat && heatLayer == nil {
             let layer = AppleHeatTiles()
