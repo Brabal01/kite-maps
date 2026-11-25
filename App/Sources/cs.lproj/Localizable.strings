@@ -669,3 +669,7 @@
 "Recommended for travel time, walking and connections" = "Doporučeno podle doby cesty, chůze a přestupů";
 "High transfer risk" = "Vysoké riziko zmeškání přestupu";
 "Waiting time %@" = "Čekání %@";
+"Filter by platform" = "Filtrovat podle nástupiště";
+"All platforms" = "Všechna nástupiště";
+"Cancelled departure" = "Zrušený spoj";
+"Transitous · updated %@" = "Transitous · aktualizováno %@";
