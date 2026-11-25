@@ -320,7 +320,10 @@ struct VelaMapView: UIViewRepresentable {
             ride.lineColor = NSExpression(mglJSONObject: ["to-color", ["get", "color"]])
             // A metro, a tram and a bus stay visibly different even when two operators pick
             // similar colors: the line's own width carries the mode.
-            ride.lineWidth = NSExpression(mglJSONObject: Self.transitWidth(extra: 1.5))
+            let transitOpacity = NSExpression(mglJSONObject: ["match", ["get", "phase"], "done", 0.28, "upcoming", 0.6, 1.0])
+            for layer in [walk, rideEdge, ride] { layer.lineOpacity = transitOpacity }
+            ride.lineWidth = NSExpression(mglJSONObject: ["match", ["get", "phase"], "active", Self.transitWidth(extra: 3),
+                                                            "done", Self.transitWidth(extra: 0), Self.transitWidth(extra: 1.5)])
             [walk, rideEdge, ride].forEach(insert)
             // Live vehicle positions from an optional GTFS-Realtime feed.
             let vehicleSrc = MLNShapeSource(identifier: "vela-transit-vehicle", shape: nil, options: nil)
@@ -1178,7 +1181,7 @@ struct VelaMapView: UIViewRepresentable {
                 alts = d.current.filter { $0.id != main?.id }
             }
             let journey = model.transitJourney
-            let trip = model.nav == nil && !model.justDrive ? (journey?.trip ?? model.directions?.pickedTrip) : nil
+            let trip = journey?.trip ?? (model.nav == nil && !model.justDrive ? model.directions?.pickedTrip : nil)
             let preset = model.settings.mapPreset
             let effectivePreset: MapPreset = model.nav?.route.mode == .drive && preset != .minimal ? .navigation : preset
             let showsRouteTraffic = main?.mode == .drive && model.settings.traffic && !(surface is AppleMapSurface)
@@ -1192,11 +1195,15 @@ struct VelaMapView: UIViewRepresentable {
 
             publish(MLNShapeCollectionFeature(shapes: alts.map { polyline($0.polyline) }), to: "vela-route-alt")
             publish(trip.map { t in
-                MLNShapeCollectionFeature(shapes: t.legs.dropFirst(firstLeg).filter { $0.path.count >= 2 }.map { leg in
-                    polyline(leg.path, ["walk": leg.isWalk ? 1 : 0,
-                                        "color": String(format: "#%06X", leg.identity.color),
-                                        "mode": leg.identity.mode.rawValue])
-                })
+                let lines: [MLNPolylineFeature] = t.legs.enumerated().compactMap { index, leg in
+                    guard leg.path.count >= 2 else { return nil }
+                    if journey != nil, index == firstLeg, leg.isWalk, main?.mode == .walk { return nil }
+                    let phase = journey == nil ? "preview" : index < firstLeg ? "done" : index == firstLeg ? "active" : "upcoming"
+                    return polyline(leg.path, ["walk": leg.isWalk ? 1 : 0,
+                                               "color": String(format: "#%06X", leg.identity.color),
+                                               "mode": leg.identity.mode.rawValue, "phase": phase])
+                }
+                return MLNShapeCollectionFeature(shapes: lines)
             }, to: "vela-transit")
             guard let r = main else {
                 publish(nil, to: "vela-route"); publish(nil, to: "vela-route-traffic"); publish(nil, to: "vela-route-bubbles")
@@ -1307,7 +1314,8 @@ struct VelaMapView: UIViewRepresentable {
                 leg = nil
             }
             let features: [MLNPointFeature] = [leg].compactMap { leg in
-                guard let leg, let vehicle = leg.liveVehicle else { return nil }
+                guard let leg, let vehicle = leg.liveVehicle, let stamp = vehicle.updated,
+                      (-30...120).contains(Date().timeIntervalSince(stamp)) else { return nil }
                 let f = MLNPointFeature()
                 f.coordinate = CLLocationCoordinate2D(latitude: vehicle.location.lat, longitude: vehicle.location.lng)
                 f.attributes = ["icon": "transit-\(leg.identity.mode.rawValue)", "label": leg.line]
