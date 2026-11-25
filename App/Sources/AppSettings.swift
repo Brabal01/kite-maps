@@ -74,8 +74,8 @@ final class AppSettings: ObservableObject {
     private let d = UserDefaults.standard
 
     @Published var language: KiteLanguage { didSet { d.set(language.rawValue, forKey: "language") } }
-    @Published var useAppleMaps = UserDefaults.standard.bool(forKey: "useAppleMaps") {
-        didSet { d.set(useAppleMaps, forKey: "useAppleMaps") }
+    @Published var useAppleMaps: Bool {
+        didSet { d.set(useAppleMaps, forKey: "v34UseAppleMaps") }
     }
     @Published var mapboxToken = MapboxCredential.load() {
         didSet { MapboxCredential.save(mapboxToken) }
@@ -234,6 +234,7 @@ final class AppSettings: ObservableObject {
     /** Places you opened lately, newest first. */
     @Published var recentPlaces: [Place] { didSet { save(recentPlaces, "recentPlaces") } }
 
+        useAppleMaps = d.object(forKey: "v34UseAppleMaps") as? Bool ?? true
     private init() {
         language = KiteLanguage(rawValue: d.string(forKey: "language") ?? "") ?? .system
         theme = ThemeMode(rawValue: d.string(forKey: "theme") ?? "") ?? .system
