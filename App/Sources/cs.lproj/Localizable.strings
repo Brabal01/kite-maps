@@ -571,6 +571,7 @@
 "Move stop later" = "Posunout zastávku dolů";
 "Stop options" = "Možnosti zastávky";
 "Start navigation" = "Spustit navigaci";
+"Route from my location" = "Přepočítat z mé polohy";
 "Fastest route" = "Nejrychlejší";
 "Road events ahead" = "Události před tebou";
 "Suggest faster routes" = "Nabízet rychlejší trasy";
@@ -648,3 +649,14 @@
 "No route to show" = "Není co zobrazit";
 
 "Change the start, the destination or the travel mode, then try again." = "Změňte start, cíl nebo způsob dopravy a zkuste to znovu.";
+
+"Places" = "Místa";
+"Apple Maps places" = "Místa z Map Apple";
+"Shops" = "Obchody";
+"Hospitals" = "Nemocnice";
+"Tourist attractions" = "Turistické atrakce";
+"Transit stops" = "Zastávky veřejné dopravy";
+"Other places" = "Další místa";
+"Place details from Apple Maps" = "Údaje o místě z Map Apple";
+"No nearby places found." = "V okolí se nenašla žádná místa.";
+"Apple Maps places are temporarily unavailable." = "Místa z Map Apple jsou dočasně nedostupná.";
