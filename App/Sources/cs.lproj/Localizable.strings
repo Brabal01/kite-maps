@@ -660,3 +660,12 @@
 "Place details from Apple Maps" = "Údaje o místě z Map Apple";
 "No nearby places found." = "V okolí se nenašla žádná místa.";
 "Apple Maps places are temporarily unavailable." = "Místa z Map Apple jsou dočasně nedostupná.";
+"Recommended" = "Doporučené";
+"Fastest" = "Nejrychlejší";
+"Fewest changes" = "Nejméně přestupů";
+"Least walking" = "Nejméně chůze";
+"Most transfer time" = "Největší rezerva na přestup";
+"Sort connections" = "Seřadit spojení";
+"Recommended for travel time, walking and connections" = "Doporučeno podle doby cesty, chůze a přestupů";
+"High transfer risk" = "Vysoké riziko zmeškání přestupu";
+"Waiting time %@" = "Čekání %@";
