@@ -19,6 +19,8 @@ enum SearchParser {
         "rating": [1, 4, 7],
         "reviewCount": [1, 4, 8],
         "priceText": [1, 4, 2],
+        "fuelPrice": [1, 88, 0],
+        "placeType": [1, 88, 1],
         "website": [1, 7, 0],
         "phone": [1, 178, 0, 0],
         "featureId": [1, 10],
@@ -88,6 +90,8 @@ enum SearchParser {
         p.rating = dbl(field(entry, "rating"))
         p.reviewCount = int(field(entry, "reviewCount"))
         p.priceText = str(field(entry, "priceText"))
+        p.fuelStation = str(field(entry, "placeType")) == "SearchResult.TYPE_GAS_STATION" ? true : nil
+        if FuelPrices.isStation(p) { p.fuelPrice = FuelPrices.googleLabel(str(field(entry, "fuelPrice"))) }
         p.website = str(field(entry, "website"))
         p.phone = str(field(entry, "phone"))
         let rich = str(field(entry, "statusRich"))

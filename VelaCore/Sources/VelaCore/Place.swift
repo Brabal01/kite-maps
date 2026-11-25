@@ -56,6 +56,8 @@ public struct Place: Identifiable, Hashable, Codable, Sendable {
     public var hours: [String] = []
     public var photoUrls: [String] = []
     public var featuredReview: String?
+    public var fuelPrice: String?
+    public var fuelStation: Bool?
     public var editorialSummary: String?
     public var about: [AboutSection] = []
     public var featureId: String?

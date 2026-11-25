@@ -13,8 +13,20 @@ public enum OpenMapSearch {
             category = ("amenity", "drinking_water", "Drinking water")
         case "parking", "parkoviste":
             category = ("amenity", "parking", "Parking")
-        case "toilets", "wc", "zachody":
+        case "toilets", "public toilets", "restroom", "wc", "zachody":
             category = ("amenity", "toilets", "Toilets")
+        case "gas station", "gas stations", "petrol station", "petrol stations", "cerpaci stanice", "benzinka":
+            category = ("amenity", "fuel", "Fuel station")
+        case "ev charging", "ev charging station", "nabijeci stanice":
+            category = ("amenity", "charging_station", "Charging station")
+        case "coffee", "cafe", "kavarna", "kavarny":
+            category = ("amenity", "cafe", "Café")
+        case "restaurants", "restaurant", "restaurace":
+            category = ("amenity", "restaurant", "Restaurant")
+        case "supermarket", "supermarkets":
+            category = ("shop", "supermarket", "Supermarket")
+        case "pharmacy", "pharmacies", "lekarna", "lekarny":
+            category = ("amenity", "pharmacy", "Pharmacy")
         case "bench", "benches", "lavicka", "lavicky":
             category = ("amenity", "bench", "Bench")
         case "camping", "campsites", "kemp", "kempy":
