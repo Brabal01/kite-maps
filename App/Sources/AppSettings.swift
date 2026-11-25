@@ -77,6 +77,10 @@ final class AppSettings: ObservableObject {
     @Published var useAppleMaps: Bool {
         didSet { d.set(useAppleMaps, forKey: "v34UseAppleMaps") }
     }
+    @Published var showApplePOI = UserDefaults.standard.object(forKey: "showApplePOI") as? Bool ?? true {
+        didSet { d.set(showApplePOI, forKey: "showApplePOI") }
+    }
+
     @Published var mapboxToken = MapboxCredential.load() {
         didSet { MapboxCredential.save(mapboxToken) }
     }
