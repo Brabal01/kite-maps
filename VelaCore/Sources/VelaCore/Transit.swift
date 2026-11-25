@@ -231,6 +231,11 @@ public enum Transitous {
         public var isRealtime: Bool = false
         public var routeId: String? = nil
         public var agencyId: String? = nil
+        public var isCancelled = false
+        public var platform: String? {
+            let value = track ?? scheduledTrack
+            return value.flatMap { $0.isEmpty ? nil : $0 }
+        }
         public var vehicle: TransitLeg.Vehicle { TransitLeg.Vehicle(mode) }
         /// The same identity the trip cards and map use, so a line keeps one color everywhere.
         public var identity: TransitLineIdentity {
@@ -268,7 +273,7 @@ public enum Transitous {
         }
         guard !all.isEmpty else { return nil }
         var seen = Set<String>()
-        let board = all.sorted { $0.time < $1.time }.filter { seen.insert("\($0.line)|\($0.headsign)|\($0.time.timeIntervalSince1970)").inserted }
+        let board = all.sorted { $0.time < $1.time }.filter { seen.insert("\($0.routeId ?? $0.line)|\($0.headsign)|\($0.time.timeIntervalSince1970)|\($0.platform ?? "")|\($0.isCancelled)").inserted }
         return (first.name, board)
     }
 
@@ -277,8 +282,8 @@ public enum Transitous {
               let list = root["stopTimes"] as? [[String: Any]] else { return [] }
         return list.compactMap { st in
             let place = st["place"] as? [String: Any] ?? [:]
-            if st["tripCancelled"] as? Bool == true || place["cancelled"] as? Bool == true { return nil }
-            guard let time = date(place["departure"]) else { return nil }
+            let cancelled = st["tripCancelled"] as? Bool == true || place["cancelled"] as? Bool == true
+            guard let time = date(place["departure"]) ?? date(place["scheduledDeparture"]) else { return nil }
             var delay: Int?
             if st["realTime"] as? Bool == true, let sched = date(place["scheduledDeparture"]) {
                 delay = Int((time.timeIntervalSince(sched) / 60).rounded())
@@ -298,7 +303,7 @@ public enum Transitous {
                              scheduledTrack: st["scheduledTrack"] as? String ?? place["scheduledTrack"] as? String,
                              stopCode: st["stopCode"] as? String ?? place["stopCode"] as? String,
                              isRealtime: st["realTime"] as? Bool == true,
-                             routeId: st["routeId"] as? String, agencyId: st["agencyId"] as? String)
+                             routeId: st["routeId"] as? String, agencyId: st["agencyId"] as? String, isCancelled: cancelled)
         }
     }
 
