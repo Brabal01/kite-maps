@@ -675,3 +675,4 @@
 "Transitous · updated %@" = "Transitous · aktualizováno %@";
 "Measure distance" = "Změřit vzdálenost";
 "Clear measurement" = "Ukončit měření";
+"Time at each stop: %@ min" = "Doba na každé zastávce: %@ min";
