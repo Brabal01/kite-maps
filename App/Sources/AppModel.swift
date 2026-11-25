@@ -2372,6 +2372,10 @@ final class AppModel: ObservableObject {
         // With a side panel the cards are on the left, not at the bottom.
         let pad = sideInset > 0 ? UIEdgeInsets(top: 60, left: sideInset + 40, bottom: 60, right: 40)
                                 : UIEdgeInsets(top: top, left: 40, bottom: map.bounds.height * bottomFraction + 20, right: 40)
+        if let apple = map as? AppleMapSurface, nav == nil, directions != nil {
+            apple.frameRoute(bounds, padding: pad)
+            return
+        }
         let cam = map.cameraThatFitsCoordinateBounds(bounds, edgePadding: pad)
         cam.pitch = pitch
         cam.heading = 0
