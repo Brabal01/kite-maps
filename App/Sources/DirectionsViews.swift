@@ -127,7 +127,7 @@ struct EndpointsCard: View {
                 }
                 Divider().padding(.leading, 30)
                 endpoint(.to, icon: "mappin.circle.fill", color: Vela.closed, text: state.toPlace?.name ?? "My location")
-                if !state.transit && state.stops.count < 8 {
+                if state.stops.count < 8 {
                     Divider().padding(.leading, 30)
                     Button { model.addingStop = true } label: {
                         HStack(spacing: 12) {
@@ -808,6 +808,7 @@ struct TransitBody: View {
     @State private var expanded: UUID?
     @State private var preference: TransitComparison.Preference = .recommended
     @AppStorage("walkingSpeed") private var transitWalkingSpeed = 5.0
+    @AppStorage("transitDwellMinutes") private var transitDwellMinutes = 5
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -828,6 +829,11 @@ struct TransitBody: View {
         }
         .onChange(of: kind) { k in model.setTransitTime(kind: k, at: when) }
         .onChange(of: when) { w in if kind != 0 { model.setTransitTime(kind: kind, at: w) } }
+        if !state.stops.isEmpty {
+            Stepper(L10n.format("Time at each stop: %@ min", String(transitDwellMinutes)),
+                    value: $transitDwellMinutes, in: 0...60, step: 5)
+                .onChange(of: transitDwellMinutes) { _ in model.loadTransit() }
+        }
         trips
     }
 
