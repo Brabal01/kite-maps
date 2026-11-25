@@ -1184,8 +1184,8 @@ struct VelaMapView: UIViewRepresentable {
             let trip = journey?.trip ?? (model.nav == nil && !model.justDrive ? model.directions?.pickedTrip : nil)
             let preset = model.settings.mapPreset
             let effectivePreset: MapPreset = model.nav?.route.mode == .drive && preset != .minimal ? .navigation : preset
-            let showsRouteTraffic = main?.mode == .drive && model.settings.traffic && !(surface is AppleMapSurface)
-                && MapPresetCatalog.profile(for: effectivePreset).showTraffic
+            let showsRouteTraffic = main?.mode == .drive && model.settings.traffic
+                && (surface is AppleMapSurface || MapPresetCatalog.profile(for: effectivePreset).showTraffic)
             let trafficKey = showsRouteTraffic ? main?.trafficSpans.hashValue : nil
             let firstLeg = journey?.index ?? 0
             let key = (model.nav == nil ? "" : "nav") + (trip?.id.uuidString ?? "") + (main?.id.uuidString ?? "") + alts.map(\.id.uuidString).joined() + "|\(firstLeg)|\(Int(from / 5))|\(trafficKey.map(String.init) ?? "-")"
