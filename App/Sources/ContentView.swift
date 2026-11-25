@@ -283,6 +283,16 @@ struct BrowseOverlay: View {
                         VStack(spacing: 10) {
                             MapFab(icon: "square.3.layers.3d", size: 48) { model.showLayers = true }
                                 .accessibilityLabel("Map layers")
+                                .contextMenu {
+                                    if let apple = model.map as? AppleMapSurface {
+                                        Button { apple.beginDistanceMeasurement() } label: {
+                                            Label(L10n.text("Measure distance"), systemImage: "ruler")
+                                        }
+                                        Button { apple.clearDistanceMeasurement() } label: {
+                                            Label(L10n.text("Clear measurement"), systemImage: "xmark")
+                                        }
+                                    }
+                                }
                             // 3D, 2D or north up, always there. On north up with the map turned by hand,
                             // the needle shows which way north is and a tap faces north again.
                             MapLookButton(look: model.browseLook, heading: model.mapHeading, size: 48) {
