@@ -93,43 +93,68 @@ struct PlaceHeader: View {
 struct PlaceBody: View {
     @ObservedObject var model: AppModel
     let place: Place
+    @ObservedObject private var settings = AppSettings.shared
     @State private var tab = 0
     @State private var hoursOpen = false
+    @State private var related: (placeID: String, place: Place)?
+    @State private var reviewResult: (featureID: String, rows: [PlaceReview])?
+    @State private var galleryResult: (featureID: String, urls: [String])?
     /** Driving time from here, shown on the Directions button like Google Maps. */
     @State private var driveSeconds: Double?
     @Environment(\.openURL) private var openURL
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        ScrollView {
-            SheetTopMarker()
-            VStack(alignment: .leading, spacing: 14) {
-                actions
-                PhotoStrip(urls: place.photoUrls, height: 140, opensViewer: true, streetView: place)
-                if hasAbout || hasReviews {
-                    Picker("", selection: $tab) {
-                        Text("Overview").tag(0)
-                        if hasReviews { Text("Reviews").tag(2) }
-                        if hasAbout { Text("About").tag(1) }
+        ScrollViewReader { scroll in
+            ScrollView {
+                SheetTopMarker()
+                VStack(alignment: .leading, spacing: 14) {
+                    actions
+                    PhotoStrip(urls: photos, height: 160, opensViewer: true, streetView: place)
+                    Color.clear.frame(height: 0).id("place-tab")
+                    if hasAbout || hasReviews {
+                        Picker("", selection: $tab) {
+                            Text("Overview").tag(0)
+                            if hasReviews { Text("Reviews").tag(2) }
+                            if hasAbout { Text("About").tag(1) }
+                        }
+                        .pickerStyle(.segmented)
                     }
-                    .pickerStyle(.segmented)
+                    switch hasReviews || tab != 2 ? tab : 0 {
+                    case 1: about
+                    case 2: ReviewsList(place: mediaPlace, reviews: reviews)
+                    default: overview
+                    }
+                    Text(attribution).font(.caption).foregroundColor(.secondary)
                 }
-                switch tab {
-                case 1: about
-                case 2: ReviewsList(place: place)
-                default: overview
-                }
-                Text(place.source == "google" ? "Place details from Google Maps" : "Map data © OpenStreetMap contributors")
-                    .font(.caption).foregroundColor(.secondary)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 80)
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 80)
+            .sheetScroll()
+            .onChange(of: tab) { _ in withAnimation { scroll.scrollTo("place-tab", anchor: .top) } }
         }
-        .sheetScroll()
         .onChange(of: model.showReviews) { id in
             if id == place.id, hasReviews { tab = 2; model.showReviews = nil }
         }
+        .onChange(of: hasReviews) { available in
+            if !available, tab == 2 { tab = 0 }
+            if available, model.showReviews == place.id { tab = 2; model.showReviews = nil }
+        }
+        .onAppear {
+            if hasReviews, model.showReviews == place.id { tab = 2; model.showReviews = nil }
+        }
         .task(id: place.id) { await loadDriveTime() }
+        .task(id: "\(place.id)|\(settings.noGoogle)") { await matchMediaPlace() }
+        .task(id: mediaFeatureID) {
+            guard let id = mediaFeatureID, galleryResult?.featureID != id else { return }
+            let urls = await GoogleClient.shared.placeGallery(featureID: id)
+            if !Task.isCancelled { galleryResult = (id, urls) }
+        }
+        .task(id: hasReviews ? mediaFeatureID : nil) {
+            guard hasReviews, let id = mediaFeatureID, reviewResult?.featureID != id else { return }
+            let rows = await GoogleClient.shared.placeReviews(featureID: id)
+            if !Task.isCancelled { reviewResult = (id, rows) }
+        }
     }
 
     private func loadDriveTime() async {
@@ -150,8 +175,47 @@ struct PlaceBody: View {
     }
 
     private var hasAbout: Bool { !place.about.isEmpty }
-    /** Google's places have reviews to read; open map data has none. */
-    private var hasReviews: Bool { place.source == "google" && place.rating != nil && !AppSettings.shared.noGoogle }
+    private var mediaPlace: Place {
+        if !settings.noGoogle, let related, related.placeID == place.id { return related.place }
+        return place
+    }
+    private var mediaFeatureID: String? { settings.noGoogle ? nil : mediaPlace.featureId }
+    private var hasReviews: Bool {
+        !settings.noGoogle && (mediaPlace.reviewCount ?? 1) > 0
+            && (mediaFeatureID != nil || (mediaPlace.source == "google" && mediaPlace.rating != nil))
+    }
+    private var reviews: [PlaceReview]? {
+        guard let id = mediaFeatureID else { return [] }
+        return reviewResult?.featureID == id ? reviewResult?.rows : nil
+    }
+    private var photos: [String] {
+        guard !settings.noGoogle else { return place.photoUrls.filter { !PhotoStrip.isGoogle($0) } }
+        let gallery = galleryResult?.featureID == mediaFeatureID ? galleryResult?.urls ?? [] : []
+        let reviewPhotos = (reviews ?? []).flatMap(\.photos)
+        var seen = Set<String>()
+        return (place.photoUrls + mediaPlace.photoUrls + gallery + reviewPhotos).filter { url in
+            let key = PhotoStrip.isGoogle(url) ? url.components(separatedBy: "=w").first ?? url : url
+            return seen.insert(key).inserted
+        }
+    }
+    private var attribution: String {
+        if place.source == "google" { return "Place details from Google Maps" }
+        if mediaPlace.source == "google" { return "Map data © OpenStreetMap contributors · Photos and reviews from Google Maps" }
+        return "Map data © OpenStreetMap contributors"
+    }
+
+    private func matchMediaPlace() async {
+        guard !settings.noGoogle, place.featureId == nil, place.source == "osm",
+              place.category?.caseInsensitiveCompare(place.name) != .orderedSame else { return }
+        do { try await Task.sleep(nanoseconds: 400_000_000) } catch { return }
+        let matches = (try? await GoogleClient.shared.search(place.name, center: place.location, spanMeters: 2_000, pages: 1)) ?? []
+        guard !Task.isCancelled, !settings.noGoogle else { return }
+        let target = matches.filter {
+            $0.featureId != nil && $0.name.caseInsensitiveCompare(place.name) == .orderedSame
+                && $0.location.distance(to: place.location) <= 85
+        }.min { $0.location.distance(to: place.location) < $1.location.distance(to: place.location) }
+        if let target { related = (place.id, target) }
+    }
 
     /** A bus stop or a station, which gets a live departure board. */
     private var isStop: Bool {
@@ -232,19 +296,17 @@ struct PlaceBody: View {
                     .onTapGesture { if let u = webURL(site) { openURL(u) } }
                     .copyable(site)
             }
-            if let r = place.featuredReview {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text("Review").font(.headline)
-                        Spacer()
-                        if hasReviews {
-                            Button("All reviews") { tab = 2 }.font(.subheadline.weight(.semibold))
+            if hasReviews {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Reviews").font(.headline)
+                    if let reviews, !reviews.isEmpty {
+                        ForEach(Array(reviews.prefix(3).enumerated()), id: \.offset) { _, review in
+                            PlaceReviewCard(review: review)
                         }
+                    } else if let preview = mediaPlace.featuredReview {
+                        Text("“\(preview)”").font(.subheadline)
                     }
-                    HStack(alignment: .top, spacing: 10) {
-                        Image(systemName: "person.crop.circle.fill").font(.title2).foregroundColor(.secondary)
-                        Text("“\(r)”").font(.subheadline)
-                    }
+                    Button("See more reviews") { tab = 2 }.font(.subheadline.weight(.semibold))
                 }
             }
         }
@@ -455,10 +517,7 @@ enum OtherApp: String, CaseIterable {
  */
 struct ReviewsList: View {
     let place: Place
-    /** Google's list of reviews stopped answering apps (checked 2026-11-21): the one review Google
-     *  sends with the place, and the full list on Google's own page inside Kite. */
-    @State private var reviews: [GoogleReview]?
-    @State private var failed = true
+    let reviews: [PlaceReview]?
     @State private var web: URL?
     @Environment(\.colorScheme) private var scheme
 
@@ -474,27 +533,16 @@ struct ReviewsList: View {
                 }
             }
             if let reviews {
-                ForEach(Array(reviews.enumerated()), id: \.offset) { _, r in
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "person.crop.circle.fill").font(.title2).foregroundColor(.secondary)
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(r.author).font(.subheadline.weight(.bold)).lineLimit(1)
-                                HStack(spacing: 6) {
-                                    if let s = r.rating { Stars(rating: Double(s), size: 11) }
-                                    if let w = r.when { Text(w).font(.caption).foregroundColor(.secondary) }
-                                }
-                            }
-                        }
-                        Text(r.text).font(.subheadline).fixedSize(horizontal: false, vertical: true)
-                    }
-                    Divider()
+                ForEach(Array(reviews.enumerated()), id: \.offset) { _, review in
+                    PlaceReviewCard(review: review)
                 }
-            } else if !failed {
+            } else {
                 HStack(spacing: 10) { ProgressView(); Text("Loading reviews…").foregroundColor(.secondary) }
             }
-            if failed || reviews?.isEmpty == true, let r = place.featuredReview {
+            if reviews?.isEmpty != false, let r = place.featuredReview {
                 Text("“\(r)”").font(.subheadline)
+            } else if reviews?.isEmpty == true {
+                Text("No reviews returned for this place.").font(.subheadline).foregroundStyle(.secondary)
             }
             if let url = GoogleReviews.webURL(place) {
                 Button { web = url } label: {
@@ -510,6 +558,26 @@ struct ReviewsList: View {
         .sheet(item: $web) { url in
             SafariView(url: url).ignoresSafeArea()
         }
+    }
+}
+
+private struct PlaceReviewCard: View {
+    let review: PlaceReview
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(review.author).font(.subheadline.weight(.semibold))
+            HStack(spacing: 6) {
+                if let rating = review.rating { Stars(rating: Double(rating), size: 12) }
+                if let time = review.time { Text(time).font(.caption).foregroundStyle(.secondary) }
+            }
+            if let text = review.text { Text(text).font(.subheadline).fixedSize(horizontal: false, vertical: true) }
+            if !review.photos.isEmpty { PhotoStrip(urls: review.photos, height: 96, opensViewer: true) }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Vela.chip(scheme), in: RoundedRectangle(cornerRadius: 12))
     }
 }
 

@@ -842,6 +842,15 @@ enum DemoScript {
             model.select(station)
             return
         }
+        if step == "place-reviews" {
+            model.search("OBI Olomouc", title: "OBI Olomouc")
+            for _ in 0..<20 where model.searching { await wait(1) }
+            guard let place = model.visibleResults.first(where: { $0.name == "OBI Olomouc" }) else { return }
+            model.select(place)
+            model.detent = .full
+            model.showReviews = place.id
+            return
+        }
         if step == "go" {
             // A simulated test drive: straight into navigation to `-demoTo lat,lng`, in miles and yards, nothing made up on screen.
             guard let k = args.firstIndex(of: "-demoTo"), k + 1 < args.count else { return }

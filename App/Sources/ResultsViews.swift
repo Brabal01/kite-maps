@@ -158,7 +158,13 @@ struct PhotoStrip: View {
     var opensViewer = false
     /** Starts the strip with this place's Street View (or Look Around). */
     var streetView: Place?
-    @State private var viewing: Int?
+    @State private var viewing: GallerySelection?
+
+    private struct GallerySelection: Identifiable {
+        let urls: [String]
+        let index: Int
+        var id: String { urls[index] }
+    }
 
     init(urls: [String], height: CGFloat = 130, opensViewer: Bool = false, streetView: Place? = nil) {
         // "Use Kite without Google": a place saved earlier still has Google's photo links; don't load them.
@@ -175,7 +181,7 @@ struct PhotoStrip: View {
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
+            LazyHStack(spacing: 6) {
                 if let p = streetView { StreetViewTile(place: p, height: height) }
                 ForEach(Array(urls.enumerated()), id: \.offset) { i, u in
                     AsyncImage(url: URL(string: u)) { phase in
@@ -188,12 +194,12 @@ struct PhotoStrip: View {
                     .frame(width: height * 1.4, height: height)
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                     .contentShape(Rectangle())
-                    .onTapGesture { if opensViewer { viewing = i } }
+                    .onTapGesture { if opensViewer { viewing = GallerySelection(urls: urls, index: i) } }
                 }
             }
         }
-        .fullScreenCover(isPresented: Binding(get: { viewing != nil }, set: { if !$0 { viewing = nil } })) {
-            PhotoViewer(urls: urls, start: viewing ?? 0)
+        .fullScreenCover(item: $viewing) { selection in
+            PhotoViewer(urls: selection.urls, start: selection.index)
         }
     }
 }

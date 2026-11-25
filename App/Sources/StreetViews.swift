@@ -10,6 +10,7 @@ import VelaCore
 struct StreetViewTile: View {
     let place: Place
     var height: CGFloat = 140
+    @ObservedObject private var settings = AppSettings.shared
 
     private enum Found {
         case google(StreetView.Panorama, heading: Double)
@@ -31,7 +32,7 @@ struct StreetViewTile: View {
                     .frame(width: height * 1.4, height: height)
             }
         }
-        .task(id: place.id) { await load() }
+        .task(id: "\(place.id)|\(settings.noGoogle)") { await load() }
         .fullScreenCover(isPresented: $open) {
             switch found {
             case let .google(pano, heading)?: GoogleStreetViewScreen(name: place.name, pano: pano, heading: heading)
@@ -71,29 +72,36 @@ struct StreetViewTile: View {
     private func load() async {
         found = nil
         loaded = false
-        defer { loaded = true }
+        defer { if !Task.isCancelled { loaded = true } }
         // Google first (the screenshot run can skip it to show Apple's), then Apple.
-        if DemoScript.step != "lookaround", !AppSettings.shared.noGoogle,
-           let pano = await StreetView.find(near: place.location) {
+        if DemoScript.step != "lookaround", !settings.noGoogle,
+           let pano = await StreetView.find(near: place.location), !Task.isCancelled, !settings.noGoogle {
             withAnimation { found = .google(pano, heading: Geo.bearing(pano.location, place.location)) }
             if DemoScript.step == "streetview" { open = true }
             return
         }
         let coord = CLLocationCoordinate2D(latitude: place.location.lat, longitude: place.location.lng)
-        guard let scene = try? await MKLookAroundSceneRequest(coordinate: coord).scene else { return }
+        guard !Task.isCancelled, let scene = try? await MKLookAroundSceneRequest(coordinate: coord).scene else { return }
         let options = MKLookAroundSnapshotter.Options()
         options.size = CGSize(width: height * 1.4 * 2, height: height * 2)
         let image = try? await MKLookAroundSnapshotter(scene: scene, options: options).snapshot.image
+        guard !Task.isCancelled else { return }
         withAnimation { found = .apple(scene, image) }
     }
 }
 
 struct GoogleStreetViewScreen: View {
+    private struct Move: Equatable {
+        private let requestID = UUID()
+        let location: LatLng
+        var panoramaID: String?
+    }
+
     let name: String
     @State private var pano: StreetView.Panorama
     @State private var startingHeading: Double
     @State private var heading: Double
-    @State private var target: LatLng?
+    @State private var move: Move?
     @State private var expanded = false
     @State private var status: String?
     @Environment(\.dismiss) private var dismiss
@@ -119,7 +127,7 @@ struct GoogleStreetViewScreen: View {
                         Text(status).font(.footnote.weight(.semibold))
                             .padding(9).background(.regularMaterial, in: Capsule())
                     }
-                    PanoramaMiniMap(pano: pano, heading: heading, dark: scheme == .dark) { target = $0 }
+                    PanoramaMiniMap(pano: pano, heading: heading, dark: scheme == .dark) { move = Move(location: $0) }
                         .frame(maxWidth: expanded ? .infinity : 200)
                         .frame(height: expanded ? min(geometry.size.height * 0.55, 460) : 150)
                         .overlay(alignment: .topTrailing) {
@@ -133,25 +141,31 @@ struct GoogleStreetViewScreen: View {
                         .clipShape(RoundedRectangle(cornerRadius: 18))
                     HStack(spacing: 8) {
                         Button {
-                            target = Geo.destination(pano.location, bearing: heading + 180, meters: 23)
+                            step(bearing: heading + 180)
                         } label: {
                             Label("Back", systemImage: "arrow.down")
                         }
                         Button {
-                            target = Geo.destination(pano.location, bearing: heading, meters: 23)
+                            step(bearing: heading)
                         } label: {
                             Label("Forward", systemImage: "arrow.up")
                         }
                     }.buttonStyle(.borderedProminent).tint(.teal)
+                    if let credit = pano.credit {
+                        Text(credit).font(.caption2).foregroundStyle(.white)
+                            .padding(4).background(Color.black.opacity(0.65), in: Capsule())
+                    }
                 }
                 .frame(maxWidth: .infinity)
                 .padding(12)
             }
         }
-        .task(id: target) {
-            guard let target else { return }
+        .task(id: move) {
+            guard let move else { return }
             status = "Looking for Street View…"
-            let match = await StreetView.find(near: target, radius: 25)
+            var match: StreetView.Panorama?
+            if let id = move.panoramaID { match = await StreetView.panorama(id: id) }
+            if match == nil, !Task.isCancelled { match = await StreetView.find(near: move.location, radius: 25) }
             guard !Task.isCancelled else { return }
             if let match, match.id != pano.id {
                 startingHeading = heading
@@ -162,6 +176,14 @@ struct GoogleStreetViewScreen: View {
                 try? await Task.sleep(for: .seconds(2))
                 if !Task.isCancelled { status = nil }
             }
+        }
+    }
+
+    private func step(bearing: Double) {
+        if let link = pano.step(facing: bearing) {
+            move = Move(location: link.location, panoramaID: link.id)
+        } else {
+            move = Move(location: Geo.destination(pano.location, bearing: bearing, meters: 23))
         }
     }
 }

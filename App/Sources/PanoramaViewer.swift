@@ -141,7 +141,10 @@ struct PanoramaViewer: UIViewRepresentable {
         /** All of the panorama's tiles at [zoom], drawn into one picture. */
         nonisolated static func stitch(_ pano: StreetView.Panorama, zoom: Int, complete: Bool = false) async -> UIImage? {
             let size = pano.size(zoom: zoom)
-            let cols = Int((Double(size.width) / 512).rounded(.up)), rows = Int((Double(size.height) / 512).rounded(.up))
+            let tileSize = pano.tileSize
+            guard size.width > 0, size.height > 0, size.width <= 24_000_000 / size.height else { return nil }
+            let cols = (size.width + tileSize - 1) / tileSize, rows = (size.height + tileSize - 1) / tileSize
+            guard cols * rows <= 128 else { return nil }
             var tiles: [(Int, Int, UIImage)] = []
             await withTaskGroup(of: (Int, Int, UIImage?).self) { group in
                 for y in 0..<rows {
@@ -162,7 +165,7 @@ struct PanoramaViewer: UIViewRepresentable {
                 UIColor.black.setFill()
                 ctx.fill(CGRect(x: 0, y: 0, width: size.width, height: size.height))
                 for (x, y, img) in tiles {
-                    img.draw(in: CGRect(x: x * 512, y: y * 512, width: 512, height: 512))
+                    img.draw(in: CGRect(x: x * tileSize, y: y * tileSize, width: tileSize, height: tileSize))
                 }
             }
         }
