@@ -9,7 +9,7 @@ let package = Package(
     ],
     targets: [
         .systemLibrary(name: "CZlib", pkgConfig: "zlib", providers: [.apt(["zlib1g-dev"])]),
-        .target(name: "VelaCore", dependencies: [.target(name: "CZlib", condition: .when(platforms: [.linux]))]),
+        .target(name: "VelaCore", dependencies: ["CZlib"]),
         // `swift run vela-probe pizza` asks Google live and prints what the parser saw.
         .executableTarget(name: "vela-probe", dependencies: ["VelaCore"]),
         .testTarget(name: "VelaCoreTests", dependencies: ["VelaCore"]),
