@@ -1622,12 +1622,8 @@ final class AppModel: ObservableObject {
         transitLoadedAt = Date()
         // A new request either way, so one still loading can't put back trips without the stops.
         transitRequest += 1
-        // The planner can't go via stops: rather say so than show trains for a different trip.
-        if !d.stops.isEmpty {
-            directions?.trips = []
-            directions?.tripsError = "Public transport can't go via stops. Remove the stops to see trains and buses."
-            return
-        }
+        let waypoints = (d.reversed ? Array(d.stops.reversed()) : d.stops).map(\.location)
+        let dwell = UserDefaults.standard.object(forKey: "transitDwellMinutes") as? Int ?? 5
         let destId = d.destination.id
         let sessionID = d.planning?.requestID ?? 0
         let time = d.transitTime, arriveBy = d.arriveBy
@@ -1645,8 +1641,11 @@ final class AppModel: ObservableObject {
                 if UITestSupport.mockRoutes {
                     try? await Task.sleep(nanoseconds: 200_000_000)
                     trips = UITestSupport.transitTrips(from: from, to: to)
-                } else {
+                } else if waypoints.isEmpty {
                     trips = try await Transitous.plan(from: from, to: to, time: time, arriveBy: arriveBy)
+                } else {
+                    trips = try await Transitous.planVia([from] + waypoints + [to], time: time ?? Date(),
+                                                        arriveBy: arriveBy, dwellSeconds: Double(dwell) * 60)
                 }
                 async let live = Self.liveFeed(from: from, to: to, manual: liveURL, discover: discover)
                 guard directions?.destination.id == destId, transitRequest == req else { return }
@@ -1908,13 +1907,15 @@ final class AppModel: ObservableObject {
            state.fromPlace != nil || trip.legs.first?.isWalk == false {
             trip.legs.insert(TransitLeg(isWalk: true, mode: "WALK", toName: state.fromPlace?.name ?? trip.legs.first?.fromName ?? "",
                                        path: [here, origin]), at: 0)
+            trip.waypointLegs = trip.waypointLegs.map { $0 + 1 }
         }
         stopPlanningGPS()
         location.start()
         showSteps = false
         selected = nil
         results = []
-        transitJourney = TransitJourney(trip: trip, destination: destination)
+        let stops = state.reversed ? Array(state.stops.reversed()) : state.stops
+        transitJourney = TransitJourney(trip: trip, destination: destination, stops: stops, stopLegs: trip.waypointLegs)
         directions = nil
         startTransitLeg()
     }
