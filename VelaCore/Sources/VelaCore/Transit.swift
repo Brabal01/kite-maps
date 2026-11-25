@@ -143,6 +143,7 @@ public struct TransitTrip: Identifiable, Hashable, Sendable {
     public var durationSeconds: Double
     public var transfers: Int
     public var legs: [TransitLeg]
+    public var waypointLegs: [Int] = []
 
     public init(depart: Date?, arrive: Date?, durationSeconds: Double, transfers: Int, legs: [TransitLeg]) {
         self.depart = depart; self.arrive = arrive; self.durationSeconds = durationSeconds
@@ -207,6 +208,51 @@ public enum Transitous {
         guard first.isEmpty, !Task.isCancelled,
               let expanded = planURL(from: from, to: to, time: time, arriveBy: arriveBy, widerAccess: true) else { return first }
         return (try? await fetchPlan(expanded)) ?? []
+    }
+
+    public static func planVia(_ points: [LatLng], time: Date, arriveBy: Bool,
+                               dwellSeconds: TimeInterval) async throws -> [TransitTrip] {
+        try await composeVia(points, time: time, arriveBy: arriveBy, dwellSeconds: dwellSeconds) { from, to, date, backward in
+            try await plan(from: from, to: to, time: date, arriveBy: backward)
+        }
+    }
+
+    static func composeVia(_ points: [LatLng], time: Date, arriveBy: Bool, dwellSeconds: TimeInterval,
+                           plan: (LatLng, LatLng, Date, Bool) async throws -> [TransitTrip]) async throws -> [TransitTrip] {
+        guard points.count > 1 else { return [] }
+        let indices = Array(0..<(points.count - 1))
+        let dwell = max(0, dwellSeconds)
+        var stages: [TransitTrip] = []
+        var nextTime = time
+        for index in arriveBy ? Array(indices.reversed()) : indices {
+            try Task.checkCancellation()
+            let options = try await plan(points[index], points[index + 1], nextTime, arriveBy)
+            let eligible = options.filter { trip in
+                guard !trip.legs.isEmpty, let departure = trip.depart, let arrival = trip.arrive else { return false }
+                return arriveBy ? arrival <= nextTime : departure >= nextTime
+            }
+            if arriveBy {
+                guard let trip = eligible.max(by: { ($0.depart ?? .distantPast) < ($1.depart ?? .distantPast) }),
+                      let departure = trip.depart else { return [] }
+                stages.insert(trip, at: 0)
+                nextTime = departure.addingTimeInterval(-dwell)
+            } else {
+                guard let trip = eligible.min(by: { ($0.arrive ?? .distantFuture) < ($1.arrive ?? .distantFuture) }),
+                      let arrival = trip.arrive else { return [] }
+                stages.append(trip)
+                nextTime = arrival.addingTimeInterval(dwell)
+            }
+        }
+        guard let depart = stages.first?.depart, let arrive = stages.last?.arrive else { return [] }
+        let legs = stages.flatMap(\.legs)
+        var trip = TransitTrip(depart: depart, arrive: arrive, durationSeconds: arrive.timeIntervalSince(depart),
+                               transfers: max(0, legs.filter { !$0.isWalk }.count - 1), legs: legs)
+        var total = 0
+        trip.waypointLegs = stages.dropLast().map { stage in
+            total += stage.legs.count
+            return total - 1
+        }
+        return [trip]
     }
 
     private static func fetchPlan(_ url: URL) async throws -> [TransitTrip] {
