@@ -46,6 +46,10 @@ public enum TransitMapCategory: String, CaseIterable, Identifiable, Sendable {
 
 /** Which categories are hidden. Nothing hidden (the default) shows every line in its official colour. */
 public enum TransitMapFilter {
+    public static func showsNetwork(enabled: Bool, hasActiveJourney: Bool, hasRoutePreview: Bool) -> Bool {
+        enabled && !hasActiveJourney && !hasRoutePreview
+    }
+
     public static func shows(_ mode: TransitMode, hidden: Set<String>) -> Bool {
         !hidden.contains(TransitMapCategory(mode).rawValue)
     }

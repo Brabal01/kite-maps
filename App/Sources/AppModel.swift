@@ -1,6 +1,7 @@
 import Combine
 import CoreLocation
 import Foundation
+import MapKit
 import MapLibre
 import SwiftUI
 import UIKit
@@ -33,7 +34,16 @@ struct Category: Identifiable, Hashable {
     var id: String { label }
 
     /** British words where units are British: petrol, supermarkets, chemists, cash machines. */
-    static var all: [Category] { Fmt.yards ? british : american }
+    static var all: [Category] { (Fmt.yards ? british : american) + additional }
+
+    private static let additional = [
+        Category(label: "Shops", icon: "bag.fill", query: "shops"),
+        Category(label: "Hospitals", icon: "cross.fill", query: "hospitals"),
+        Category(label: "Toilets", icon: "toilet.fill", query: "public toilets"),
+        Category(label: "Tourist attractions", icon: "binoculars.fill", query: "tourist attractions"),
+        Category(label: "Transit stops", icon: "bus.fill", query: "transit stops"),
+        Category(label: "Other places", icon: "mappin.and.ellipse", query: "points of interest"),
+    ]
 
     static let british = [
         Category(label: "Restaurants", icon: "fork.knife", query: "restaurants"),
@@ -57,6 +67,7 @@ struct Category: Identifiable, Hashable {
         Category(label: "Parking", icon: "parkingsign", query: "parking"),
         Category(label: "Pharmacies", icon: "cross.case.fill", query: "pharmacy"),
         Category(label: "ATMs", icon: "banknote.fill", query: "atm"),
+        Category(label: "EV charging", icon: "bolt.car.fill", query: "ev charging station"),
     ]
 }
 
@@ -123,6 +134,11 @@ final class AppModel: ObservableObject {
     @Published var results: [Place] = []
     @Published var resultsTitle = ""
     @Published var selected: Place?
+    @Published private(set) var showsTransitStops = false
+    @Published private(set) var transitMapStops: [Place] = []
+    @Published private(set) var transitMapMessage: String?
+    private var transitStopsTask: Task<Void, Never>?
+    private var transitStopsKey: [Int]?
     @Published var searching = false
     /** Bumped by the Routes page (or a shortcut) to open the search field on the map. */
     @Published var focusSearchRequest = 0
@@ -493,6 +509,82 @@ final class AppModel: ObservableObject {
         return (LatLng(c.latitude, c.longitude), span.isFinite && span > 0 ? span : nil)
     }
 
+    func toggleTransitStops() {
+        showsTransitStops.toggle()
+        if showsTransitStops {
+            refreshTransitStops()
+        } else {
+            transitStopsTask?.cancel()
+            transitStopsKey = nil
+            transitMapStops = []
+            transitMapMessage = nil
+            if selected?.source == "transitous" { closePlace() }
+        }
+    }
+
+    func refreshTransitStops() {
+        guard showsTransitStops, tab == .map, !hasActiveJourney, directions == nil,
+              let map, map.bounds.width > 0 else { return }
+        let bounds = map.visibleCoordinateBounds
+        guard map.zoomLevel.isFinite else { return }
+        let zoom = Int(map.zoomLevel.rounded(.down))
+        guard zoom >= 12 else {
+            transitStopsTask?.cancel()
+            transitStopsKey = nil
+            if !transitMapStops.isEmpty { transitMapStops = [] }
+            let message = "Zoom in to see transit stops."
+            if transitMapMessage != message { transitMapMessage = message }
+            return
+        }
+        let corners = [bounds.sw.latitude, bounds.sw.longitude, bounds.ne.latitude, bounds.ne.longitude]
+        guard corners.allSatisfy(\.isFinite) else { return }
+        let key = corners.map { Int(($0 * 1000).rounded()) } + [zoom]
+        guard transitStopsKey != key else { return }
+        transitStopsKey = key
+        transitStopsTask?.cancel()
+        let center = LatLng(map.centerCoordinate.latitude, map.centerCoordinate.longitude)
+        if transitMapMessage != nil { transitMapMessage = nil }
+        transitStopsTask = Task {
+            do {
+                try await Task.sleep(nanoseconds: 400_000_000)
+                let stops = try await Transitous.mapStops(south: corners[0], west: corners[1],
+                                                         north: corners[2], east: corners[3], zoom: zoom)
+                guard !Task.isCancelled else { return }
+                let sorted = stops.map { (stop: $0, distance: $0.location.distance(to: center)) }
+                    .sorted { $0.distance < $1.distance }
+                var stations = Set<String>()
+                let platforms = zoom >= 16
+                let display = sorted.filter { platforms || stations.insert($0.stop.stationID).inserted }
+                transitMapStops = display.prefix(100).map { item in
+                    let stop = item.stop
+                    var place = Place(id: "transitous:\(stop.id)", name: stop.name,
+                                      location: stop.location, source: "transitous")
+                    place.category = "transit station"
+                    place.placeId = platforms ? stop.id : stop.stationID
+                    return place
+                }
+                transitMapMessage = transitMapStops.isEmpty ? "No transit stops in this area." : nil
+            } catch {
+                guard !Task.isCancelled else { return }
+                transitMapStops = []
+                transitMapMessage = "Couldn't load transit stops."
+            }
+        }
+    }
+
+    @discardableResult
+    func selectMapResult(_ id: String) -> Bool {
+        if let stop = transitMapStops.first(where: { $0.id == id }) {
+            selected = stop
+            detent = .half
+        } else if let result = results.first(where: { $0.id == id }) {
+            select(result)
+        } else {
+            return false
+        }
+        return true
+    }
+
     func search(_ text: String? = nil, title: String? = nil) {
         let q = (text ?? query).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return }
@@ -534,6 +626,63 @@ final class AppModel: ObservableObject {
                 detent = .half
                 frame(PlaceSearch.mapFocus(query: q, places: r.places, category: title != nil))
             }
+        }
+    }
+
+    func searchApplePlaces(_ category: Category) {
+        guard settings.showApplePOI, !hasActiveJourney else { return }
+        searchTask?.cancel()
+        suggestTask?.cancel()
+        selected = nil
+        results = []
+        notice = nil
+        searching = true
+        openNowOnly = false
+        rating4Only = false
+        sort = .relevance
+        let region = viewport
+        let request = MKLocalSearch.Request()
+        let localized = L10n.text(category.label)
+        request.naturalLanguageQuery = localized == category.label ? category.query : localized
+        request.resultTypes = .pointOfInterest
+        let diameter = min(30_000, max(1_000, region.span ?? 6_000))
+        request.region = MKCoordinateRegion(
+            center: CLLocationCoordinate2D(latitude: region.center.lat, longitude: region.center.lng),
+            latitudinalMeters: diameter, longitudinalMeters: diameter
+        )
+        let search = MKLocalSearch(request: request)
+        let user = userLatLng
+        searchTask = Task {
+            do {
+                let response = try await withTaskCancellationHandler {
+                    try await search.start()
+                } onCancel: {
+                    search.cancel()
+                }
+                guard !Task.isCancelled else { return }
+                var seen = Set<String>()
+                results = response.mapItems.compactMap { item in
+                    guard let name = item.name, !name.isEmpty else { return nil }
+                    let point = item.placemark.coordinate
+                    guard CLLocationCoordinate2DIsValid(point) else { return nil }
+                    let id = "apple:\(name.lowercased()):\(point.latitude):\(point.longitude)"
+                    guard seen.insert(id).inserted else { return nil }
+                    var place = Place(id: id, name: name, location: LatLng(point.latitude, point.longitude), source: "apple")
+                    place.category = localized
+                    place.address = item.placemark.title
+                    place.phone = item.phoneNumber
+                    place.website = item.url?.absoluteString
+                    place.distanceMeters = user?.distance(to: place.location)
+                    return place
+                }
+                resultsTitle = localized
+                detent = .half
+                if results.isEmpty { notice = L10n.text("No nearby places found.") }
+            } catch {
+                guard !Task.isCancelled else { return }
+                notice = L10n.text("Apple Maps places are temporarily unavailable.")
+            }
+            searching = false
         }
     }
 
@@ -1554,12 +1703,8 @@ final class AppModel: ObservableObject {
         transitLoadedAt = Date()
         // A new request either way, so one still loading can't put back trips without the stops.
         transitRequest += 1
-        // The planner can't go via stops: rather say so than show trains for a different trip.
-        if !d.stops.isEmpty {
-            directions?.trips = []
-            directions?.tripsError = "Public transport can't go via stops. Remove the stops to see trains and buses."
-            return
-        }
+        let waypoints = (d.reversed ? Array(d.stops.reversed()) : d.stops).map(\.location)
+        let dwell = UserDefaults.standard.object(forKey: "transitDwellMinutes") as? Int ?? 5
         let destId = d.destination.id
         let sessionID = d.planning?.requestID ?? 0
         let time = d.transitTime, arriveBy = d.arriveBy
@@ -1577,8 +1722,11 @@ final class AppModel: ObservableObject {
                 if UITestSupport.mockRoutes {
                     try? await Task.sleep(nanoseconds: 200_000_000)
                     trips = UITestSupport.transitTrips(from: from, to: to)
-                } else {
+                } else if waypoints.isEmpty {
                     trips = try await Transitous.plan(from: from, to: to, time: time, arriveBy: arriveBy)
+                } else {
+                    trips = try await Transitous.planVia([from] + waypoints + [to], time: time ?? Date(),
+                                                        arriveBy: arriveBy, dwellSeconds: Double(dwell) * 60)
                 }
                 async let live = Self.liveFeed(from: from, to: to, manual: liveURL, discover: discover)
                 guard directions?.destination.id == destId, transitRequest == req else { return }
@@ -1678,6 +1826,16 @@ final class AppModel: ObservableObject {
     }
 
     // MARK: Navigation
+
+    func replanFromCurrentLocation() {
+        guard var state = directions, let destination = state.toPlace, !state.startsFromLocation else { return }
+        state.destination = destination
+        state.origin = nil
+        if state.reversed { state.stops.reverse() }
+        state.reversed = false
+        state.exclusion = nil
+        startPlanning(state)
+    }
 
     func startNavigation() {
         guard let d = directions, let route = d.route, d.startsFromLocation, let destination = d.toPlace else { return }
@@ -1830,13 +1988,15 @@ final class AppModel: ObservableObject {
            state.fromPlace != nil || trip.legs.first?.isWalk == false {
             trip.legs.insert(TransitLeg(isWalk: true, mode: "WALK", toName: state.fromPlace?.name ?? trip.legs.first?.fromName ?? "",
                                        path: [here, origin]), at: 0)
+            trip.waypointLegs = trip.waypointLegs.map { $0 + 1 }
         }
         stopPlanningGPS()
         location.start()
         showSteps = false
         selected = nil
         results = []
-        transitJourney = TransitJourney(trip: trip, destination: destination)
+        let stops = state.reversed ? Array(state.stops.reversed()) : state.stops
+        transitJourney = TransitJourney(trip: trip, destination: destination, stops: stops, stopLegs: trip.waypointLegs)
         directions = nil
         startTransitLeg()
     }
@@ -2372,6 +2532,10 @@ final class AppModel: ObservableObject {
         // With a side panel the cards are on the left, not at the bottom.
         let pad = sideInset > 0 ? UIEdgeInsets(top: 60, left: sideInset + 40, bottom: 60, right: 40)
                                 : UIEdgeInsets(top: top, left: 40, bottom: map.bounds.height * bottomFraction + 20, right: 40)
+        if let apple = map as? AppleMapSurface, nav == nil, directions != nil {
+            apple.frameRoute(bounds, padding: pad)
+            return
+        }
         let cam = map.cameraThatFitsCoordinateBounds(bounds, edgePadding: pad)
         cam.pitch = pitch
         cam.heading = 0

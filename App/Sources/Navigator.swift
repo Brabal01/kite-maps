@@ -501,18 +501,21 @@ final class Navigator: ObservableObject {
         // Starting in a car park or a driveway, off the road the route begins on: that's not a
         // wrong turn, so no "Rerouting" every few seconds until the car has reached the route once
         // (or has clearly gone another way).
-        if p.offsetMeters < 40 { joinedRoute = true }
-        // Right by the pin at the end of the route, a new route is only a U-turn round the block: let
-        // the car park instead. Still a long way round to go, though, the driver found another way in.
+        let walking = route.mode == .walk
+        if p.offsetMeters < (walking ? 20 : 40) { joinedRoute = true }
+        // A pedestrian can still need directions around a building close to the destination.
+        let closeEnoughToFinish = walking
+            ? toPin <= 15 && p.remainingMeters <= 25 && stops.isEmpty
+            : toPin <= 150 && nearPin
         if p.offRoute, !estimated, !rerouting,
            ReroutePolicy.shouldReroute(offsetMeters: p.offsetMeters,
                                        accuracy: loc.horizontalAccuracy,
                                        speed: speedMps,
                                        offRouteFixes: p.offRouteFixes,
                                        joinedRoute: joinedRoute,
-                                       nearDestination: toPin <= 150 && nearPin,
+                                       nearDestination: closeEnoughToFinish,
                                        secondsSinceLast: Date().timeIntervalSince(lastReroute),
-                                       departureEvidence: p.departureEvidence) {
+                                       departureEvidence: p.departureEvidence, mode: route.mode) {
             reroute(from: loc)
             return
         }

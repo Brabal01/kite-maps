@@ -103,14 +103,15 @@ final class TransitTests: XCTestCase {
         ]}
         """
         let d = Transitous.parseStopTimes(Data(json.utf8), stopName: "Davis")
-        XCTAssertEqual(d.count, 3, "a canceled call and a run ending here are dropped")
-        XCTAssertEqual(d[2].headsign, "San Jose")
+        XCTAssertEqual(d.count, 4, "a cancelled call is kept, and a run ending here is dropped")
+        XCTAssertTrue(d[1].isCancelled)
+        XCTAssertEqual(d[3].headsign, "San Jose")
         XCTAssertEqual(d[0].line, "42")
         XCTAssertEqual(d[0].color, 0x0055AA)
         XCTAssertEqual(d[0].delayMinutes, 2)
-        XCTAssertEqual(d[1].line, "T")
-        XCTAssertNil(d[1].delayMinutes)
-        XCTAssertEqual(d[1].vehicle, .tram)
+        XCTAssertEqual(d[2].line, "T")
+        XCTAssertNil(d[2].delayMinutes)
+        XCTAssertEqual(d[2].vehicle, .tram)
     }
 
     func testLines() {

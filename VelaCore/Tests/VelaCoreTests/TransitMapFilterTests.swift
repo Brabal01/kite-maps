@@ -2,6 +2,13 @@ import XCTest
 @testable import VelaCore
 
 final class TransitMapFilterTests: XCTestCase {
+    func testNetworkOnlyAppearsWhenEnabledWhileBrowsing() {
+        XCTAssertTrue(TransitMapFilter.showsNetwork(enabled: true, hasActiveJourney: false, hasRoutePreview: false))
+        XCTAssertFalse(TransitMapFilter.showsNetwork(enabled: false, hasActiveJourney: false, hasRoutePreview: false))
+        XCTAssertFalse(TransitMapFilter.showsNetwork(enabled: true, hasActiveJourney: true, hasRoutePreview: false))
+        XCTAssertFalse(TransitMapFilter.showsNetwork(enabled: true, hasActiveJourney: false, hasRoutePreview: true))
+    }
+
     func testEveryModeBelongsToACategoryAndNothingIsHiddenByDefault() {
         for mode in TransitMode.allCases {
             XCTAssertTrue(TransitMapFilter.shows(mode, hidden: []), "\(mode) must show by default")

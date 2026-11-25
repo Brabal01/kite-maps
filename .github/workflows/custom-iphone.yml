@@ -17,6 +17,11 @@ on:
       - iphone-custom-v31-navigation-transit
       - iphone-custom-v32-refinement
       - iphone-custom-v33-reliability-ux
+      - iphone-custom-v34-reborn-apple-publit
+
+concurrency:
+  group: custom-iphone-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -46,6 +51,7 @@ jobs:
         working-directory: VelaCore
         run: |
           mkdir -p ../test-artifacts
+          set -o pipefail
           KITE_VERIFY_GOOGLE=1 swift test 2>&1 | tee ../test-artifacts/velacore-tests.log
       - name: Reproducible core benchmarks
         working-directory: VelaCore
@@ -88,12 +94,12 @@ jobs:
       - name: Package both variants
         run: |
           APP=build/Build/Products/Release-iphoneos/Kite.app
-          bash .github/scripts/pack-ipa.sh "$APP" full Kite-v33-Full.ipa
-          bash .github/scripts/pack-ipa.sh "$APP" sidestore Kite-v33-SideStore.ipa
+          bash .github/scripts/pack-ipa.sh "$APP" full Kite-Maps-V34-Reborn-Apple-Publit-Full.ipa
+          bash .github/scripts/pack-ipa.sh "$APP" sidestore Kite-Maps-V34-Reborn-Apple-Publit-SideStore.ipa
       - name: Check the IPA structure and signatures
         run: |
-          bash .github/scripts/verify-ipa.sh Kite-v33-Full.ipa full | tee test-artifacts/ipa-full.txt
-          bash .github/scripts/verify-ipa.sh Kite-v33-SideStore.ipa sidestore | tee test-artifacts/ipa-sidestore.txt
+          bash .github/scripts/verify-ipa.sh Kite-Maps-V34-Reborn-Apple-Publit-Full.ipa full | tee test-artifacts/ipa-full.txt
+          bash .github/scripts/verify-ipa.sh Kite-Maps-V34-Reborn-Apple-Publit-SideStore.ipa sidestore | tee test-artifacts/ipa-sidestore.txt
       - name: Report the packages
         run: |
           {
@@ -101,22 +107,22 @@ jobs:
             echo
             echo "| Variant | Size | Extensions | Live Activities |"
             echo "| --- | --- | --- | --- |"
-            echo "| Full | $(du -h Kite-v33-Full.ipa | cut -f1) | NavigationWidget | yes |"
-            echo "| SideStore | $(du -h Kite-v33-SideStore.ipa | cut -f1) | none | no |"
+            echo "| Full | $(du -h Kite-Maps-V34-Reborn-Apple-Publit-Full.ipa | cut -f1) | NavigationWidget | yes |"
+            echo "| SideStore | $(du -h Kite-Maps-V34-Reborn-Apple-Publit-SideStore.ipa | cut -f1) | none | no |"
             echo
             echo "Both come from commit \`${GITHUB_SHA}\`. Structure checks passed; physical SideStore install is still unverified."
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload Full IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Kite-v33-Full-ipa
-          path: Kite-v33-Full.ipa
+          name: Kite-Maps-V34-Reborn-Apple-Publit-Full-ipa
+          path: Kite-Maps-V34-Reborn-Apple-Publit-Full.ipa
           if-no-files-found: error
       - name: Upload SideStore IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Kite-v33-SideStore-ipa
-          path: Kite-v33-SideStore.ipa
+          name: Kite-Maps-V34-Reborn-Apple-Publit-SideStore-ipa
+          path: Kite-Maps-V34-Reborn-Apple-Publit-SideStore.ipa
           if-no-files-found: error
       - name: Upload build and test results
         if: always()

@@ -571,6 +571,7 @@
 "Move stop later" = "Posunout zastávku dolů";
 "Stop options" = "Možnosti zastávky";
 "Start navigation" = "Spustit navigaci";
+"Route from my location" = "Přepočítat z mé polohy";
 "Fastest route" = "Nejrychlejší";
 "Road events ahead" = "Události před tebou";
 "Suggest faster routes" = "Nabízet rychlejší trasy";
@@ -648,3 +649,47 @@
 "No route to show" = "Není co zobrazit";
 
 "Change the start, the destination or the travel mode, then try again." = "Změňte start, cíl nebo způsob dopravy a zkuste to znovu.";
+
+"Places" = "Místa";
+"Apple Maps places" = "Místa z Map Apple";
+"Shops" = "Obchody";
+"Hospitals" = "Nemocnice";
+"Tourist attractions" = "Turistické atrakce";
+"Transit stops" = "Zastávky veřejné dopravy";
+"Other places" = "Další místa";
+"Place details from Apple Maps" = "Údaje o místě z Map Apple";
+"No nearby places found." = "V okolí se nenašla žádná místa.";
+"Apple Maps places are temporarily unavailable." = "Místa z Map Apple jsou dočasně nedostupná.";
+"Recommended" = "Doporučené";
+"Fastest" = "Nejrychlejší";
+"Fewest changes" = "Nejméně přestupů";
+"Least walking" = "Nejméně chůze";
+"Most transfer time" = "Největší rezerva na přestup";
+"Sort connections" = "Seřadit spojení";
+"Recommended for travel time, walking and connections" = "Doporučeno podle doby cesty, chůze a přestupů";
+"High transfer risk" = "Vysoké riziko zmeškání přestupu";
+"Waiting time %@" = "Čekání %@";
+"Filter by platform" = "Filtrovat podle nástupiště";
+"All platforms" = "Všechna nástupiště";
+"Cancelled departure" = "Zrušený spoj";
+"Transitous · updated %@" = "Transitous · aktualizováno %@";
+"Measure distance" = "Změřit vzdálenost";
+"Clear measurement" = "Ukončit měření";
+"Time at each stop: %@ min" = "Doba na každé zastávce: %@ min";
+
+"Zoom in to see transit stops." = "Přibliž mapu, aby se zobrazily zastávky MHD.";
+"No transit stops in this area." = "V této oblasti se nenašly zastávky.";
+"Couldn't load transit stops." = "Zastávky MHD se nepodařilo načíst.";
+"Couldn't refresh departures." = "Odjezdy se nepodařilo aktualizovat.";
+"Last known" = "Poslední známý údaj";
+"Trip stops" = "Zastávky spoje";
+"Trip details" = "Detail spoje";
+"Couldn't refresh this trip." = "Údaje o spoji se nepodařilo načíst.";
+"Loading trip…" = "Načítám spoj…";
+"Stop skipped" = "Zastávku spoj vynechá";
+"Live GPS position" = "Živá poloha GPS";
+"Estimated vehicle position" = "Odhad polohy vozidla";
+"Vehicle position unavailable" = "Poloha vozidla není dostupná";
+"Scheduled" = "Podle jízdního řádu";
+"Live" = "Aktuální údaje";
+"Live data stale" = "Aktuální údaje zastaraly";

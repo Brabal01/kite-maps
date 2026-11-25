@@ -669,13 +669,15 @@ struct InstructionBanner: View {
             Text(L10n.text("Then"))
                 .font(KiteText.label(13))
                 .foregroundColor(close ? KiteColor.warning : KiteColor.inkSecondary)
-            Image(systemName: maneuverSymbol(then.type))
-                .font(.system(size: 17, weight: .heavy))
-                .foregroundColor(KiteColor.ink)
-            if then.type == .roundabout, let n = then.exit {
-                Text("\(n)").font(KiteText.label(13)).foregroundColor(.white)
-                    .frame(minWidth: 20, minHeight: 20)
-                    .background(Circle().fill(KiteColor.accent))
+            if then.type == .roundabout {
+                RoundaboutDiagram(shape: then.roundabout, exit: then.exit,
+                                  clockwise: Geo.drivesOnLeft(then.location), ambiguous: then.exitAmbiguous)
+                    .frame(width: 32, height: 32)
+                    .accessibilityHidden(true)
+            } else {
+                Image(systemName: maneuverSymbol(then.type))
+                    .font(.system(size: 17, weight: .heavy))
+                    .foregroundColor(KiteColor.ink)
             }
             if let meters = nav.thenDistanceMeters, meters >= 10 {
                 Text(L10n.format("in %@", Fmt.distance(meters)))
@@ -2256,9 +2258,11 @@ struct RoundaboutDiagram: View {
     var ambiguous = false
     @Environment(\.colorScheme) private var scheme
 
+    private var exitNumber: Int? { exit.flatMap { $0 > 0 ? $0 : nil } }
+
     private var layout: RoundaboutShape? {
         if let shape, shape.exits.indices.contains(shape.taken) { return shape }
-        guard let exit, exit > 0 else { return nil }
+        guard let exit = exitNumber else { return nil }
         // Evenly spread up to yours, a little short of the full circle.
         let n = max(exit, 1)
         let step = min(90, 300 / Double(n + 1))
@@ -2277,8 +2281,16 @@ struct RoundaboutDiagram: View {
         let ink: Color = scheme == .dark ? .white : Color(hex: 0x0F172A)
         Canvas { ctx, size in
             let c = CGPoint(x: size.width / 2, y: size.height / 2)
-            let ring = size.width * 0.2
-            let edge = size.width * 0.47
+            let ring = size.width * 0.235
+            let edge = size.width * 0.45
+            func drawExitNumber() {
+                let text = exitNumber.map(String.init) ?? "?"
+                let sizeFactor = text.count > 2 ? 0.18 : text.count == 2 ? 0.23 : 0.3
+                let digits = Text(text)
+                    .font(.system(size: size.width * sizeFactor, weight: .heavy, design: .rounded).monospacedDigit())
+                    .foregroundColor(exitNumber == nil ? ink.opacity(0.7) : ink)
+                ctx.draw(digits, at: c, anchor: .center)
+            }
             func pt(_ deg: Double, _ r: CGFloat) -> CGPoint {
                 let a: Double = deg * .pi / 180
                 let dx = CGFloat(sin(a)) * r
@@ -2295,8 +2307,7 @@ struct RoundaboutDiagram: View {
                 ctx.stroke(entry, with: faint, style: road)
                 ctx.stroke(Path(ellipseIn: CGRect(x: c.x - ring, y: c.y - ring, width: ring * 2, height: ring * 2)),
                            with: faint, style: road)
-                let mark = Text("?").font(.system(size: size.width * 0.26, weight: .heavy)).foregroundColor(ink.opacity(0.7))
-                ctx.draw(mark, at: c)
+                drawExitNumber()
                 return
             }
             // Every road and the circle, dim.
@@ -2338,13 +2349,7 @@ struct RoundaboutDiagram: View {
             head.addLine(to: right)
             head.closeSubpath()
             ctx.fill(head, with: .color(lit))
-            // The exit number in the middle, as well as "6th exit" beside the picture.
-            if let exit {
-                let digits = Text("\(exit)")
-                    .font(.system(size: size.width * (exit >= 10 ? 0.17 : 0.22), weight: .heavy))
-                    .foregroundColor(ink)
-                ctx.draw(digits, at: c)
-            }
+            drawExitNumber()
             if ambiguous {
                 let badge = Text("!").font(.system(size: size.width * 0.14, weight: .black)).foregroundColor(.white)
                 let at = CGPoint(x: size.width * 0.86, y: size.height * 0.14)
@@ -2354,7 +2359,7 @@ struct RoundaboutDiagram: View {
                 ctx.draw(badge, at: at)
             }
         }
-        .accessibilityLabel(exit.map { L10n.format("Roundabout, take exit %@", String(describing: $0)) }
+        .accessibilityLabel(exitNumber.map { L10n.format("Roundabout, take exit %@", String(describing: $0)) }
             ?? L10n.text("Roundabout, check the signs"))
     }
 }

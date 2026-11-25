@@ -164,7 +164,7 @@ struct VelaMapView: UIViewRepresentable {
         /** The box the drawn rail lines cover, so panning inside it asks nothing. */
         private var railBox: (s: Double, w: Double, n: Double, e: Double, z: Int)?
         private var railLines: [Transitous.Line] = []
-        private var publishedRailFilter = ""
+        private var publishedRailFilter: Set<String>?
 
         init(model: AppModel) { self.model = model }
 
@@ -186,6 +186,7 @@ struct VelaMapView: UIViewRepresentable {
             styledDriving = nil
             styledPreset = nil
             repaint(mapView)
+            publishedRailFilter = nil
             lastResultsKey = ""; lastRouteKey = ""; lastMineKey = ""; lastPuckKey = ""; lastTransitVehicleKey = ""; lastCameraKey = ""; drawnControls = nil; drawnSignals = []; lastWazeKey = ""; lastLiveKey = ""
             render(mapView)
         }
@@ -319,7 +320,10 @@ struct VelaMapView: UIViewRepresentable {
             ride.lineColor = NSExpression(mglJSONObject: ["to-color", ["get", "color"]])
             // A metro, a tram and a bus stay visibly different even when two operators pick
             // similar colors: the line's own width carries the mode.
-            ride.lineWidth = NSExpression(mglJSONObject: Self.transitWidth(extra: 1.5))
+            let transitOpacity = NSExpression(mglJSONObject: ["match", ["get", "phase"], "done", 0.28, "upcoming", 0.6, 1.0])
+            for layer in [walk, rideEdge, ride] { layer.lineOpacity = transitOpacity }
+            ride.lineWidth = NSExpression(mglJSONObject: ["match", ["get", "phase"], "active", Self.transitWidth(extra: 3),
+                                                            "done", Self.transitWidth(extra: 0), Self.transitWidth(extra: 1.5)])
             [walk, rideEdge, ride].forEach(insert)
             // Live vehicle positions from an optional GTFS-Realtime feed.
             let vehicleSrc = MLNShapeSource(identifier: "vela-transit-vehicle", shape: nil, options: nil)
@@ -607,6 +611,12 @@ struct VelaMapView: UIViewRepresentable {
 
         // MARK: Render
 
+        private var showsTransitNetwork: Bool {
+            TransitMapFilter.showsNetwork(enabled: model.settings.transitLines,
+                                          hasActiveJourney: model.hasActiveJourney,
+                                          hasRoutePreview: model.directions != nil)
+        }
+
         func render(_ map: any KiteMapSurface) {
             guard model.map === map else { return }
             let s = model.settings
@@ -620,7 +630,7 @@ struct VelaMapView: UIViewRepresentable {
                 updateHeat(libre)
             } else if let apple = map as? AppleMapSurface {
                 apple.apply(settings: s, dark: dark, navigating: navigating,
-                            showsRail: s.transitLines || model.hasActiveJourney)
+                            showsRail: showsTransitNetwork)
             }
             renderResults()
             renderRoutes()
@@ -632,10 +642,12 @@ struct VelaMapView: UIViewRepresentable {
             renderSignals()
             renderWaze()
             renderMine()
-            if s.transitLines || model.hasActiveJourney {
+            if showsTransitNetwork {
                 loadRail(map)
-                let hidden = model.hasActiveJourney ? [] : s.hiddenTransitCategories
-                if !railLines.isEmpty, publishedRailFilter != hidden.sorted().joined(separator: ",") { publishRail() }
+                if !railLines.isEmpty, publishedRailFilter != s.hiddenTransitCategories { publishRail() }
+            } else if publishedRailFilter != nil {
+                publish(nil, to: "vela-rail")
+                publishedRailFilter = nil
             }
         }
 
@@ -655,7 +667,7 @@ struct VelaMapView: UIViewRepresentable {
             style.layer(withIdentifier: "vela-traffic")?.isVisible = s.traffic && !s.noGoogle && s.welcomed
             style.layer(withIdentifier: "vela-sat")?.isVisible = s.satellite
             style.layer(withIdentifier: "vela-terrain")?.isVisible = s.terrain && !s.satellite
-            for id in ["vela-rail", "vela-rail-case"] { style.layer(withIdentifier: id)?.isVisible = s.transitLines || model.hasActiveJourney }
+            for id in ["vela-rail", "vela-rail-case"] { style.layer(withIdentifier: id)?.isVisible = showsTransitNetwork }
             if styledDriving != driving {
                 MapStyler.drive(style, on: driving)
                 styledDriving = driving
@@ -813,9 +825,8 @@ struct VelaMapView: UIViewRepresentable {
                     shown(control, distance: here.map { $0.distance(to: control.location) })
                 }
             }
-            // A proximity-only fallback when the directional lookup failed: browsing context only,
-            // never dressed up as a confirmed light for our approach.
-            let signals = controls?.isEmpty != false
+            // Nearby OSM nodes do not identify the direction they control.
+            let signals = nav?.route.mode != .drive && controls?.isEmpty != false
                 ? (nav?.routeSignals ?? []).filter { signal in
                     guard let here else { return true }
                     return here.distance(to: signal) <= 350
@@ -947,7 +958,7 @@ struct VelaMapView: UIViewRepresentable {
 
         /** Transit lines for the view and a margin around it, when the layer is on. */
         func loadRail(_ map: any KiteMapSurface) {
-            guard model.settings.transitLines || model.hasActiveJourney, map.zoomLevel >= 10, railFetch == nil else { return }
+            guard model.map === map, showsTransitNetwork, map.zoomLevel >= 10, railFetch == nil else { return }
             let b = map.visibleCoordinateBounds
             let z = Int(map.zoomLevel)
             if let r = railBox, b.sw.latitude >= r.s, b.sw.longitude >= r.w, b.ne.latitude <= r.n, b.ne.longitude <= r.e,
@@ -970,13 +981,14 @@ struct VelaMapView: UIViewRepresentable {
 
         /// The fetched lines minus the kinds the user hid (a line the active journey uses is never hidden).
         private func publishRail() {
-            let hidden = model.hasActiveJourney ? [] : model.settings.hiddenTransitCategories
+            guard showsTransitNetwork, let surface, model.map === surface else { return }
+            let hidden = model.settings.hiddenTransitCategories
             let shapes = railLines.filter { TransitMapFilter.shows($0.mode, hidden: hidden) }.map { l in
                 polyline(l.points, ["color": String(format: "#%06X", l.color),
                                     "offset": l.offset, "mode": l.mode.rawValue])
             }
             publish(MLNShapeCollectionFeature(shapes: shapes), to: "vela-rail")
-            publishedRailFilter = hidden.sorted().joined(separator: ",")
+            publishedRailFilter = hidden
         }
 
         /** Separate OSM surveillance layer, opt-in; bounded to the same cells as camera lookups. */
@@ -1096,10 +1108,10 @@ struct VelaMapView: UIViewRepresentable {
 
         private func renderResults() {
             let showList = model.directions == nil && model.nav == nil && model.transitJourney == nil && !model.justDrive
-            let list = showList ? model.visibleResults : []
+            let list = showList ? model.visibleResults + model.transitMapStops : []
             let target = model.transitJourney?.destination ?? model.nav?.destination ?? model.directions?.toPlace ?? model.selected
             let stops: [Place] = model.transitJourney?.stops ?? model.nav?.stops ?? model.directions?.stops ?? []
-            let ids: String = list.map(\.id).joined(separator: ",")
+            let ids: String = list.map { "\($0.id):\($0.placeId ?? "")" }.joined(separator: ",")
             let entrance = model.nav?.destinationEntrance
             let entranceKey = entrance.map { "\($0.lat),\($0.lng)" } ?? ""
             let stopIds: String = stops.map(\.id).joined(separator: ",")
@@ -1117,6 +1129,7 @@ struct VelaMapView: UIViewRepresentable {
                     "icon": MapIcons.iconName(for: p),
                     "label": [p.name, rating].compactMap { $0 }.joined(separator: "\n"),
                     "rank": i,
+                    "transitStop": p.source == "transitous",
                 ]
                 return f
             }
@@ -1164,25 +1177,34 @@ struct VelaMapView: UIViewRepresentable {
             if let n = model.nav {
                 main = n.route
                 from = n.progress?.alongMeters ?? 0
-            } else if let d = model.directions {
+            } else if !model.justDrive, model.transitJourney == nil, let d = model.directions {
                 main = d.route
                 alts = d.current.filter { $0.id != main?.id }
             }
             let journey = model.transitJourney
-            let trip = model.nav == nil ? (journey?.trip ?? model.directions?.pickedTrip) : nil
+            let trip = journey?.trip ?? (model.nav == nil && !model.justDrive ? model.directions?.pickedTrip : nil)
+            let preset = model.settings.mapPreset
+            let effectivePreset: MapPreset = model.nav?.route.mode == .drive && preset != .minimal ? .navigation : preset
+            let showsRouteTraffic = main?.mode == .drive && model.settings.traffic
+                && (surface is AppleMapSurface || MapPresetCatalog.profile(for: effectivePreset).showTraffic)
+            let trafficKey = showsRouteTraffic ? main?.trafficSpans.hashValue : nil
             let firstLeg = journey?.index ?? 0
-            let key = (model.nav == nil ? "" : "nav") + (trip?.id.uuidString ?? "") + (main?.id.uuidString ?? "") + alts.map(\.id.uuidString).joined() + "|\(firstLeg)|\(Int(from / 5))"
+            let key = (model.nav == nil ? "" : "nav") + (trip?.id.uuidString ?? "") + (main?.id.uuidString ?? "") + alts.map(\.id.uuidString).joined() + "|\(firstLeg)|\(Int(from / 5))|\(trafficKey.map(String.init) ?? "-")"
             guard key != lastRouteKey else { return }
             lastRouteKey = key
 
 
             publish(MLNShapeCollectionFeature(shapes: alts.map { polyline($0.polyline) }), to: "vela-route-alt")
             publish(trip.map { t in
-                MLNShapeCollectionFeature(shapes: t.legs.dropFirst(firstLeg).filter { $0.path.count >= 2 }.map { leg in
-                    polyline(leg.path, ["walk": leg.isWalk ? 1 : 0,
-                                        "color": String(format: "#%06X", leg.identity.color),
-                                        "mode": leg.identity.mode.rawValue])
-                })
+                let lines: [MLNPolylineFeature] = t.legs.enumerated().compactMap { index, leg in
+                    guard leg.path.count >= 2 else { return nil }
+                    if journey != nil, index == firstLeg, leg.isWalk, main?.mode == .walk { return nil }
+                    let phase = journey == nil ? "preview" : index < firstLeg ? "done" : index == firstLeg ? "active" : "upcoming"
+                    return polyline(leg.path, ["walk": leg.isWalk ? 1 : 0,
+                                               "color": String(format: "#%06X", leg.identity.color),
+                                               "mode": leg.identity.mode.rawValue, "phase": phase])
+                }
+                return MLNShapeCollectionFeature(shapes: lines)
             }, to: "vela-transit")
             guard let r = main else {
                 publish(nil, to: "vela-route"); publish(nil, to: "vela-route-traffic"); publish(nil, to: "vela-route-bubbles")
@@ -1197,7 +1219,7 @@ struct VelaMapView: UIViewRepresentable {
             publish(ahead.count >= 2 ? polyline(ahead) : nil, to: "vela-route")
             let driven = model.nav != nil && from > 1 ? Geo.slice(r.polyline, from: 0, to: from, cumulative: cum) : []
             publish(driven.count >= 2 ? polyline(driven) : nil, to: "vela-route-done")
-            let spans: [MLNPolylineFeature] = r.trafficSpans.compactMap { s in
+            let spans: [MLNPolylineFeature] = (showsRouteTraffic ? r.trafficSpans : []).compactMap { s in
                 let a = max(s.startMeters, from), b = min(s.startMeters + s.lengthMeters, total)
                 guard b > a else { return nil }
                 let piece = Geo.slice(r.polyline, from: a, to: b, cumulative: cum)
@@ -1285,9 +1307,16 @@ struct VelaMapView: UIViewRepresentable {
 
         /** Vehicles reported live by an optional GTFS-Realtime feed, on the active transit trip. */
         private func renderTransitVehicles() {
-            let trip = model.transitJourney?.trip ?? model.directions?.pickedTrip
-            let features: [MLNPointFeature] = (trip?.rides ?? []).compactMap { leg in
-                guard let vehicle = leg.liveVehicle else { return nil }
+            let leg: TransitLeg?
+            if model.nav == nil, !model.justDrive, let journey = model.transitJourney,
+               journey.trip.legs.indices.contains(journey.index) {
+                leg = journey.trip.legs[journey.index]
+            } else {
+                leg = nil
+            }
+            let features: [MLNPointFeature] = [leg].compactMap { leg in
+                guard let leg, let vehicle = leg.liveVehicle, let stamp = vehicle.updated,
+                      (-30...120).contains(Date().timeIntervalSince(stamp)) else { return nil }
                 let f = MLNPointFeature()
                 f.coordinate = CLLocationCoordinate2D(latitude: vehicle.location.lat, longitude: vehicle.location.lng)
                 f.attributes = ["icon": "transit-\(leg.identity.mode.rawValue)", "label": leg.line]
@@ -1392,9 +1421,7 @@ struct VelaMapView: UIViewRepresentable {
                     return
                 }
                 let pins = map.visibleFeatures(in: box, styleLayerIdentifiers: ["vela-results"])
-                if let id = pins.first?.attribute(forKey: "id") as? String,
-                   let place = self.model.results.first(where: { $0.id == id }) {
-                    self.model.select(place)
+                if let id = pins.first?.attribute(forKey: "id") as? String, self.model.selectMapResult(id) {
                     return
                 }
                 let styleIDs = Set(map.style?.layers.compactMap { layer -> String? in
@@ -1448,7 +1475,7 @@ struct VelaMapView: UIViewRepresentable {
             case "vela-mine":
                 if let id, let place = model.myPlace(id) { model.select(place) }
             case "vela-results":
-                if let place = model.results.first(where: { $0.id == id }) { model.select(place) }
+                if let id { model.selectMapResult(id) }
             default: break
             }
         }
@@ -1501,6 +1528,7 @@ struct VelaMapView: UIViewRepresentable {
             loadRail(map)
             noteHeading(map)
             model.rememberBrowseCamera(map)
+            model.refreshTransitStops()
         }
 
         nonisolated func mapViewRegionIsChanging(_ mapView: MLNMapView) {

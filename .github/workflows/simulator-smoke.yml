@@ -7,6 +7,10 @@ on:
   pull_request:
     branches: [iphone-custom-v29-redesign, iphone-custom-v30-advanced-navigation, iphone-custom-v31-navigation-transit, iphone-custom-v32-refinement, iphone-custom-v33-reliability-ux]
 
+concurrency:
+  group: simulator-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

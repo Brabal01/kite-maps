@@ -127,7 +127,7 @@ struct EndpointsCard: View {
                 }
                 Divider().padding(.leading, 30)
                 endpoint(.to, icon: "mappin.circle.fill", color: Vela.closed, text: state.toPlace?.name ?? "My location")
-                if !state.transit && state.stops.count < 8 {
+                if state.stops.count < 8 {
                     Divider().padding(.leading, 30)
                     Button { model.addingStop = true } label: {
                         HStack(spacing: 12) {
@@ -418,7 +418,11 @@ struct TripHeader: View {
                     }
                     PlanningStatusBanner(model: model, compact: true)
                     closingLine(d)
-                    if d.startsFromLocation { goButton }
+                    if d.startsFromLocation {
+                        goButton
+                    } else if d.toPlace != nil {
+                        PillButton(title: "Route from my location", icon: "location.fill") { model.replanFromCurrentLocation() }
+                    }
                 }
                 .padding(.horizontal, 14)
                 .padding(.bottom, 10)
@@ -802,6 +806,9 @@ struct TransitBody: View {
     @State private var kind = 0
     @State private var when = Date()
     @State private var expanded: UUID?
+    @State private var preference: TransitComparison.Preference = .recommended
+    @AppStorage("walkingSpeed") private var transitWalkingSpeed = 5.0
+    @AppStorage("transitDwellMinutes") private var transitDwellMinutes = 5
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -822,21 +829,40 @@ struct TransitBody: View {
         }
         .onChange(of: kind) { k in model.setTransitTime(kind: k, at: when) }
         .onChange(of: when) { w in if kind != 0 { model.setTransitTime(kind: kind, at: w) } }
+        if !state.stops.isEmpty {
+            Stepper(L10n.format("Time at each stop: %@ min", String(transitDwellMinutes)),
+                    value: $transitDwellMinutes, in: 0...60, step: 5)
+                .onChange(of: transitDwellMinutes) { _ in model.loadTransit() }
+        }
         trips
     }
 
     @ViewBuilder
     private var trips: some View {
         if let trips = state.trips, !trips.isEmpty {
+            let order = TransitComparison.rankedIndices(trips, by: preference, walkingSpeedKmh: transitWalkingSpeed)
+            let firstDeparture = trips.compactMap(\.depart).min()
+            let lastArrival = trips.compactMap(\.arrive).max()
+            let comparisonDuration = firstDeparture.flatMap { first in lastArrival?.timeIntervalSince(first) } ?? 0
+            Picker(L10n.text("Sort connections"), selection: $preference) {
+                ForEach(TransitComparison.Preference.allCases) { option in
+                    Text(L10n.text(option.rawValue)).tag(option)
+                }
+            }
+            .pickerStyle(.menu)
             VStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(trips.enumerated()), id: \.element.id) { i, t in
+                ForEach(order, id: \.self) { i in
+                    let t = trips[i]
                     let open = expanded == t.id
+                    let risk = TransitComparison.transfers(for: t, walkingSpeedKmh: transitWalkingSpeed).map(\.risk).max()
                     Button {
                         model.selectTrip(i)
                         expanded = open ? nil : t.id
                     } label: {
                         HStack(spacing: 3) {
-                            TripRow(trip: t, picked: t.id == state.pickedTrip?.id)
+                            TripRow(trip: t, picked: t.id == state.pickedTrip?.id,
+                                    comparisonStart: firstDeparture, comparisonDuration: comparisonDuration,
+                                    recommended: preference == .recommended && i == order.first, transferRisk: risk)
                             Image(systemName: open ? "chevron.up" : "chevron.down")
                                 .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                                 .padding(.trailing, 8)
@@ -927,6 +953,10 @@ private let clock: DateFormatter = {
 struct TripRow: View {
     let trip: TransitTrip
     let picked: Bool
+    let comparisonStart: Date?
+    let comparisonDuration: TimeInterval
+    let recommended: Bool
+    let transferRisk: TransitComparison.Risk?
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
@@ -935,6 +965,11 @@ struct TripRow: View {
                 Text(times).font(.title3.weight(.bold)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.8)
                 Spacer(minLength: 4)
                 Text(Fmt.duration(trip.durationSeconds)).font(.headline.weight(.semibold)).monospacedDigit()
+            }
+            timeline
+            if recommended {
+                Text(L10n.text("Recommended for travel time, walking and connections"))
+                    .font(.caption2.weight(.medium)).foregroundStyle(.secondary)
             }
             // Every ride on its own official color, every walk neutral: one glance says what to take.
             WrapLayout(spacing: 5, lineSpacing: 6) {
@@ -974,8 +1009,9 @@ struct TripRow: View {
                     Text(liveLabel(first))
                         .foregroundColor(first.liveFreshness == .live || first.liveFreshness == .recent ? Vela.open : .secondary)
                 }
-                if trip.tightTransfer {
-                    Label("Tight transfer", systemImage: "exclamationmark.triangle.fill")
+                if let transferRisk, transferRisk != .low {
+                    Label(L10n.text(transferRisk == .high ? "High transfer risk" : "Tight transfer"),
+                          systemImage: "exclamationmark.triangle.fill")
                         .foregroundColor(Vela.closed)
                 }
                 Spacer(minLength: 0)
@@ -990,6 +1026,35 @@ struct TripRow: View {
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
             .strokeBorder(picked ? Vela.routeBlue.opacity(0.55) : Color.secondary.opacity(0.12), lineWidth: 1))
         .contentShape(Rectangle())
+    }
+
+    private var timeline: some View {
+        let segments = TransitComparison.timeline(for: trip)
+        let offset = comparisonStart.flatMap { start in trip.depart?.timeIntervalSince(start) } ?? 0
+        let duration = max(1, comparisonDuration, offset + (segments.last.map { $0.offset + $0.duration } ?? 0))
+        let wait = segments.filter { $0.kind == .wait }.reduce(0) { $0 + $1.duration }
+        return GeometryReader { geometry in
+            HStack(spacing: 0) {
+                Color.clear.frame(width: geometry.size.width * CGFloat(offset / duration))
+                ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
+                    timelineColor(segment)
+                        .frame(width: geometry.size.width * CGFloat(segment.duration / duration))
+                }
+            }
+        }
+        .frame(height: 8)
+        .clipShape(Capsule())
+        .accessibilityLabel(L10n.format("Waiting time %@", Fmt.duration(wait)))
+    }
+
+    private func timelineColor(_ segment: TransitComparison.Segment) -> Color {
+        switch segment.kind {
+        case .wait: return .secondary.opacity(0.18)
+        case .walk: return .secondary.opacity(0.6)
+        case .ride:
+            guard let index = segment.leg else { return Vela.routeBlue }
+            return Color(hex: trip.legs[index].displayColor)
+        }
     }
 
     private var times: String {

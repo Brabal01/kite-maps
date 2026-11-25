@@ -152,6 +152,9 @@ enum DirectionsParser {
         var m = parseStep("<step meters='\(Int(meters))'>\(text)</step>")
         m.type = mapType(token.isEmpty ? nil : token, side: side, severity: severity)
         m.road = road
+        if m.type == .roundabout, let exit = exitNumber(in: text) {
+            applyGoogleExit(exit, to: &m)
+        }
         // No words at all: say what the icon shows rather than "Continue" at a turn.
         if text.trimmingCharacters(in: .whitespaces).isEmpty { m.instruction = phrase(m.type) }
         return m
@@ -227,11 +230,12 @@ enum DirectionsParser {
             m.type = .rampLeft
             m.sideUnknown = true
         }
-        // Text ordinals do not establish which branches count on the selected route. Keep Google's
-        // number as corroborating evidence for the resolver, never as the displayed count.
         if m.type == .roundabout {
-            m.alternativeExit = exitNumber(in: text)
-            m.instruction = OSRM.instruction(type: "roundabout", modifier: nil, road: m.road, exit: nil, mode: .drive)
+            if let exit = exitNumber(in: text) {
+                applyGoogleExit(exit, to: &m)
+            } else {
+                m.instruction = OSRM.instruction(type: "roundabout", modifier: nil, road: m.road, exit: nil, mode: .drive)
+            }
         }
         if m.type == .rampLeft || m.type == .rampRight,
            let exit = text.range(of: #"\b(?:exit|junction)\s+[0-9]+[A-Z]?\b"#, options: [.regularExpression, .caseInsensitive]) {
@@ -243,15 +247,35 @@ enum DirectionsParser {
         return m
     }
 
-    /** "take the 3rd exit" is 3. */
-    public static func exitNumber(in text: String) -> Int? {
-        let words = ["first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5, "sixth": 6, "seventh": 7, "eighth": 8]
-        let lower = text.lowercased()
-        if let r = lower.range(of: #"(\d+)(st|nd|rd|th) exit"#, options: .regularExpression) {
-            return Int(lower[r].prefix { $0.isNumber })
+    static func applyGoogleExit(_ exit: Int, to maneuver: inout Maneuver) {
+        maneuver.alternativeExit = exit
+        maneuver.exit = exit
+        maneuver.exitSource = .google
+        maneuver.exitAmbiguous = false
+        let signs = OSRM.Signs(destinations: maneuver.exitSign?.destinations.joined(separator: ", "),
+                               exits: maneuver.exitSign?.number, from: nil)
+        var instruction = OSRM.instruction(type: "roundabout", modifier: nil, road: maneuver.road,
+                                           exit: exit, mode: .drive, signs: signs)
+        if signs.toward == nil,
+           let toward = maneuver.instruction.range(of: " toward ") ?? maneuver.instruction.range(of: " towards ") {
+            instruction += maneuver.instruction[toward.lowerBound...]
         }
-        for (w, n) in words where lower.contains("\(w) exit") { return n }
-        return nil
+        maneuver.instruction = instruction
+    }
+
+    /** "take the 3rd exit" and "take exit 3" both mean exit 3. */
+    public static func exitNumber(in text: String) -> Int? {
+        let lower = text.lowercased()
+        let patterns = [#"\b[0-9]{1,2}\s*(?:st|nd|rd|th)\s+exit\b"#, #"\btake\s+(?:the\s+)?exit\s+(?:number\s+)?[0-9]{1,2}\b"#]
+        for pattern in patterns {
+            if let range = lower.range(of: pattern, options: .regularExpression),
+               let digits = lower[range].range(of: #"[0-9]+"#, options: .regularExpression),
+               let number = Int(lower[digits]), number > 0 {
+                return number
+            }
+        }
+        let words = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth"]
+        return words.firstIndex { lower.range(of: "\\b\($0)\\s+exit\\b", options: .regularExpression) != nil }.map { $0 + 1 }
     }
 
     static func mapType(_ token: String?, side: String?, severity: String?) -> ManeuverType {

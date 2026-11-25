@@ -59,8 +59,11 @@ public enum Roundabouts {
             // A mini-roundabout was counted from its own mapped point already; a ring query here
             // would find nothing and wrongly erase its number.
             if m.roundabout?.mini == true { continue }
-            // Keep what the router said as evidence; it no longer decides the number on its own.
-            if r.maneuvers[i].routerExit == nil { r.maneuvers[i].routerExit = m.exit }
+            // A numbered instruction from the provider of the selected route owns its ordinal.
+            let googleExit = route.source == "google" ? m.alternativeExit : nil
+            if r.maneuvers[i].routerExit == nil, googleExit == nil {
+                r.maneuvers[i].routerExit = m.exit
+            }
             // Where the route comes off the circle, from the circle itself; the router's step otherwise.
             let leave = leaving(ways, entry: m.location, line: route.polyline, cumulative: cum, along: m.alongMeters) ?? wayOff(r.maneuvers, i)
             let out = exitAngle(route.polyline, cumulative: cum, along: m.alongMeters, leaving: leave)
@@ -71,9 +74,9 @@ public enum Roundabouts {
                                                   routerExit: r.maneuvers[i].routerExit,
                                                   googleExit: m.alternativeExit, ways: ways)
             let resolved = RoundaboutExitResolver.resolve(evidence)
-            r.maneuvers[i].exitSource = resolved.source
-            r.maneuvers[i].exitConfidence = resolved.confidence
-            r.maneuvers[i].exitAmbiguous = resolved.ambiguous
+            r.maneuvers[i].exitSource = googleExit == nil ? resolved.source : .google
+            r.maneuvers[i].exitConfidence = googleExit == nil ? resolved.confidence : nil
+            r.maneuvers[i].exitAmbiguous = googleExit == nil && resolved.ambiguous
             // The picture: the map's when it was good enough, else the router's sketch pointed at
             // the way out the line really takes.
             if let s = resolved.shape {
@@ -85,7 +88,7 @@ public enum Roundabouts {
                 changed = true
             }
             // The one number every view reads: banner, diagram, voice and Live Activity.
-            let final = resolved.exit
+            let final = googleExit ?? resolved.exit
             if r.maneuvers[i].exit != final {
                 r.maneuvers[i].exit = final
                 changed = true
@@ -147,7 +150,15 @@ public enum Roundabouts {
         for i in r.maneuvers.indices where r.maneuvers[i].type == .roundabout {
             let m = r.maneuvers[i]
             if m.leavesRoundabout {
-                if i > 0, r.maneuvers[i - 1].type == .roundabout { r.maneuvers[i].roundabout = r.maneuvers[i - 1].roundabout }
+                if i > 0, r.maneuvers[i - 1].type == .roundabout {
+                    let entry = r.maneuvers[i - 1]
+                    r.maneuvers[i].roundabout = entry.roundabout
+                    if entry.exitSource == .google {
+                        r.maneuvers[i].exit = entry.exit
+                        r.maneuvers[i].alternativeExit = entry.alternativeExit
+                        r.maneuvers[i].exitSource = .google
+                    }
+                }
                 continue
             }
             guard let out = exitAngle(route.polyline, cumulative: cum, along: m.alongMeters, leaving: wayOff(r.maneuvers, i)) else { continue }
