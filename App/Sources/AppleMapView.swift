@@ -60,6 +60,7 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
     private var terrain = false
     private var showsNativeTraffic: Bool?
     private var showsNativePOI: Bool?
+    private var showsNativeBuildings: Bool?
     private var pendingRouteFit: (rect: MKMapRect, padding: UIEdgeInsets)?
     private var measurementPoints: [MKPointAnnotation] = []
     private var measurementLine: MKGeodesicPolyline?
@@ -286,13 +287,15 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
         let hasAppleSearchPins = coordinator?.model.results.contains { $0.source == "apple" } == true
         let showsPOI = profile.showPOI && settings.showApplePOI && !hasAppleSearchPins
         let showBuildings = !settings.satellite && profile.showBuildings && (!navigating || settings.navBuildings)
-        let didChangeBuildings = native.showsBuildings != showBuildings
-        if didChangeBuildings { native.showsBuildings = showBuildings }
+        if showsNativeBuildings != showBuildings {
+            native.showsBuildings = showBuildings
+            showsNativeBuildings = showBuildings
+        }
 
         let configuredTraffic = (native.preferredConfiguration as? MKStandardMapConfiguration)?.showsTraffic
             ?? (native.preferredConfiguration as? MKHybridMapConfiguration)?.showsTraffic
         if satellite != settings.satellite || terrain != settings.terrain || showsNativeTraffic != showTraffic
-            || showsNativePOI != showsPOI || didChangeBuildings || configuredTraffic != showTraffic {
+            || showsNativePOI != showsPOI || configuredTraffic != showTraffic {
             satellite = settings.satellite
             terrain = settings.terrain
             showsNativeTraffic = showTraffic
@@ -728,8 +731,11 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
         }
     }
 
-    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        !(gestureRecognizer is MapMeasurementTap) || coordinator?.model.hasActiveJourney == false
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        if gestureRecognizer is MapMeasurementTap {
+            return coordinator?.model.hasActiveJourney == false
+        }
+        return super.gestureRecognizerShouldBegin(gestureRecognizer)
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
