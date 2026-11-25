@@ -822,9 +822,8 @@ struct VelaMapView: UIViewRepresentable {
                     shown(control, distance: here.map { $0.distance(to: control.location) })
                 }
             }
-            // A proximity-only fallback when the directional lookup failed: browsing context only,
-            // never dressed up as a confirmed light for our approach.
-            let signals = controls?.isEmpty != false
+            // Nearby OSM nodes do not identify the direction they control.
+            let signals = nav?.route.mode != .drive && controls?.isEmpty != false
                 ? (nav?.routeSignals ?? []).filter { signal in
                     guard let here else { return true }
                     return here.distance(to: signal) <= 350
