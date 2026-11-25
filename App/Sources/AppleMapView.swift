@@ -322,6 +322,7 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
         let color: UInt32?
         let traffic: Int
         let walking: Bool
+        let phase: String?
         let rank: Int
     }
 
@@ -361,7 +362,8 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
             let attr = feature.attributes
             let color = (attr["color"] as? String).flatMap { UInt32($0.dropFirst(), radix: 16) }
             paints[ObjectIdentifier(line)] = LinePaint(source: source, color: color, traffic: attr["level"] as? Int ?? 0,
-                                                       walking: (attr["walk"] as? Int) == 1, rank: rank)
+                                                       walking: (attr["walk"] as? Int) == 1,
+                                                       phase: attr["phase"] as? String, rank: rank)
             if let upper { native.insertOverlay(line, below: upper) }
             else { native.addOverlay(line, level: .aboveRoads) }
             rendered.append(line)
@@ -402,8 +404,9 @@ final class AppleMapSurface: UIView, KiteMapSurface, MKMapViewDelegate, UIGestur
             renderer.strokeColor = UIColor(hex: dark ? 0x409CFF : 0x007AFF)
             renderer.lineWidth = navigating ? 13 : 10
         case "vela-transit":
-            renderer.strokeColor = UIColor(hex: paint.walking ? 0x5F6368 : paint.color ?? 0x1F6FEB)
-            renderer.lineWidth = paint.walking ? 4 : 7
+            let alpha: CGFloat = paint.phase == "done" ? 0.28 : paint.phase == "upcoming" ? 0.60 : 1
+            renderer.strokeColor = UIColor(hex: paint.walking ? 0x5F6368 : paint.color ?? 0x1F6FEB).withAlphaComponent(alpha)
+            renderer.lineWidth = paint.walking ? 4 : paint.phase == "active" ? 9 : paint.phase == "done" ? 5 : 7
             renderer.lineDashPattern = paint.walking ? [1, 7] : nil
         case "vela-route-traffic":
             renderer.strokeColor = UIColor(hex: paint.traffic >= 3 ? 0xB91C1C : paint.traffic == 2 ? 0xEF4444 : 0xF59E0B)
