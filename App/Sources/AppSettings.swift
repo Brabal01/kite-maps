@@ -234,8 +234,8 @@ final class AppSettings: ObservableObject {
     /** Places you opened lately, newest first. */
     @Published var recentPlaces: [Place] { didSet { save(recentPlaces, "recentPlaces") } }
 
-        useAppleMaps = d.object(forKey: "v34UseAppleMaps") as? Bool ?? true
     private init() {
+        useAppleMaps = d.object(forKey: "v34UseAppleMaps") as? Bool ?? true
         language = KiteLanguage(rawValue: d.string(forKey: "language") ?? "") ?? .system
         theme = ThemeMode(rawValue: d.string(forKey: "theme") ?? "") ?? .system
         units = UnitsMode(rawValue: d.string(forKey: "units") ?? "") ?? .auto
