@@ -296,10 +296,8 @@ extension StepMerge {
             if g.type == .roundabout, let n = g.exit ?? g.alternativeExit,
                [.turnLeft, .turnRight, .slightLeft, .slightRight, .sharpLeft, .sharpRight, .straight].contains(steps[i].type) {
                 steps[i].type = .roundabout
-                steps[i].exit = g.exit
-                steps[i].alternativeExit = n
                 steps[i].lanes = []
-                steps[i].instruction = OSRM.instruction(type: "roundabout", modifier: nil, road: road, exit: g.exit, mode: .drive)
+                DirectionsParser.applyGoogleExit(n, to: &steps[i])
             } else if side(steps[i].type) != 0, side(g.type) != 0, side(g.type) != side(steps[i].type),
                       let b = bend(steps[i].alongMeters), b * Double(side(g.type)) > 30 {
                 // "Keep right at the fork onto Castle Lane West" where the road really goes 45 degrees
@@ -313,6 +311,26 @@ extension StepMerge {
                 let verb = DirectionsParser.phrase(g.type).replacingOccurrences(of: "Slight", with: "Turn slight").replacingOccurrences(of: "Sharp", with: "Turn sharp")
                 steps[i].instruction = verb + (road.map { " onto \($0)" } ?? "")
             }
+        }
+    }
+
+    /** Match the roundabout entries on the selected Google line before copying the exit number. */
+    static func addGoogleRoundaboutExits(_ steps: inout [Maneuver], from google: [Maneuver]) {
+        let googleEntries = google.filter { $0.type == .roundabout && !$0.leavesRoundabout }
+        let entries = steps.indices.filter { steps[$0].type == .roundabout && !steps[$0].leavesRoundabout }
+        for index in entries {
+            let at = steps[index].alongMeters
+            guard let match = googleEntries.min(by: {
+                abs($0.alongMeters - at) < abs($1.alongMeters - at)
+            }), let exit = match.alternativeExit ?? match.exit,
+            abs(match.alongMeters - at) < 50,
+            index == entries.min(by: {
+                abs(steps[$0].alongMeters - match.alongMeters) < abs(steps[$1].alongMeters - match.alongMeters)
+            }) else { continue }
+            if steps[index].routerExit == nil, steps[index].exitSource != .google {
+                steps[index].routerExit = steps[index].exit
+            }
+            DirectionsParser.applyGoogleExit(exit, to: &steps[index])
         }
     }
 

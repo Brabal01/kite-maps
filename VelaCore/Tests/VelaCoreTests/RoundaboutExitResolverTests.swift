@@ -68,6 +68,32 @@ final class RoundaboutExitResolverTests: XCTestCase {
         XCTAssertEqual(r.chosenIndex, 2)
     }
 
+    func testGoogleRouteUsesItsOwnExitNumberWithDifferentOSMCount() throws {
+        let geometry = route(exitDeg: 90)
+        var step = DirectionsParser.parseStep(
+            "<step maneuver='ROUNDABOUT' meters='300'>At the roundabout, take the <b>2nd</b> exit towards the centre</step>"
+        )
+        XCTAssertEqual(step.exit, 2, "The instruction already has a number before the OSM response")
+        XCTAssertEqual(step.exitSource, .google)
+        XCTAssertTrue(step.instruction.contains("towards the centre"))
+        step.location = at(180, 30)
+        step.alongMeters = geometry.along
+        step.routerExit = 3
+        var selected = Route(mode: .drive, polyline: geometry.line, distanceMeters: geometry.cum.last ?? 0,
+                             typicalSeconds: 45, maneuvers: [step], source: "google")
+        let enriched = try XCTUnwrap(Roundabouts.resolved(selected, ways: fourArm(), clockwise: true))
+        XCTAssertEqual(enriched.maneuvers[0].exit, 2)
+        XCTAssertEqual(enriched.maneuvers[0].exitSource, .google)
+        XCTAssertFalse(enriched.maneuvers[0].exitAmbiguous)
+        XCTAssertEqual(enriched.maneuvers[0].roundabout?.taken, 2)
+        XCTAssertTrue(enriched.maneuvers[0].instruction.contains("2nd exit"))
+
+        selected.source = "osm"
+        let fallback = try XCTUnwrap(Roundabouts.resolved(selected, ways: fourArm(), clockwise: true))
+        XCTAssertEqual(fallback.maneuvers[0].exit, 3)
+        XCTAssertEqual(fallback.maneuvers[0].exitSource, .routerCorroborated)
+    }
+
     func testRouterAndTopologyAgree() {
         let r = resolve(ways: fourArm(), exitDeg: 90, router: 3)
         XCTAssertEqual(r.exit, 3)

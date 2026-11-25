@@ -60,7 +60,7 @@ public struct Maneuver: Hashable, Sendable {
     public var exit: Int?
     /** The number the routing provider gave, kept even when the resolved number differs. */
     public var routerExit: Int?
-    /** A number a second provider's words gave, used as corroborating evidence only. */
+    /** The exit number given in Google's maneuver, when available. */
     public var alternativeExit: Int?
     /** Where the displayed number came from. */
     public var exitSource: RoundaboutExitSource?

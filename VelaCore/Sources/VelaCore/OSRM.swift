@@ -670,6 +670,7 @@ public enum Directions {
                             StepMerge.addGoogleLaneHints(&steps, from: g[i].maneuvers)
                             StepMerge.addGoogleKinds(&steps, from: g[i].maneuvers, line: g[i].polyline)
                             StepMerge.addGoogleMissing(&steps, from: g[i].maneuvers, line: g[i].polyline)
+                            StepMerge.addGoogleRoundaboutExits(&steps, from: g[i].maneuvers)
                             StepMerge.addGoogleSigns(&steps, from: g[i].maneuvers)
                         }
                         g[i].maneuvers = steps

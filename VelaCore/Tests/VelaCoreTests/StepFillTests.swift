@@ -81,6 +81,18 @@ final class StepFillTests: XCTestCase {
         XCTAssertEqual(steps[1].instruction, "At the roundabout, take the 2nd exit onto Otterbourne Hill")
     }
 
+    func testGoogleExitNumberMatchesEachRoundaboutOnlyOnce() {
+        var steps = ends([step(.roundabout, "Take the 1st exit", 1_000, exit: 1),
+                          step(.roundabout, "Take the 4th exit", 1_037, exit: 4),
+                          step(.roundabout, "Take the 1st exit", 1_090, exit: 1)])
+        let google = [step(.roundabout, "Take the 2nd exit", 1_010, exit: 2),
+                      step(.roundabout, "Take exit 3", 1_085, exit: 3)]
+        StepMerge.addGoogleRoundaboutExits(&steps, from: google)
+        XCTAssertEqual(steps.filter { $0.type == .roundabout }.compactMap(\.exit), [2, 4, 3])
+        XCTAssertEqual(steps[1].routerExit, 1)
+        XCTAssertEqual(steps[1].exitSource, .google)
+    }
+
     func testRealTurnWhereTheRouterSaysStraight() {
         var steps = ends([step(.straight, "Continue straight onto Gloucester Road", 1000, road: "Gloucester Road")])
         StepMerge.addGoogleKinds(&steps, from: [step(.turnLeft, "Turn left onto Gloucester Rd", 1010)])

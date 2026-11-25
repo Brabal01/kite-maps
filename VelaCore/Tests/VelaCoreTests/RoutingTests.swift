@@ -578,6 +578,8 @@ final class ExitNumberTests: XCTestCase {
         XCTAssertEqual(DirectionsParser.exitNumber(in: "At the roundabout, take the 3rd exit onto Hill Ln"), 3)
         XCTAssertEqual(DirectionsParser.exitNumber(in: "At the roundabout, take the 12th exit"), 12)
         XCTAssertEqual(DirectionsParser.exitNumber(in: "At the roundabout, take the second exit"), 2)
+        XCTAssertEqual(DirectionsParser.exitNumber(in: "At the roundabout, take exit 3"), 3)
+        XCTAssertEqual(DirectionsParser.exitNumber(in: "At the roundabout, take the 2 nd exit"), 2)
         XCTAssertNil(DirectionsParser.exitNumber(in: "At the roundabout, continue straight"))
     }
 }
