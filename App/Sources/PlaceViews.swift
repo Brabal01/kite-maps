@@ -395,29 +395,49 @@ private extension SavedView {
 struct DepartureBoard: View {
     let place: Place
     @State private var board: (stop: String, departures: [Transitous.Departure])?
+    @State private var selectedPlatform: String?
+    @State private var refreshedAt: Date?
+    @State private var isRefreshCurrent = false
     @State private var loaded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Departures").font(.headline)
             if let b = board {
-                ForEach(Array(b.departures.prefix(8).enumerated()), id: \.offset) { _, d in
+                let platforms = Array(Set(b.departures.compactMap(\.platform)))
+                    .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+                if !platforms.isEmpty {
+                    Picker(L10n.text("Filter by platform"), selection: $selectedPlatform) {
+                        Text(L10n.text("All platforms")).tag(String?.none)
+                        ForEach(platforms, id: \.self) { platform in
+                            Text(L10n.format("Platform %@", platform)).tag(Optional(platform))
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+                let shown = b.departures.filter { selectedPlatform == nil || $0.platform == selectedPlatform }
+                ForEach(Array(shown.prefix(12).enumerated()), id: \.offset) { _, d in
                     HStack(spacing: 10) {
                         LineChip(leg: TransitLeg(isWalk: false, mode: d.mode, line: d.line, color: d.color, textColor: d.textColor, lineIdentity: d.identity))
                         Text(d.headsign).font(.subheadline).lineLimit(1)
                         Spacer()
                         VStack(alignment: .trailing, spacing: 1) {
-                            Text(countdown(d.time)).font(.subheadline.weight(.semibold))
-                                .foregroundColor(d.delayMinutes != nil ? Vela.open : .primary)
-                            if let late = d.delayMinutes, late != 0 {
+                            if d.isCancelled {
+                                Text(L10n.text("Cancelled departure"))
+                                    .font(.subheadline.weight(.semibold)).foregroundColor(Vela.closed)
+                            } else {
+                                Text(countdown(d.time)).font(.subheadline.weight(.semibold))
+                                    .foregroundColor(d.isRealtime && isRefreshCurrent ? Vela.open : .primary)
+                            }
+                            if let late = d.delayMinutes, late != 0, !d.isCancelled {
                                 Text(late > 0 ? "\(late) min late" : "\(-late) min early").font(.caption2)
                                     .foregroundColor(late > 0 ? Vela.closed : Vela.open)
                             }
                         }
                     }
-                    if let platform = d.track, !platform.isEmpty {
+                    if let platform = d.platform {
                         HStack(spacing: 8) {
-                            if let scheduled = d.scheduledTrack, scheduled != platform {
+                            if d.isRealtime, let scheduled = d.scheduledTrack, scheduled != platform {
                                 Label(L10n.format("Platform change: %@ → %@", scheduled, platform),
                                       systemImage: "arrow.left.arrow.right")
                                     .foregroundColor(Vela.closed)
@@ -428,15 +448,18 @@ struct DepartureBoard: View {
                                 Text(L10n.format("Stop code %@", code))
                             }
                             Spacer()
-                            Text(d.isRealtime ? "Live" : "Scheduled")
-                                .foregroundColor(d.isRealtime ? Vela.open : .secondary)
+                            Text(L10n.text(d.isRealtime ? (isRefreshCurrent ? "Live" : "Live data stale") : "Scheduled"))
+                                .foregroundColor(d.isRealtime && isRefreshCurrent ? Vela.open : .secondary)
                         }
                         .font(.caption2)
                         .foregroundColor(.secondary)
                         .padding(.leading, 44)
                     }
                 }
-                Text("Live times in green · from Transitous").font(.caption).foregroundColor(.secondary)
+                if let refreshedAt {
+                    Text(L10n.format("Transitous · updated %@", refreshedAt.formatted(date: .omitted, time: .shortened)))
+                        .font(.caption).foregroundColor(.secondary)
+                }
             } else if loaded {
                 Text("No departures found here.").font(.subheadline).foregroundColor(.secondary)
             } else {
@@ -447,7 +470,14 @@ struct DepartureBoard: View {
             while !Task.isCancelled {
                 let b = await Transitous.departures(near: place.location)
                 if Task.isCancelled { return }
-                if b != nil || !loaded { board = b }
+                isRefreshCurrent = b != nil
+                if let b {
+                    board = b
+                    refreshedAt = Date()
+                    if let platform = selectedPlatform, !b.departures.contains(where: { $0.platform == platform }) {
+                        selectedPlatform = nil
+                    }
+                }
                 loaded = true
                 try? await Task.sleep(nanoseconds: 30_000_000_000)
             }
